@@ -72,6 +72,38 @@ See the [complete storage-tier benchmark report](docs/large_tier_benchmark_2026-
 for raw run values, cache accounting, numerical scope, caveats, and artifact
 locations.
 
+## A30 400K-token storage-tier benchmark
+
+The same 56-head MHA shape was re-run on one NVIDIA A30 (24GiB, Ampere sm_80)
+with 409,600 tokens so the complete 21.9GiB GPU-resident working set just fits
+the card. GPU-resident FlashAttention 2 executes in 50.827s at a 21.96GiB
+torch peak. The workspace scan keeps complete Q/K/V in unrestricted
+caller-owned pinned DRAM and varies only the HBM workspace; each row is a
+single observation on the idle GPU, bound to its NUMA node 0 CPU affinity.
+
+<p align="center">
+  <img src="docs/assets/a30-large-tier-benchmark.svg" alt="A30 400K-token HBM workspace benchmark" width="100%">
+</p>
+
+| HBM workspace | Q chunk | Q passes | H2D traffic | Execution | vs GPU resident |
+|---:|---:|---:|---:|---:|---:|
+| 2 GiB | 28,416 | 15 | 170 GiB | 106.293 s | 2.091x |
+| 4 GiB | 65,600 | 7 | 82 GiB | 107.761 s | 2.120x |
+| 6 GiB | 102,720 | 4 | 49 GiB | 108.331 s | 2.131x |
+| 8 GiB | 139,904 | 3 | 38 GiB | 109.669 s | 2.158x |
+| 12 GiB | 214,208 | 2 | 27 GiB | 110.911 s | 2.182x |
+| 16 GiB | 288,512 | 2 | 27 GiB | 111.170 s | 2.187x |
+
+Unlike the 5090 scan, execution increases monotonically with the workspace
+(+4.6% from 2GiB to 16GiB, with 2GiB fastest): at 43-45 TFLOPS the operator
+is compute-bound on the A30, so removing H2D rescans does not pay off and
+larger Q chunks only grow the per-K/V-tile FP32 state traffic. All six output
+signatures are identical; compared with FlashAttention 2 the 40 sampled BF16
+values have relative L2 `0.004160`, maximum absolute error `3.052e-5`, and
+cosine `0.99999219`. See
+the [A30 storage-tier benchmark report](docs/a30_large_tier_benchmark_2026-08-18.md)
+for raw run values, environment, and methodology.
+
 ## MiniMax-H3 integration
 
 `seqattn` is integrated into a MiniMax-H3 NF4 inference branch in

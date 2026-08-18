@@ -35,9 +35,12 @@ def make_bounds(tokens: int, segments: int) -> torch.Tensor:
 def make_host_tensor(
     shape: tuple[int, ...], dtype: torch.dtype, generator: torch.Generator
 ) -> torch.Tensor:
-    tensor = torch.empty(shape, dtype=dtype, pin_memory=True)
-    tensor.normal_(generator=generator)
-    return tensor
+    # Fill pageable memory first so the OpenMP random kernels fault pages in
+    # parallel, then register with the CUDA driver. Allocating with
+    # pin_memory=True up front faults the pages during the fill and observes
+    # single-core throughput for multi-GB buffers.
+    tensor = torch.randn(shape, dtype=dtype, generator=generator)
+    return tensor.pin_memory()
 
 
 def process_rss_bytes() -> int:
