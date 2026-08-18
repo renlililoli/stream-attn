@@ -63,6 +63,33 @@ See the [MiniMax-H3 integration report](docs/minimax_h3_integration.md) for the
 protocol, completed measurements, live-soak boundary, and reproducibility
 details.
 
+### What “native” keeps in GPU memory
+
+The native comparison is not a model-without-offload strawman.  It uses the
+same CPU/DRAM weight backing and DiffSynth VRAM management; no disk offload is
+used.  During denoising, DiffSynth onloads only the DiT and offloads the text
+encoder and both VAEs.  The key difference is activation placement:
+
+| Residency during the DiT loop | Native full sequence | `seqattn` |
+|---|---|---|
+| Inactive model weights | CPU DRAM | CPU DRAM |
+| DiT weights | CPU-backed; prepared/current layers can reside on GPU | same backing, with frozen post-step-1 residency |
+| Packed hidden/residual | complete tensor on GPU | complete tensor in pinned CPU DRAM; chunks on GPU |
+| Q/K/V | complete tensors on GPU | complete tensors in pinned CPU DRAM; resident Q + streamed K/V |
+| Attention output | complete tensor on GPU | consumed tile-by-tile by GPU out projection |
+| MLP `fc1`, gate/up, product | complete sequence tensors on GPU | CPU intermediate with chunked GPU compute |
+| Text encoder / Video VAE / Audio VAE | offloaded while DiT runs | offloaded while DiT runs |
+
+<p align="center">
+  <img src="docs/assets/minimax-h3-native-residency.svg" alt="Native MiniMax-H3 memory residency" width="100%">
+</p>
+
+At 132,288 BF16 tokens, one complete hidden/residual tensor is approximately
+1.325GiB, full QKV is 5.299GiB, and the MLP `fc1` output is 7.065GiB.  Splitting
+`fc1` produces 3.532GiB gate and up views; the native OOM is the attempt to
+allocate another 3.53GiB for `SiLU(gate) * up`.  These are activation sizes,
+not checkpoint-weight sizes.
+
 ## Features
 
 - CPU-backed contiguous and pinned Q/K/V.

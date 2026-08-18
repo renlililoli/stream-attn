@@ -64,6 +64,109 @@ The remainder of the H3 block uses the existing two-pass CPU-backed MLP path.
 The current implementation is inference-only and exact; backward, dropout, and
 sparse attention are outside the V1 scope.
 
+## Native baseline memory residency
+
+The native baseline uses DiffSynth's real CPU weight-offload path.  It is not a
+comparison against a configuration that pins the entire H3 checkpoint in GPU
+memory.  The benchmark configuration is:
+
+```text
+offload_device = cpu
+disk offload   = disabled
+activation_streaming = false
+target_vram_mib = unset
+DiffSynth vram_limit = physical VRAM - 2 GiB reserve
+```
+
+On the RTX 5090 this gives DiffSynth a 29.358GiB weight-preparation threshold
+inside a physical 31.358GiB device.  The PyTorch allocator itself is not capped.
+
+<p align="center">
+  <img src="assets/minimax-h3-native-residency.svg" alt="Native MiniMax-H3 memory residency" width="100%">
+</p>
+
+### Model-level timeline
+
+DiffSynth stages the large models rather than keeping them all on GPU:
+
+| Pipeline phase | Model onloaded for GPU computation | Large models offloaded to CPU DRAM |
+|---|---|---|
+| Prompt/text preparation | Text encoder as required | DiT, Video VAE, Audio VAE |
+| 50-step denoise loop | **DiT** | Text encoder, Video VAE, Audio VAE |
+| Video decode | Video VAE | DiT, Text encoder, Audio VAE |
+| Audio decode | Audio VAE | DiT, Text encoder, Video VAE |
+
+Therefore the 30,876MiB native peak is not caused by the text encoder, DiT,
+Video VAE, and Audio VAE all being simultaneously resident.  At the actual OOM
+location the pipeline is still inside the DiT denoise loop; neither VAE decode
+has started.
+
+### Tensor-level residency during a native DiT block
+
+| Object | Native residency | Lifetime / behavior |
+|---|---|---|
+| NF4 checkpoint and inactive layer weights | CPU DRAM | Backing store; no disk path |
+| Prepared/current DiT layer weights | GPU HBM | Dynamically prepared or temporarily cast/rebuilt for computation |
+| Video/audio latents and packed model input | GPU HBM during the forward | Updated once per scheduler step |
+| Packed hidden and residual | GPU HBM | Complete 132,288-token tensors |
+| Q, K, V | GPU HBM | Complete tensors produced by one full QKV projection |
+| FlashAttention output | GPU HBM | Complete output before full out projection |
+| MLP `fc1` output | GPU HBM | Complete `[N, 2 × 14,336]` tensor |
+| MLP gate, up, SiLU/product | GPU HBM | Full sequence; product requires another 3.532GiB allocation |
+| CUDA context, kernels and workspaces | GPU HBM | Non-PyTorch and temporary runtime allocations |
+| PyTorch reserved allocator blocks | GPU HBM | Cached/unallocated blocks remain part of the process NVML footprint |
+
+The benchmark's step-boundary module inspection finds 46 named CUDA
+parameter/buffer storages in the DiT totaling 1,030.8MiB.  This number does not
+include complete sequence activations, temporary computation-weight copies,
+FlashAttention workspaces, CUDA context memory, or PyTorch cached blocks.  At
+step 14 the process has 30,254MiB Torch reserved and a 30,876MiB PID-level NVML
+footprint.
+
+### Full-sequence BF16 activation scale
+
+The following are isolated tensor sizes, not a claim that every row is live at
+the exact same instruction.  Overlapping lifetimes, current layer weights,
+workspace, and allocator fragmentation determine the actual peak.
+
+| Tensor at 132,288 tokens | Shape basis | Approximate size |
+|---|---:|---:|
+| Hidden or residual | `N × 5,376` | 1.325 GiB |
+| One of Q, K, or V | `N × 56 × 128` | 1.766 GiB |
+| Combined QKV | `N × 56 × 3 × 128` | 5.299 GiB |
+| Attention output before out projection | `N × 56 × 128` | 1.766 GiB |
+| MLP `fc1` output | `N × 2 × 14,336` | 7.065 GiB |
+| Gate or up half | `N × 14,336` | 3.532 GiB |
+| `SiLU(gate) * up` result | `N × 14,336` | 3.532 GiB |
+
+The native traceback ends at:
+
+```python
+hidden = torch.nn.functional.silu(gate) * up
+```
+
+with a failed 3.53GiB allocation request.  This directly matches the expected
+BF16 size of one complete `[132,288, 14,336]` MLP intermediate.  The immediate
+failure is therefore a full-sequence activation allocation, even though the
+overall 30.9GiB process footprint also contains current weights, workspaces,
+CUDA context memory, and allocator cache.
+
+### Residency difference introduced by `seqattn`
+
+`seqattn` does not change the high-level model-staging order.  It changes where
+sequence-sized DiT activations live:
+
+| Sequence-sized state | Native | `seqattn` integration |
+|---|---|---|
+| Hidden / residual | Full tensor in HBM | Pinned CPU tensor; projection/MLP chunks in HBM |
+| Q/K/V | Full tensors in HBM | Full tensors in pinned DRAM; bounded resident-Q and K/V tiles in HBM |
+| Softmax state | FlashAttention-local GPU state | FP32 online state for resident Q only |
+| Attention output | Full HBM tensor | GPU tile flows directly into out projection and residual epilogue |
+| MLP intermediate | Full HBM tensor | Full CPU intermediate; bounded `fc1`/`fc2` tiles in HBM |
+
+This is why the `seqattn` process can have a higher CPU RSS while holding the
+GPU step boundary near 4.43GiB and the within-step peak near 7.16GiB.
+
 ## Completed 61K controlled comparison
 
 This comparison isolates whether making `seqattn` an independent package and
