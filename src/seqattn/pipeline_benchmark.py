@@ -5,6 +5,7 @@ import json
 import platform
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 
 import torch
@@ -13,6 +14,7 @@ from .benchmark import MemorySampler, atomic_json, configure_allocator, make_bou
 from .config import ProjectionPipelineConfig, StreamingAttentionConfig
 from .pipeline import ProjectedAttentionRunner
 from .planner import build_plan
+from .runtime import StreamingAttentionRunner
 from .stats import ProjectedAttentionStats, StreamingAttentionStats
 
 
@@ -45,6 +47,7 @@ def main() -> None:
     parser.add_argument("--sample-interval-ms", type=float, default=10)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--nvtx", action="store_true")
+    parser.add_argument("--reuse-q-output", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -96,6 +99,7 @@ def main() -> None:
             q_chunk_tokens=args.q_chunk,
             kv_chunk_tokens=args.kv_chunk,
             num_output_buffers=2,
+            output_mode=("device_consumer" if args.reuse_q_output else "host"),
             backend="triton",
             enable_nvtx=args.nvtx,
         )
@@ -115,6 +119,22 @@ def main() -> None:
             config=attention_config,
         )
         runner = ProjectedAttentionRunner(plan, attention_config, pipeline_config)
+        plan = runner.plan
+        staged_attention = None
+        staged_plan = None
+        if args.mode == "staged":
+            staged_config = replace(attention_config, output_mode="host")
+            staged_plan = build_plan(
+                q_heads=args.heads,
+                kv_heads=args.heads,
+                head_dim=args.head_dim,
+                dtype=dtype,
+                device="cuda",
+                max_q_tokens=args.tokens,
+                max_kv_tokens=args.tokens,
+                config=staged_config,
+            )
+            staged_attention = StreamingAttentionRunner(staged_plan, staged_config)
         output_cpu = torch.empty(
             (args.tokens, args.hidden_size), dtype=dtype, pin_memory=True
         )
@@ -155,7 +175,8 @@ def main() -> None:
                 hidden_cpu, project_qkv, projection_stats
             )
             attention_stats = StreamingAttentionStats()
-            runner.attention(
+            assert staged_attention is not None and staged_plan is not None
+            staged_attention(
                 q_cpu,
                 k_cpu,
                 v_cpu,
@@ -167,8 +188,8 @@ def main() -> None:
             )
             output_h2d_bytes = 0
             output_d2h_bytes = 0
-            for start in range(0, args.tokens, plan.q_chunk_tokens):
-                stop = min(start + plan.q_chunk_tokens, args.tokens)
+            for start in range(0, args.tokens, staged_plan.q_chunk_tokens):
+                stop = min(start + staged_plan.q_chunk_tokens, args.tokens)
                 attention_gpu = raw_attention_cpu[start:stop].to(
                     "cuda", non_blocking=True
                 )

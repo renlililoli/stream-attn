@@ -90,3 +90,57 @@ def test_runner_reuse_has_bounded_allocator_growth():
         runner(q, k, v, cu, cu)
     torch.cuda.synchronize()
     assert torch.cuda.memory_allocated() <= baseline + 2 * 2**20
+
+
+def test_device_consumer_q_reuse_matches_separate_output_path():
+    torch.manual_seed(29)
+    q = torch.randn(83, 4, 32, dtype=torch.bfloat16, pin_memory=True)
+    k = torch.randn(91, 2, 32, dtype=torch.bfloat16, pin_memory=True)
+    v = torch.randn_like(k).pin_memory()
+    cu_q = torch.tensor([0, 37, 83], dtype=torch.int32)
+    cu_k = torch.tensor([0, 41, 91], dtype=torch.int32)
+
+    def identity_consumer(attention, start, stop):
+        del start, stop
+        return attention.reshape(-1, 4, 32)
+
+    outputs = []
+    runners = []
+    for output_mode in ("host", "device_consumer"):
+        config = StreamingAttentionConfig(
+            backend="triton",
+            q_chunk_tokens=31,
+            kv_chunk_tokens=32,
+            block_m=16,
+            block_n=16,
+            num_output_buffers=2,
+            output_mode=output_mode,
+        )
+        plan = build_plan(
+            q_heads=4,
+            kv_heads=2,
+            head_dim=32,
+            dtype=q.dtype,
+            device="cuda",
+            max_q_tokens=q.shape[0],
+            max_kv_tokens=k.shape[0],
+            config=config,
+        )
+        runner = StreamingAttentionRunner(plan, config)
+        out = torch.empty_like(q, pin_memory=True)
+        runner.run_with_device_output(
+            q,
+            k,
+            v,
+            cu_q,
+            cu_k,
+            output_transform=identity_consumer,
+            out=out,
+            causal=True,
+        )
+        outputs.append(out)
+        runners.append(runner)
+
+    torch.testing.assert_close(outputs[1], outputs[0], atol=0, rtol=0)
+    assert len(runners[0]._workspace.output) == 2
+    assert runners[1]._workspace.output == []

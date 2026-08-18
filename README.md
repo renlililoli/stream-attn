@@ -1,17 +1,19 @@
 # seqattn
 
-`seqattn` is an inference-only, exact attention library for sequences whose
-Q/K/V tensors live in CPU DRAM.  It uses GPU memory as a statically planned
-resident working set: query super-blocks stay resident while K/V tiles stream
-through a small ring buffer.  The attention result is produced without
-materializing the score matrix or the complete Q/K/V set on the GPU.
+`seqattn` is an inference-only paged attention runtime for sequences larger
+than a fixed GPU or host-memory working set. Q/K/V may live in caller-owned CPU
+DRAM or in an aligned NVMe store. Query super-blocks stay resident in HBM while
+K/V pages move through a bounded DRAM cache, pinned staging ring, and GPU ring.
+The runtime never materializes the score matrix or requires complete paged
+Q/K/V/output tensors in host memory.
 
 The project follows the same IO-aware principle that makes FlashAttention
 effective inside the GPU memory hierarchy, but applies it one level higher:
 
 ```text
-FlashAttention:   HBM is the backing store, SRAM/registers are the working set
-seqattn:          CPU DRAM is the backing store, HBM is the working set
+FlashAttention:   HBM backing -> SRAM/register working set
+seqattn tensor:   CPU DRAM backing -> HBM working set
+seqattn paged:    NVMe backing -> DRAM cache -> pinned staging -> HBM working set
 ```
 
 This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
@@ -101,6 +103,13 @@ not checkpoint-weight sizes.
 - Fused QK, masking, online softmax, PV, and cross-tile state update.
 - H2D, compute, and D2H streams with K/V ring buffers and optional double-buffered output.
 - Persistent runner/workspace to avoid allocator growth across repeated calls.
+- A fixed-budget paged API with memory, callback, and NVMe sources/sinks.
+- Linux `O_DIRECT` files with aligned page records and explicit failure instead
+  of silent buffered-I/O fallback.
+- A deterministic two-region K/V cache: 80% low-page-id hot set and 20% rolling
+  read-ahead by default.
+- Optional INT8 K/V storage with FP16 scales per 64 tokens/head. This mode is
+  approximate and must be selected explicitly.
 - JSON benchmark output, NVML process peaks, logical PCIe traffic, and NVTX ranges.
 
 V1 is inference-only: backward and dropout are intentionally unsupported.
@@ -317,6 +326,107 @@ Triton operator.
 budgets must also reserve memory for the CUDA context, weights, and caller-owned
 activations.
 
+`output_mode="device_consumer"` additionally finalizes attention in the Q HBM
+buffer and removes the separate raw-output HBM allocation. It is opt-in: the
+61,312-token diagnostic on August 18, 2026 measured 850.8ms with Q reuse versus
+828.7ms for the same-run separate-output GPU-consumer path, so reuse was 2.7%
+slower and did not meet the 10% speedup threshold for becoming the default. The
+mode remains useful when a fixed Q chunk makes removal of the output allocation
+more important than latency; an auto planner may instead spend the freed budget
+on a larger resident Q chunk.
+
+### Fixed-host-memory paged API
+
+The paged API does not require complete CPU Q/K/V tensors. `PageSource` reads
+one caller-selected page into a preallocated staging buffer, while `PageSink`
+consumes an output page immediately:
+
+```python
+from seqattn import (
+    NvmeOutputSink,
+    NvmeQKVStore,
+    PagedAttentionConfig,
+    PagedAttentionRunner,
+    StreamingAttentionConfig,
+)
+
+store = NvmeQKVStore("/local-nvme/request-17", direct_io=True)
+config = PagedAttentionConfig(
+    host_memory_budget_bytes=8 * 2**30,
+    direct_io=True,
+    kv_storage_dtype="bf16",
+    attention=StreamingAttentionConfig(
+        workspace_budget_bytes=2 * 2**30,
+        backend="triton",
+    ),
+)
+runner = PagedAttentionRunner(config, device="cuda")
+runner.run(
+    store,
+    store,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    NvmeOutputSink("/local-nvme/request-17-output", direct_io=True),
+)
+```
+
+`MemoryPageSource` and `MemoryPageSink` adapt caller-owned CPU tensors to the
+same interface. Complete tensors owned by the caller are not charged to the
+operator budget, so the old tensor API and a complete `MemoryPageSink` output
+are compatibility modes, not low-RAM execution.
+
+The default 8GiB host policy reserves at most 1GiB for pinned staging, 512MiB
+for direct-I/O bounce buffers, and 128MiB for fixed metadata. The remainder is
+the DRAM K/V cache. Every runtime allocation is registered with
+`HostMemoryPlan`; category or total-budget overruns fail before execution.
+Q pages bypass the long-lived cache, and output pages are handed to their sink
+as soon as D2H completes.
+
+### NVMe store construction
+
+`NvmeQKVWriter.from_tensors(...)` is a convenience path. Large requests should
+use `NvmeQKVWriter.write_pages(q_pages, kv_pages)`, whose iterators yield one
+already-sized page at a time. The on-disk layout is:
+
+```text
+manifest.json
+q.bin
+kv.bin
+```
+
+K and V for one token page share a single aligned record and one read. Payload
+offsets, record lengths, and bounce buffers are 4096-byte aligned. Data files
+are written under temporary names, checked and fsynced, then the manifest is
+published last. With `direct_io=True`, unsupported filesystems fail explicitly;
+`direct_io=False` exists for tests and is never an implicit fallback.
+
+`NvmeOutputSink` publishes an analogous `manifest.json` plus `out.bin` without
+allocating a full CPU output tensor. `CallbackOutputSink` supports immediate
+application-owned consumption. Persistent stores are caller-managed;
+`ephemeral_nvme_directory()` provides explicit temporary lifecycle management.
+
+### Exact and INT8 modes
+
+`kv_storage_dtype="bf16"` is the default exact mode. FP16 exact stores use
+`"fp16"`. `"int8"` is optional and approximate: Q remains BF16/FP16, K/V use
+symmetric INT8 quantization, and FP16 scales are stored per 64 tokens and KV
+head. The Triton load path applies scales before QK/PV without creating a full
+BF16 K/V tile. Preparation time and numerical error must be reported separately
+from exact results.
+
+### Paged benchmark
+
+Run one point with `seqattn-paged-bench`, or the complete matrix with
+`benchmarks/paged_sweep.py`. Results include end-to-end wall time, I/O and
+queue-wait time, cache statistics, logical/physical NVMe bytes, H2D/D2H bytes,
+Torch/NVML GPU memory, process RSS, and operator host-memory peaks.
+
+The current project node is suitable for correctness, direct-I/O behavior, and
+memory-limit validation only. Its NFS/local SATA storage must not be used to
+claim NVMe latency. Formal runs must use a measured local device at or above
+7GB/s and pass `--formal-local-nvme`; otherwise result JSON is marked as
+functional/memory-only.
+
 <p align="center">
   <img src="docs/assets/projected-pipeline-results.svg" alt="Projected pipeline benchmark results" width="100%">
 </p>
@@ -334,10 +444,12 @@ For each packed sequence and resident query super-block:
 5. Fuse final normalization and output casting.
 6. Copy the result to pinned CPU memory while the next query super-block runs.
 
-The planner maximizes resident query tokens within the requested workspace.
+The planner searches 4K, 8K, and 16K K/V supertiles and jointly chooses a
+resident Q chunk within the requested workspace. Its cost model includes Q
+passes, repeated K/V H2D, FP32 state traffic, launch count, and copy/compute
+overlap. Explicit `q_chunk_tokens` or `kv_chunk_tokens` pin either choice.
 Larger query super-blocks reduce K/V rescans and PCIe traffic; smaller blocks
-reduce GPU memory.  This is the main memory/traffic tradeoff exposed by the
-library.
+reduce GPU memory.
 
 The default uses one GPU output slot because its D2H copy can already overlap
 the next query super-block's attention compute; a second slot is opt-in when

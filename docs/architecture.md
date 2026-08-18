@@ -2,7 +2,17 @@
 
 ## Memory hierarchy
 
-The operator has two tiling levels:
+The paged operator spans five storage levels:
+
+```text
+NVMe aligned Q/KV records
+    -> bounded ordinary-DRAM K/V cache
+    -> pinned Q/KV/output staging rings
+    -> resident-Q and streamed-KV HBM workspace
+    -> Triton SRAM/register tiles
+```
+
+The GPU operator has two tiling levels:
 
 - `q_chunk_tokens` is an HBM-resident query super-block.  It controls the FP32
   online-softmax accumulator and therefore most of the workspace footprint.
@@ -37,6 +47,64 @@ executed once per query super-block.
   K/V scan crosses a segment.
 - Causal positions use bottom-right alignment for unequal Q/K lengths.
 
+## Host memory contract
+
+`HostMemoryPlan` is the allocation authority for a paged run. The default 8GiB
+policy reserves category limits of 1GiB pinned staging, 512MiB direct-I/O
+bounce buffers, and 128MiB fixed metadata. Cache capacity is planned from the
+remaining bytes. All staging rings, bounce rings, cache slots, and output rings
+are created before the page loop; an allocation that would cross a category or
+total limit fails immediately.
+
+Caller-owned tensors adapted by `MemoryPageSource`/`MemoryPageSink` are outside
+this accounting. They preserve the original API but do not provide a fixed
+whole-process RAM guarantee.
+
+The K/V cache is split into a deterministic low-page-id hot region and a
+rolling region. At the default 80/20 split, the hot pages remain resident across
+query passes while pages outside the cache continue as a sequential scan. Q is
+single-use and bypasses the long-lived cache. Output pages enter their sink as
+soon as the output staging slot is ready.
+
+## Direct-I/O store
+
+`NvmeQKVStore` uses one file for Q and one for paired K/V records. Pages do not
+cross packed segments. Each descriptor records global and segment-local token
+offsets, valid/padded token counts, payload size, padding, and aligned file
+location. K/V data for a page is contiguous so one `preadv` fills both staging
+tensors. INT8 records append K/V scale arrays to the same record.
+
+The runtime uses a thread-safe pool of anonymous mmap buffers. mmap base
+addresses, file offsets, and I/O lengths satisfy the 4096-byte `O_DIRECT`
+contract. A short operation is an error. Direct-I/O open/read/write failures are
+reported; the runtime never switches to buffered I/O without an explicit
+`direct_io=False` test configuration.
+
+Writers fsync temporary data files, validate their final sizes, rename them to
+their stable names, fsync the directory, and publish `manifest.json` last.
+Cancellation or an exception removes unpublished temporary/final data.
+
+## CPU and GPU pipeline
+
+The CPU thread pool only performs page I/O, cache copies, page packing, output
+writes, and optional one-time quantization. It does not compute QK or PV. K/V
+future reads are submitted up to the fixed queue depth. A pinned staging slot
+is not reused until its H2D event completes; an HBM K/V slot is not reused until
+its compute-free event completes; an output host slot is not reused until its
+sink future completes.
+
+The paged statistics include wall time, I/O time, queue wait, cache lookup,
+copy traffic, compute-stream timing, output writes, cache hit ratio, and host
+allocation peaks. End-to-end wall time includes visible I/O stalls.
+
+## INT8 K/V
+
+INT8 is an explicitly approximate storage mode. Quantization is symmetric per
+64 tokens and KV head, with FP16 scales. The Triton update kernel loads INT8 K/V
+and scales together and applies dequantization in the QK/PV path. No complete
+BF16 K/V tensor is produced. CPU reference execution dequantizes only the
+current page for auditability.
+
 ## Projected inference pipeline
 
 `ProjectedAttentionRunner` adds model-projection producer/consumer hooks around
@@ -64,6 +132,13 @@ implementation, this removes exactly one raw-attention D2H and one matching H2D
 for every query token.  The callback may also include inference-only epilogues
 such as gate/residual application.
 
+An opt-in `output_mode="device_consumer"` finalizes into the Q buffer and removes
+the separate raw-output HBM allocation. Q is not reusable until the consumer
+has finished reading it; consumer results use `record_stream()` for D2H
+lifetime. This mode is not the latency default because the August 18, 2026
+61,312-token diagnostic measured 850.8ms with Q reuse and 828.7ms with the
+same-run separate-output GPU-consumer path.
+
 QKV and output projection are callbacks rather than hard-coded matmul kernels.
 This permits ordinary BF16/FP16 linear layers, quantized modules, model-specific
 Q/K normalization, and rotary embedding while the attention core remains
@@ -74,6 +149,8 @@ the duration of each phase.
 
 - Shape-specific autotuning cache for block sizes, warps, stages, and K/V ring
   depth.
+- io_uring and GPUDirect Storage implementations under the existing
+  `PageSource`/`PageSink` contract.
 - Optional CUDA/CUTLASS backend after Triton profiling identifies kernel-bound
   cases that cannot be resolved by scheduling or fusion.
 - Optional prefetched residual/epilogue buffers so model-specific residual H2D

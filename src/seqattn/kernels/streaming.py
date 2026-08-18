@@ -21,6 +21,8 @@ if triton is not None:
         q_ptr,
         k_ptr,
         v_ptr,
+        k_scale_ptr,
+        v_scale_ptr,
         max_ptr,
         sum_ptr,
         acc_ptr,
@@ -39,6 +41,11 @@ if triton is not None:
         stride_vt,
         stride_vh,
         stride_vd,
+        stride_ksg,
+        stride_ksh,
+        stride_vsg,
+        stride_vsh,
+        storage_token_offset,
         stride_st,
         stride_sh,
         stride_at,
@@ -51,6 +58,8 @@ if triton is not None:
         BLOCK_D: tl.constexpr,
         CAUSAL: tl.constexpr,
         INITIALIZE: tl.constexpr,
+        KV_QUANTIZED: tl.constexpr,
+        QUANT_GROUP_TOKENS: tl.constexpr,
     ):
         query_block = tl.program_id(0)
         query_head = tl.program_id(1)
@@ -101,6 +110,14 @@ if triton is not None:
             )
             k = tl.load(k_ptr + k_offsets, mask=kv_mask[:, None] & d_mask[None, :], other=0.0)
             v = tl.load(v_ptr + v_offsets, mask=kv_mask[:, None] & d_mask[None, :], other=0.0)
+            if KV_QUANTIZED:
+                scale_group = (storage_token_offset + offsets_n) // QUANT_GROUP_TOKENS
+                k_scale_offsets = scale_group * stride_ksg + kv_head * stride_ksh
+                v_scale_offsets = scale_group * stride_vsg + kv_head * stride_vsh
+                k_scale = tl.load(k_scale_ptr + k_scale_offsets, mask=kv_mask, other=1.0)
+                v_scale = tl.load(v_scale_ptr + v_scale_offsets, mask=kv_mask, other=1.0)
+                k = (k.to(tl.float32) * k_scale[:, None]).to(q.dtype)
+                v = (v.to(tl.float32) * v_scale[:, None]).to(q.dtype)
             logits = tl.dot(q, tl.trans(k)) * scale_log2
             valid = q_mask[:, None] & kv_mask[None, :]
             if CAUSAL:
@@ -215,6 +232,8 @@ def update_attention_state(
         q,
         k,
         v,
+        k,
+        v,
         running_max,
         running_sum,
         accumulator,
@@ -227,6 +246,11 @@ def update_attention_state(
         *q.stride(),
         *k.stride(),
         *v.stride(),
+        0,
+        0,
+        0,
+        0,
+        0,
         *running_max.stride(),
         *accumulator.stride(),
         GROUP_SIZE=q.shape[1] // k.shape[1],
@@ -236,6 +260,79 @@ def update_attention_state(
         BLOCK_D=block_d,
         CAUSAL=causal,
         INITIALIZE=initialize,
+        KV_QUANTIZED=False,
+        QUANT_GROUP_TOKENS=64,
+        num_warps=num_warps,
+        num_stages=num_stages,
+    )
+
+
+def update_attention_state_int8(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    k_scales: torch.Tensor,
+    v_scales: torch.Tensor,
+    running_max: torch.Tensor,
+    running_sum: torch.Tensor,
+    accumulator: torch.Tensor,
+    *,
+    q_tokens: int,
+    kv_tokens: int,
+    q_local_offset: int,
+    kv_local_offset: int,
+    storage_token_offset: int,
+    causal_shift: int,
+    softmax_scale: float,
+    causal: bool,
+    initialize: bool,
+    block_m: int,
+    block_n: int,
+    num_warps: int,
+    num_stages: int,
+    quant_group_tokens: int = 64,
+) -> None:
+    if triton is None:
+        raise RuntimeError("the Triton backend is not installed")
+    if k.dtype != torch.int8 or v.dtype != torch.int8:
+        raise ValueError("quantized K/V buffers must use int8")
+    if k_scales.dtype != torch.float16 or v_scales.dtype != torch.float16:
+        raise ValueError("quantized K/V scales must use float16")
+    head_dim = q.shape[-1]
+    block_d = triton.next_power_of_2(head_dim)
+    grid = (triton.cdiv(q_tokens, block_m), q.shape[1])
+    _streaming_attention_update_kernel[grid](
+        q,
+        k,
+        v,
+        k_scales,
+        v_scales,
+        running_max,
+        running_sum,
+        accumulator,
+        q_tokens,
+        kv_tokens,
+        q_local_offset,
+        kv_local_offset,
+        causal_shift,
+        softmax_scale * 1.4426950408889634,
+        *q.stride(),
+        *k.stride(),
+        *v.stride(),
+        *k_scales.stride(),
+        *v_scales.stride(),
+        storage_token_offset,
+        *running_max.stride(),
+        *accumulator.stride(),
+        GROUP_SIZE=q.shape[1] // k.shape[1],
+        HEAD_DIM=head_dim,
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        BLOCK_D=block_d,
+        CAUSAL=causal,
+        INITIALIZE=initialize,
+        KV_QUANTIZED=True,
+        QUANT_GROUP_TOKENS=quant_group_tokens,
         num_warps=num_warps,
         num_stages=num_stages,
     )

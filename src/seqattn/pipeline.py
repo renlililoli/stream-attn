@@ -68,7 +68,6 @@ class ProjectedAttentionRunner:
         attention_config: StreamingAttentionConfig | None = None,
         pipeline_config: ProjectionPipelineConfig | None = None,
     ):
-        self.plan = plan
         self.attention_config = (
             StreamingAttentionConfig() if attention_config is None else attention_config
         )
@@ -77,6 +76,17 @@ class ProjectedAttentionRunner:
         )
         self.attention_config.validate()
         self.pipeline_config.validate()
+        self.plan = build_plan(
+            q_heads=plan.q_heads,
+            kv_heads=plan.kv_heads,
+            head_dim=plan.head_dim,
+            dtype=plan.dtype,
+            device=plan.device,
+            max_q_tokens=plan.max_q_tokens,
+            max_kv_tokens=plan.max_kv_tokens,
+            config=self.attention_config,
+        )
+        plan = self.plan
         if plan.device.type != "cuda":
             raise ValueError("the projected pipeline requires a CUDA device")
         if self.attention_config.backend not in {"auto", "triton"}:

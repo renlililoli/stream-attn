@@ -55,9 +55,11 @@ class _CudaWorkspace:
             dtype=torch.float32,
             device=device,
         )
-        self.output = [
-            torch.empty_like(self.q) for _ in range(plan.num_output_buffers)
-        ]
+        self.output = (
+            [torch.empty_like(self.q) for _ in range(plan.num_output_buffers)]
+            if plan.output_mode == "host"
+            else []
+        )
         self.compute_stream = torch.cuda.current_stream(device)
         self.h2d_stream = torch.cuda.Stream(device=device)
         self.d2h_stream = torch.cuda.Stream(device=device)
@@ -67,10 +69,9 @@ class _CudaWorkspace:
         self.kv_ready = [torch.cuda.Event() for _ in self.k]
         self.kv_free = [torch.cuda.Event() for _ in self.k]
         self.kv_has_pending_compute = [False for _ in self.k]
-        self.output_ready = [torch.cuda.Event() for _ in self.output]
-        self.output_free = [torch.cuda.Event() for _ in self.output]
-        self.output_has_pending_copy = [False for _ in self.output]
-        self.output_transform_keepalive = [None for _ in self.output]
+        self.output_ready = [torch.cuda.Event() for _ in range(plan.num_output_buffers)]
+        self.output_free = [torch.cuda.Event() for _ in range(plan.num_output_buffers)]
+        self.output_has_pending_copy = [False for _ in range(plan.num_output_buffers)]
 
 
 class StreamingAttentionRunner:
@@ -90,6 +91,8 @@ class StreamingAttentionRunner:
         self.plan = plan
         self.config = StreamingAttentionConfig() if config is None else config
         self.config.validate()
+        if plan.output_mode != self.config.output_mode:
+            raise ValueError("attention plan output_mode does not match runner config")
         self.backend = resolve_backend(self.config.backend, plan.dtype, plan.device)
         self._workspace = _CudaWorkspace(plan) if self.backend == "triton" else None
 
@@ -110,6 +113,10 @@ class StreamingAttentionRunner:
         q_bounds, k_bounds = validate_host_qkv(
             q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k
         )
+        if self.plan.output_mode != "host":
+            raise ValueError(
+                "a device_consumer runner requires run_with_device_output()"
+            )
         if q_cpu.shape[1:] != (self.plan.q_heads, self.plan.head_dim):
             raise ValueError("q shape does not match the runner plan")
         if k_cpu.shape[1:] != (self.plan.kv_heads, self.plan.head_dim):
@@ -272,6 +279,10 @@ class StreamingAttentionRunner:
                     q_tokens = q_tile_stop - q_tile_start
                     q_local_offset = q_tile_start - q_start
                     output_index = q_chunk_index % plan.num_output_buffers
+                    reuse_q_for_output = (
+                        output_transform is not None
+                        and plan.output_mode == "device_consumer"
+                    )
 
                     with self._range("seqattn:q_h2d"):
                         with torch.cuda.stream(workspace.h2d_stream):
@@ -355,24 +366,30 @@ class StreamingAttentionRunner:
                             workspace.kv_free[buffer_index].record(compute_stream)
                             workspace.kv_has_pending_compute[buffer_index] = True
 
-                        workspace.q_free.record(compute_stream)
-                        workspace.q_has_pending_compute = True
-                        if workspace.output_has_pending_copy[output_index]:
-                            if output_transform is None:
-                                compute_stream.wait_event(
-                                    workspace.output_free[output_index]
-                                )
-                            else:
-                                workspace.output_free[output_index].synchronize()
-                                workspace.output_transform_keepalive[output_index] = None
+                        if not reuse_q_for_output:
+                            workspace.q_free.record(compute_stream)
+                            workspace.q_has_pending_compute = True
+                        else:
+                            workspace.q_has_pending_compute = False
+                        if (
+                            not reuse_q_for_output
+                            and workspace.output_has_pending_copy[output_index]
+                        ):
+                            compute_stream.wait_event(workspace.output_free[output_index])
+                        finalize_output = (
+                            workspace.q
+                            if reuse_q_for_output
+                            else workspace.output[output_index]
+                        )
                         with self._range("seqattn:fused_finalize"):
                             finalize_attention(
                                 workspace.accumulator,
                                 workspace.running_sum,
-                                workspace.output[output_index],
+                                finalize_output,
                                 q_tokens=q_tokens,
                             )
-                        output_gpu = workspace.output[output_index][:q_tokens]
+                        output_gpu = finalize_output[:q_tokens]
+                        output_aliases_q = reuse_q_for_output
                         if output_transform is not None:
                             with self._range("seqattn:device_output_transform"):
                                 output_gpu = output_transform(
@@ -394,7 +411,13 @@ class StreamingAttentionRunner:
                                 raise ValueError(
                                     "output_transform result dtype must match out dtype"
                                 )
-                            workspace.output_transform_keepalive[output_index] = output_gpu
+                            output_aliases_q = (
+                                output_gpu.untyped_storage().data_ptr()
+                                == workspace.q.untyped_storage().data_ptr()
+                            )
+                            if reuse_q_for_output and not output_aliases_q:
+                                workspace.q_free.record(compute_stream)
+                                workspace.q_has_pending_compute = True
                         workspace.output_ready[output_index].record(compute_stream)
                     with self._range("seqattn:output_d2h"):
                         with torch.cuda.stream(workspace.d2h_stream):
@@ -404,13 +427,15 @@ class StreamingAttentionRunner:
                             out_cpu[q_tile_start:q_tile_stop].copy_(
                                 output_gpu, non_blocking=out_cpu.is_pinned()
                             )
+                            output_gpu.record_stream(workspace.d2h_stream)
                             workspace.output_free[output_index].record(
                                 workspace.d2h_stream
                             )
+                            if reuse_q_for_output and output_aliases_q:
+                                workspace.q_free.record(workspace.d2h_stream)
+                                workspace.q_has_pending_compute = True
                     workspace.output_has_pending_copy[output_index] = True
                     stats.d2h_bytes += output_gpu.numel() * output_gpu.element_size()
                     q_chunk_index += 1
             workspace.d2h_stream.synchronize()
-            for index in range(len(workspace.output_transform_keepalive)):
-                workspace.output_transform_keepalive[index] = None
         return out_cpu
