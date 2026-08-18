@@ -132,6 +132,11 @@ class PageReadMetrics:
     quantization_seconds: float = 0.0
     logical_bytes: int = 0
     physical_bytes: int = 0
+    simulated_io_seconds: float = 0.0
+    simulated_service_seconds: float = 0.0
+    simulated_queue_seconds: float = 0.0
+    simulated_logical_bytes: int = 0
+    simulated_physical_bytes: int = 0
 
 
 def validate_cu_seqlens(cu_seqlens: torch.Tensor, total_tokens: int, name: str) -> list[int]:

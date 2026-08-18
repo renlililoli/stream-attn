@@ -476,6 +476,28 @@ class PagedAttentionRunner:
             stats.nvme_read_seconds += metrics.read_seconds
             stats.nvme_logical_read_bytes += metrics.logical_bytes
             stats.nvme_physical_read_bytes += metrics.physical_bytes
+        stats.simulated_read_seconds += metrics.simulated_io_seconds
+        stats.simulated_read_service_seconds += metrics.simulated_service_seconds
+        stats.simulated_read_queue_seconds += metrics.simulated_queue_seconds
+        stats.simulated_logical_read_bytes += metrics.simulated_logical_bytes
+        stats.simulated_physical_read_bytes += metrics.simulated_physical_bytes
+
+    @staticmethod
+    def _accumulate_write(
+        stats: PagedAttentionStats,
+        metrics: PageReadMetrics,
+        output_is_nvme: bool,
+    ) -> None:
+        stats.output_write_seconds += metrics.read_seconds
+        if output_is_nvme:
+            stats.nvme_write_seconds += metrics.read_seconds
+            stats.nvme_logical_write_bytes += metrics.logical_bytes
+            stats.nvme_physical_write_bytes += metrics.physical_bytes
+        stats.simulated_write_seconds += metrics.simulated_io_seconds
+        stats.simulated_write_service_seconds += metrics.simulated_service_seconds
+        stats.simulated_write_queue_seconds += metrics.simulated_queue_seconds
+        stats.simulated_logical_write_bytes += metrics.simulated_logical_bytes
+        stats.simulated_physical_write_bytes += metrics.simulated_physical_bytes
 
     @staticmethod
     def _finish_output_futures(
@@ -489,11 +511,9 @@ class PagedAttentionRunner:
             started = time.perf_counter()
             metrics = future.result()
             stats.io_queue_wait_seconds += time.perf_counter() - started
-            stats.output_write_seconds += metrics.read_seconds
-            if output_is_nvme:
-                stats.nvme_write_seconds += metrics.read_seconds
-                stats.nvme_logical_write_bytes += metrics.logical_bytes
-                stats.nvme_physical_write_bytes += metrics.physical_bytes
+            PagedAttentionRunner._accumulate_write(
+                stats, metrics, output_is_nvme
+            )
 
     def _submit_output(
         self,
@@ -511,11 +531,7 @@ class PagedAttentionRunner:
             started = time.perf_counter()
             metrics = previous.result()
             stats.io_queue_wait_seconds += time.perf_counter() - started
-            stats.output_write_seconds += metrics.read_seconds
-            if output_is_nvme:
-                stats.nvme_write_seconds += metrics.read_seconds
-                stats.nvme_logical_write_bytes += metrics.logical_bytes
-                stats.nvme_physical_write_bytes += metrics.physical_bytes
+            self._accumulate_write(stats, metrics, output_is_nvme)
         futures[slot] = executor.submit(writer.write_page, page, data[: page.valid_tokens])
 
     def _scan_kv_pages(
@@ -736,11 +752,7 @@ class PagedAttentionRunner:
                         wait_started = time.perf_counter()
                         metrics = previous.result()
                         stats.io_queue_wait_seconds += time.perf_counter() - wait_started
-                        stats.output_write_seconds += metrics.read_seconds
-                        if output_is_nvme:
-                            stats.nvme_write_seconds += metrics.read_seconds
-                            stats.nvme_logical_write_bytes += metrics.logical_bytes
-                            stats.nvme_physical_write_bytes += metrics.physical_bytes
+                        self._accumulate_write(stats, metrics, output_is_nvme)
                         output_futures[output_host_slot] = None
                     metrics = q_reader.read_q(q_page, staging.q)
                     self._accumulate_read(stats, metrics, None, q_is_nvme)

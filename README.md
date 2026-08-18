@@ -427,6 +427,29 @@ claim NVMe latency. Formal runs must use a measured local device at or above
 7GB/s and pass `--formal-local-nvme`; otherwise result JSON is marked as
 functional/memory-only.
 
+For pipeline testing without a physical NVMe device, `simulated-nvme` keeps
+Q/K/V in caller-owned memory and applies per-page latency plus an aggregate
+read/write bandwidth limit inside the normal I/O worker pipeline:
+
+```bash
+seqattn-paged-bench \
+  --storage simulated-nvme \
+  --tokens 61312 \
+  --simulate-read-gbps 7 \
+  --simulate-write-gbps 6 \
+  --simulate-read-latency-us 80 \
+  --simulate-write-latency-us 100 \
+  --output benchmark-results/simulated_nvme_61312.json
+```
+
+The simulator is implemented separately from the real direct-I/O backend in
+`seqattn.simulated_nvme`. Concurrent requests share one device bandwidth
+timeline, so adding I/O workers does not multiply the configured bandwidth.
+Read and write limits are independent, and fixed command latency may overlap.
+Simulation results always set `storage_performance_valid=false`; they model
+pipeline stalls and overlap, not filesystem, firmware, PCIe contention,
+thermal behavior, or physical-device acceptance.
+
 <p align="center">
   <img src="docs/assets/projected-pipeline-results.svg" alt="Projected pipeline benchmark results" width="100%">
 </p>

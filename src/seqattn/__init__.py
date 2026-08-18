@@ -29,6 +29,13 @@ from .paging import (
 )
 from .pipeline import ProjectedAttentionRunner, streaming_projected_self_attention
 from .planner import AttentionPlan, build_plan
+from .simulated_nvme import (
+    SimulatedIoDelay,
+    SimulatedNvmeConfig,
+    SimulatedNvmeDevice,
+    SimulatedPageSink,
+    SimulatedPageSource,
+)
 from .stats import PagedAttentionStats, ProjectedAttentionStats, StreamingAttentionStats
 
 __all__ = [
@@ -51,6 +58,11 @@ __all__ = [
     "ProjectedAttentionRunner",
     "ProjectedAttentionStats",
     "ProjectionPipelineConfig",
+    "SimulatedIoDelay",
+    "SimulatedNvmeConfig",
+    "SimulatedNvmeDevice",
+    "SimulatedPageSink",
+    "SimulatedPageSource",
     "StreamingAttentionConfig",
     "StreamingAttentionRunner",
     "StreamingAttentionStats",

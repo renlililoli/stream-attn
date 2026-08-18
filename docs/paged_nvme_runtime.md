@@ -21,6 +21,8 @@ HBM residency, io_uring, or GPUDirect Storage.
 - `CallbackOutputSink`: synchronous immediate page consumption.
 - `NvmeQKVWriter`: tensor convenience construction and page-iterator streaming
   construction.
+- `SimulatedNvmeDevice`, `SimulatedPageSource`, and `SimulatedPageSink`:
+  in-memory page adapters with shared aggregate read/write bandwidth timelines.
 - `HostMemoryPlan`: category and total operator-memory enforcement.
 - `PagedAttentionRunner`: bounded cache, I/O, H2D/compute/D2H, and sink pipeline.
 
@@ -50,3 +52,27 @@ kernel time.
 
 This repository's current node is not an NVMe performance reference. Publish
 only correctness and memory-cap results from it.
+
+## In-memory NVMe simulation
+
+`seqattn.simulated_nvme` is intentionally separate from the real file-format
+and `O_DIRECT` implementation. It wraps any `PageSource` or `PageSink`, leaves
+page contents unchanged, and delays each actual page operation. For one
+direction, the model is:
+
+```text
+command ready = arrival + fixed latency
+transfer time = physical page bytes / aggregate bandwidth
+```
+
+Command latency may overlap across workers, while transfer reservations share
+one device timeline. A semaphore separately bounds in-flight reads and writes.
+Using the same `SimulatedNvmeDevice` for Q, K/V, and output makes all reads
+share the configured read limit while preserving independent full-duplex write
+timing.
+
+This is useful for queue-depth, cache, read-ahead, and GPU-overlap experiments.
+It does not emulate a filesystem, direct-I/O alignment cost, controller
+firmware, PCIe contention, writeback behavior, thermal throttling, or device
+failure. Simulated benchmark output is never valid evidence for the physical
+NVMe latency acceptance target.

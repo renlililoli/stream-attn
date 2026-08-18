@@ -51,6 +51,12 @@ class PagedAttentionStats:
     wall_seconds: float = 0.0
     nvme_read_seconds: float = 0.0
     nvme_write_seconds: float = 0.0
+    simulated_read_seconds: float = 0.0
+    simulated_write_seconds: float = 0.0
+    simulated_read_service_seconds: float = 0.0
+    simulated_write_service_seconds: float = 0.0
+    simulated_read_queue_seconds: float = 0.0
+    simulated_write_queue_seconds: float = 0.0
     io_queue_wait_seconds: float = 0.0
     cache_lookup_seconds: float = 0.0
     pinned_copy_seconds: float = 0.0
@@ -69,6 +75,10 @@ class PagedAttentionStats:
     nvme_physical_read_bytes: int = 0
     nvme_logical_write_bytes: int = 0
     nvme_physical_write_bytes: int = 0
+    simulated_logical_read_bytes: int = 0
+    simulated_physical_read_bytes: int = 0
+    simulated_logical_write_bytes: int = 0
+    simulated_physical_write_bytes: int = 0
     h2d_bytes: int = 0
     d2h_bytes: int = 0
     q_chunk_tokens: int = 0

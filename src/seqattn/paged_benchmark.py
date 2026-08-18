@@ -16,6 +16,12 @@ from .config import PagedAttentionConfig, StreamingAttentionConfig
 from .nvme import NvmeOutputSink, NvmeQKVWriter
 from .paged_runtime import PagedAttentionRunner
 from .paging import CallbackOutputSink, KVLayout, MemoryPageSource, TensorLayout
+from .simulated_nvme import (
+    SimulatedNvmeConfig,
+    SimulatedNvmeDevice,
+    SimulatedPageSink,
+    SimulatedPageSource,
+)
 from .stats import PagedAttentionStats
 
 try:
@@ -160,7 +166,11 @@ def stream_store(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark paged seqattn")
-    parser.add_argument("--storage", choices=("memory", "nvme-bf16", "nvme-int8"), required=True)
+    parser.add_argument(
+        "--storage",
+        choices=("memory", "simulated-nvme", "nvme-bf16", "nvme-int8"),
+        required=True,
+    )
     parser.add_argument("--tokens", type=int, required=True)
     parser.add_argument("--segments", type=int, default=1)
     parser.add_argument("--q-heads", type=int, default=56)
@@ -180,9 +190,26 @@ def main() -> None:
     parser.add_argument("--store-dir", type=Path)
     parser.add_argument("--buffered-io-for-tests", action="store_true")
     parser.add_argument("--formal-local-nvme", action="store_true")
+    parser.add_argument("--simulate-read-gbps", type=float, default=7.0)
+    parser.add_argument("--simulate-write-gbps", type=float, default=6.0)
+    parser.add_argument("--simulate-read-latency-us", type=float, default=80.0)
+    parser.add_argument("--simulate-write-latency-us", type=float, default=100.0)
+    parser.add_argument("--simulate-max-concurrent-reads", type=int, default=4)
+    parser.add_argument("--simulate-max-concurrent-writes", type=int, default=4)
+    parser.add_argument("--simulate-jitter-fraction", type=float, default=0.0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
+    formal_nvme = args.storage.startswith("nvme-") and args.formal_local_nvme
+    if args.storage == "simulated-nvme":
+        performance_note = (
+            "In-memory timing simulation only; it is not a filesystem, firmware, "
+            "PCIe, or physical NVMe performance result."
+        )
+    elif formal_nvme:
+        performance_note = "Explicitly marked as a >=7 GB/s local NVMe run by the caller."
+    else:
+        performance_note = "Functional/memory result only; do not use this node for NVMe claims."
     result: dict[str, object] = {
         "status": "runtime_error",
         "configuration": vars(args) | {"output": str(args.output)},
@@ -192,12 +219,13 @@ def main() -> None:
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
         },
-        "storage_performance_valid": bool(args.formal_local_nvme),
-        "storage_performance_note": (
-            "Explicitly marked as a >=7 GB/s local NVMe run by the caller."
-            if args.formal_local_nvme
-            else "Functional/memory result only; do not use this node for NVMe claims."
+        "storage_backend": (
+            "simulated_nvme"
+            if args.storage == "simulated-nvme"
+            else "nvme" if args.storage.startswith("nvme-") else "memory"
         ),
+        "storage_performance_valid": formal_nvme,
+        "storage_performance_note": performance_note,
     }
     temporary: tempfile.TemporaryDirectory[str] | None = None
     try:
@@ -209,12 +237,13 @@ def main() -> None:
         page_target_bytes = args.page_mib * 2**20
         preparation_seconds = 0.0
         quantization_seconds = 0.0
-        if args.storage == "memory":
+        simulated_device = None
+        if args.storage in {"memory", "simulated-nvme"}:
             generator = torch.Generator(device="cpu").manual_seed(args.seed)
             q = make_tensor((args.tokens, args.q_heads, args.head_dim), dtype, generator)
             k = make_tensor((args.tokens, args.kv_heads, args.head_dim), dtype, generator)
             v = make_tensor((args.tokens, args.kv_heads, args.head_dim), dtype, generator)
-            source = MemoryPageSource(
+            memory_source = MemoryPageSource(
                 q=q,
                 k=k,
                 v=v,
@@ -225,6 +254,24 @@ def main() -> None:
             )
             storage_dtype = "bf16" if dtype == torch.bfloat16 else "fp16"
             direct_io = False
+            if args.storage == "simulated-nvme":
+                simulated_config = SimulatedNvmeConfig(
+                    read_bandwidth_bytes_per_second=args.simulate_read_gbps * 1e9,
+                    write_bandwidth_bytes_per_second=args.simulate_write_gbps * 1e9,
+                    read_latency_seconds=args.simulate_read_latency_us * 1e-6,
+                    write_latency_seconds=args.simulate_write_latency_us * 1e-6,
+                    max_concurrent_reads=args.simulate_max_concurrent_reads,
+                    max_concurrent_writes=args.simulate_max_concurrent_writes,
+                    jitter_fraction=args.simulate_jitter_fraction,
+                    random_seed=args.seed,
+                )
+                simulated_device = SimulatedNvmeDevice(simulated_config)
+                source = SimulatedPageSource(
+                    memory_source, device=simulated_device
+                )
+                result["simulated_nvme_config"] = simulated_config.as_dict()
+            else:
+                source = memory_source
         else:
             if args.store_dir is None:
                 temporary = tempfile.TemporaryDirectory(prefix="seqattn-bench-")
@@ -278,12 +325,14 @@ def main() -> None:
         with ProcessMemorySampler() as sampler:
             for repeat in range(args.repeats):
                 stats = PagedAttentionStats()
-                if args.storage == "memory":
+                if args.storage in {"memory", "simulated-nvme"}:
                     def consume(_page, data):
                         nonlocal checksum
                         checksum += float(data[0, 0, 0])
 
                     sink = CallbackOutputSink(consume)
+                    if simulated_device is not None:
+                        sink = SimulatedPageSink(sink, device=simulated_device)
                 else:
                     assert source.path is not None
                     output_dir = source.path.parent / f"output-{os.getpid()}-{repeat}"
