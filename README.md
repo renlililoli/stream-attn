@@ -18,6 +18,50 @@ This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
 It targets exact long-context inference under a fixed GPU-memory budget and
 reports the resulting PCIe and latency cost explicitly.
 
+## MiniMax-H3 integration
+
+`seqattn` is integrated into a MiniMax-H3 NF4 inference branch in
+[`renlililoli/minimax-h3-seq-chunk-attn`](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
+The integration streams the complete H3 attention path rather than wrapping an
+isolated attention microbenchmark:
+
+```text
+chunked QKV projection → pinned CPU Q/K/V → resident-Q Triton attention
+                       → GPU out projection + gate + residual → CPU hidden
+```
+
+<p align="center">
+  <img src="docs/assets/minimax-h3-live-overview.svg" alt="MiniMax-H3 132K-token live benchmark" width="100%">
+</p>
+
+### Results at a glance
+
+| Experiment | Scale | Result | Why it matters |
+|---|---:|---:|---|
+| H3 8GB capacity probe | 132,288 packed tokens | **5,968 MiB** process peak | A complete 50-block denoise forward succeeds under an 8GiB whole-process target. |
+| Native-vs-seqattn live soak | 132,288 packed tokens | **30,850 vs 7,162 MiB** | Current in-progress observation is **4.31× lower GPU memory** on separate RTX 5090s. |
+| Projection pipeline | 61,312 tokens | **7,108 → 3,848 MiB** | Keeping attention output on GPU cuts the measured peak by **45.9%**. |
+| Projection pipeline latency | 61,312 tokens | **919.79 → 843.44 ms** | Fusion reduces latency by **8.3%** as well as memory. |
+| H3 integration vs prior streamed path | 61,056 packed tokens | **81.5 GiB less PCIe traffic/step** | Removes the raw-attention D2H→H2D round trip across 50 H3 blocks. |
+
+The completed 132K capacity probe used the full 50-block DiT for one denoise
+step, not a five-layer proxy.  It measured 236.39 seconds, 5,968 MiB PID-level
+NVML peak, and 48.4 GiB CPU RSS.  The 50-step video-generation soak shown in
+the figure is still running as of August 18, 2026; its live numbers are
+published as an explicitly preliminary snapshot, not as a completed result.
+The final report will also include both VAE decoders and MP4 muxing.
+
+The native path remains faster when its full activation set fits on a 32GiB
+GPU.  At the current live snapshot it takes about 140.1 seconds per denoise
+step versus 224.3 seconds for `seqattn`, a 1.60× slowdown.  The value proposition
+is capacity: the same 20-second workload can be executed below an 8GiB target
+instead of consuming about 30.85GiB.  Host RAM and PCIe costs are reported
+rather than hidden.
+
+See the [MiniMax-H3 integration report](docs/minimax_h3_integration.md) for the
+protocol, completed measurements, live-soak boundary, and reproducibility
+details.
+
 ## Features
 
 - CPU-backed contiguous and pinned Q/K/V.
@@ -244,6 +288,10 @@ Triton operator.
 `workspace_budget_bytes` only covers buffers owned by `seqattn`.  Whole-process
 budgets must also reserve memory for the CUDA context, weights, and caller-owned
 activations.
+
+<p align="center">
+  <img src="docs/assets/projected-pipeline-results.svg" alt="Projected pipeline benchmark results" width="100%">
+</p>
 
 ## Execution pipeline
 

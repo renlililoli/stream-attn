@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Projected pipeline benchmark results</title>
+  <desc id="desc">Memory and latency improvements from fusing output projection with out-of-core attention.</desc>
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07111f"/><stop offset="1" stop-color="#15162c"/></linearGradient>
+    <linearGradient id="pipe" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#0891b2"/><stop offset="1" stop-color="#67e8f9"/></linearGradient>
+    <linearGradient id="stage" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#6d28d9"/><stop offset="1" stop-color="#c084fc"/></linearGradient>
+  </defs>
+  <rect width="1200" height="620" rx="28" fill="url(#bg2)"/>
+  <text x="56" y="62" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="29" font-weight="700">Projection → attention → out-projection pipeline</text>
+  <text x="56" y="96" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="17">H3 dimensions · BF16 · RTX 5090 · independent processes</text>
+
+  <rect x="56" y="126" width="738" height="410" rx="22" fill="#0d182b" stroke="#23324e"/>
+  <text x="86" y="166" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="19" font-weight="700">NVML process peak</text>
+  <text x="86" y="194" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="14">MiB · lower is better</text>
+  <line x1="112" y1="470" x2="754" y2="470" stroke="#334155"/>
+  <line x1="112" y1="270" x2="754" y2="270" stroke="#1e293b" stroke-dasharray="5 7"/>
+  <text x="72" y="475" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13">0</text>
+  <text x="62" y="275" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13">4K</text>
+  <text x="62" y="225" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13">8K</text>
+
+  <rect x="158" y="401" width="54" height="69" rx="8" fill="url(#pipe)"/><rect x="220" y="390" width="54" height="80" rx="8" fill="url(#stage)"/>
+  <rect x="365" y="334" width="54" height="136" rx="8" fill="url(#pipe)"/><rect x="427" y="282" width="54" height="188" rx="8" fill="url(#stage)"/>
+  <rect x="572" y="278" width="54" height="192" rx="8" fill="url(#pipe)"/><rect x="634" y="115" width="54" height="355" rx="8" fill="url(#stage)"/>
+  <text x="157" y="500" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="14">3,072</text>
+  <text x="358" y="500" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="14">15,104</text>
+  <text x="565" y="500" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="14">61,312</text>
+  <rect x="520" y="154" width="12" height="12" rx="3" fill="#67e8f9"/><text x="540" y="165" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="14">pipeline</text>
+  <rect x="620" y="154" width="12" height="12" rx="3" fill="#c084fc"/><text x="640" y="165" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="14">staged</text>
+
+  <rect x="824" y="126" width="320" height="410" rx="22" fill="#0d182b" stroke="#23324e"/>
+  <text x="854" y="166" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="19" font-weight="700">At 61,312 tokens</text>
+  <text x="854" y="224" fill="#67e8f9" font-family="Inter,Segoe UI,sans-serif" font-size="44" font-weight="750">−45.9%</text>
+  <text x="854" y="251" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">process GPU peak</text>
+  <line x1="854" y1="278" x2="1114" y2="278" stroke="#23324e"/>
+  <text x="854" y="329" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="35" font-weight="720">−8.3%</text>
+  <text x="854" y="354" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">mean latency</text>
+  <line x1="854" y1="380" x2="1114" y2="380" stroke="#23324e"/>
+  <text x="854" y="431" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="35" font-weight="720">1.637 GiB</text>
+  <text x="854" y="456" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15">raw-output round trip removed</text>
+  <text x="854" y="502" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13">3,848 MiB vs 7,108 MiB</text>
+  <text x="56" y="577" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="14">The attention result stays on GPU and flows directly into model-owned output projection and residual/gate epilogues.</text>
+</svg>

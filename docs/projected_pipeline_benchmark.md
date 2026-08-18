@@ -1,5 +1,9 @@
 # Projection-attention-output pipeline benchmark
 
+<p align="center">
+  <img src="assets/projected-pipeline-results.svg" alt="Projected pipeline benchmark results" width="100%">
+</p>
+
 ## Question
 
 The original staged out-of-core path materializes raw attention output in CPU

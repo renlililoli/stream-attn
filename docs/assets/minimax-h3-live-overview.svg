@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">MiniMax-H3 132K-token live benchmark</title>
+  <desc id="desc">Preliminary memory and denoise latency comparison between native DiffSynth and seqattn on separate RTX 5090 GPUs.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#111a31"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#000" flood-opacity=".32"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="640" rx="28" fill="url(#bg)"/>
+  <circle cx="1080" cy="40" r="220" fill="#3b82f6" opacity=".08"/>
+  <circle cx="90" cy="610" r="230" fill="#8b5cf6" opacity=".07"/>
+
+  <text x="56" y="64" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="30" font-weight="700">MiniMax-H3 · 132,288 packed tokens</text>
+  <text x="56" y="98" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="17">736×1280 · 481 frames · 20.04 s · NF4/BF16 · RTX 5090</text>
+  <rect x="930" y="48" width="214" height="42" rx="21" fill="#f59e0b" opacity=".14"/>
+  <circle cx="955" cy="69" r="6" fill="#fbbf24"/>
+  <text x="971" y="75" fill="#fde68a" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600">50-step soak running</text>
+
+  <g filter="url(#shadow)">
+    <rect x="56" y="132" width="526" height="190" rx="22" fill="#101d33" stroke="#23324e"/>
+    <text x="84" y="170" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" letter-spacing="1.2">PROCESS GPU PEAK</text>
+    <text x="84" y="222" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="42" font-weight="750">30.85 GiB</text>
+    <text x="332" y="222" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="19">native</text>
+    <rect x="84" y="246" width="438" height="18" rx="9" fill="#1e293b"/>
+    <rect x="84" y="246" width="422" height="18" rx="9" fill="url(#violet)"/>
+    <text x="84" y="297" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="25" font-weight="700">6.99 GiB</text>
+    <text x="210" y="297" fill="#22d3ee" font-family="Inter,Segoe UI,sans-serif" font-size="17" font-weight="650">seqattn · 4.31× lower</text>
+    <rect x="407" y="280" width="115" height="10" rx="5" fill="#1e293b"/>
+    <rect x="407" y="280" width="27" height="10" rx="5" fill="url(#cyan)"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="618" y="132" width="526" height="190" rx="22" fill="#101d33" stroke="#23324e"/>
+    <text x="646" y="170" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" letter-spacing="1.2">DENOISE LATENCY / STEP</text>
+    <text x="646" y="222" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="42" font-weight="750">140.1 s</text>
+    <text x="810" y="222" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="19">native</text>
+    <rect x="646" y="246" width="438" height="18" rx="9" fill="#1e293b"/>
+    <rect x="646" y="246" width="274" height="18" rx="9" fill="url(#violet)"/>
+    <text x="646" y="297" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="25" font-weight="700">224.3 s</text>
+    <text x="784" y="297" fill="#fbbf24" font-family="Inter,Segoe UI,sans-serif" font-size="17" font-weight="650">seqattn · 1.60× slower</text>
+    <rect x="969" y="280" width="115" height="10" rx="5" fill="#1e293b"/>
+    <rect x="969" y="280" width="115" height="10" rx="5" fill="url(#cyan)"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="56" y="354" width="1088" height="214" rx="22" fill="#0d182b" stroke="#23324e"/>
+    <text x="84" y="396" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="20" font-weight="700">What the current observation establishes</text>
+
+    <circle cx="96" cy="438" r="16" fill="#22d3ee" opacity=".16"/>
+    <path d="M89 438l5 5 10-12" fill="none" stroke="#67e8f9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="126" y="444" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="17">The same 132K-token DiT workload stays below an 8 GiB whole-process target.</text>
+
+    <circle cx="96" cy="482" r="16" fill="#22d3ee" opacity=".16"/>
+    <path d="M89 482l5 5 10-12" fill="none" stroke="#67e8f9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="126" y="488" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="17">Native full-sequence DiffSynth consumes 94.6% of the 32 GiB card.</text>
+
+    <circle cx="96" cy="526" r="16" fill="#f59e0b" opacity=".16"/>
+    <path d="M96 516v12m0 7v1" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+    <text x="126" y="532" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="17">Capacity is traded for latency, host RAM, and PCIe traffic; the final 50-step result is not yet claimed.</text>
+  </g>
+
+  <text x="56" y="606" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="14">Live snapshot: native 6/50 steps, seqattn 4/50 steps · 2 ms PID-level NVML sampling · 2026-08-18 UTC</text>
+</svg>
