@@ -40,7 +40,7 @@ def main() -> None:
         command = [
             sys.executable,
             "-m",
-            "seqattn.paged_benchmark",
+            "seqattn.benchmarking.paged",
             "--tokens",
             str(tokens),
             "--host-budget-gib",
@@ -58,10 +58,14 @@ def main() -> None:
             *args.extra,
         ]
         completed = subprocess.run(command, check=False)
-        row = json.loads(output.read_text()) if output.exists() else {
-            "status": "runtime_error",
-            "failure_message": f"benchmark exited {completed.returncode}",
-        }
+        row = (
+            json.loads(output.read_text())
+            if output.exists()
+            else {
+                "status": "runtime_error",
+                "failure_message": f"benchmark exited {completed.returncode}",
+            }
+        )
         summary.append({"name": name, **row})
     (args.output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n"

@@ -25,9 +25,9 @@ benchmark = ["pynvml>=12", "pandas>=2", "matplotlib>=3.8"]
 dev = ["pytest>=8", "ruff>=0.9"]
 
 [project.scripts]
-seqattn-bench = "seqattn.benchmark:main"
-seqattn-paged-bench = "seqattn.paged_benchmark:main"
-seqattn-pipeline-bench = "seqattn.pipeline_benchmark:main"
+seqattn-bench = "seqattn.benchmarking.streaming:main"
+seqattn-paged-bench = "seqattn.benchmarking.paged:main"
+seqattn-pipeline-bench = "seqattn.benchmarking.projection:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

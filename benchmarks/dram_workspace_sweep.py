@@ -21,7 +21,7 @@ from seqattn import (
     StreamingAttentionStats,
     build_plan,
 )
-from seqattn.paged_benchmark import ProcessMemorySampler, make_bounds
+from seqattn.benchmarking.common import ProcessMemorySampler, make_bounds
 
 
 def atomic_json(path: Path, payload: object) -> None:
@@ -69,9 +69,7 @@ def main() -> None:
             raise ValueError("CPU generation worker and chunk counts must be positive")
         torch.set_num_threads(1)
         dtype = getattr(torch, args.dtype)
-        sizes = activation_sizes(
-            args.tokens, args.q_heads, args.kv_heads, args.head_dim, dtype
-        )
+        sizes = activation_sizes(args.tokens, args.q_heads, args.kv_heads, args.head_dim, dtype)
         result["activation_sizes"] = sizes
 
         preparation_started = time.perf_counter()
@@ -90,9 +88,7 @@ def main() -> None:
         output = torch.empty(q.shape, dtype=q.dtype, pin_memory=True)
         preparation_seconds = time.perf_counter() - preparation_started
         result["data_preparation_seconds"] = preparation_seconds
-        result["data_preparation_gib_per_second"] = (
-            sizes["qkv_bytes"] / 2**30 / preparation_seconds
-        )
+        result["data_preparation_gib_per_second"] = sizes["qkv_bytes"] / 2**30 / preparation_seconds
         rows = []
         result.update(status="running", rows=rows)
         atomic_json(args.output, result)

@@ -23,7 +23,7 @@ from seqattn import (
     SimulatedPageSource,
     StreamingAttentionConfig,
 )
-from seqattn.paged_benchmark import ProcessMemorySampler, atomic_json, make_bounds
+from seqattn.benchmarking.common import ProcessMemorySampler, atomic_json, make_bounds
 
 
 def make_tensors_parallel(
@@ -147,11 +147,15 @@ def run_gpu_resident(
     torch.cuda.synchronize()
     execution_seconds = time.perf_counter() - started
     signature.from_gpu(output)
-    return residency_seconds, execution_seconds, {
-        "output_residency": "gpu",
-        "torch_peak_allocated_bytes": torch.cuda.max_memory_allocated(),
-        "torch_peak_reserved_bytes": torch.cuda.max_memory_reserved(),
-    }
+    return (
+        residency_seconds,
+        execution_seconds,
+        {
+            "output_residency": "gpu",
+            "torch_peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+            "torch_peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+        },
+    )
 
 
 def run_paged(
@@ -251,9 +255,7 @@ def run_paged(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare >8GiB attention storage tiers")
-    parser.add_argument(
-        "--mode", choices=("gpu-resident", "dram", "simulated-nvme"), required=True
-    )
+    parser.add_argument("--mode", choices=("gpu-resident", "dram", "simulated-nvme"), required=True)
     parser.add_argument("--tokens", type=int, default=524_288)
     parser.add_argument("--segments", type=int, default=1)
     parser.add_argument("--q-heads", type=int, default=56)
@@ -304,9 +306,7 @@ def main() -> None:
             raise ValueError("CPU generation worker and chunk counts must be positive")
         torch.set_num_threads(1)
         dtype = getattr(torch, args.dtype)
-        sizes = activation_sizes(
-            args.tokens, args.q_heads, args.kv_heads, args.head_dim, dtype
-        )
+        sizes = activation_sizes(args.tokens, args.q_heads, args.kv_heads, args.head_dim, dtype)
         result["activation_sizes"] = sizes
         if sizes["qkv_bytes"] <= 8 * 2**30:
             raise ValueError("the selected complete Q/K/V activation is not larger than 8GiB")
@@ -354,9 +354,7 @@ def main() -> None:
         result.update(
             status="success",
             data_preparation_seconds=data_preparation_seconds,
-            data_preparation_gib_per_second=(
-                sizes["qkv_bytes"] / 2**30 / data_preparation_seconds
-            ),
+            data_preparation_gib_per_second=(sizes["qkv_bytes"] / 2**30 / data_preparation_seconds),
             gpu_residency_preparation_seconds=residency_seconds,
             execution_seconds=execution_seconds,
             effective_tflops=flop / execution_seconds / 1e12,

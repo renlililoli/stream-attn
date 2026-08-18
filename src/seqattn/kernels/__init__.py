@@ -1,13 +1,3 @@
-from .streaming import (
-    finalize_attention,
-    triton_is_available,
-    update_attention_state,
-    update_attention_state_int8,
-)
+"""Public facade for :mod:`seqattn_core.kernels`."""
 
-__all__ = [
-    "finalize_attention",
-    "triton_is_available",
-    "update_attention_state",
-    "update_attention_state_int8",
-]
+from seqattn_core.kernels import *  # noqa: F403

@@ -1,5 +1,69 @@
 # Architecture notes
 
+## Package boundaries
+
+The repository ships two packages: `seqattn_core` holds the implementation,
+and `seqattn` is a pure compatibility facade.
+
+```text
+seqattn_core/        implementation only; no compat facades
+  api.py             functional public API
+  config.py          execution policy dataclasses
+  planner.py         workspace and budget planning
+  stats.py           statistics dataclasses
+  reference.py       FP32 online-softmax CPU reference
+  validation.py      host tensor and sequence validation
+  quantization.py    per-token-group INT8 quantization
+  streaming/         contiguous CPU-DRAM -> HBM execution
+    backend.py       backend selection and capability checks
+    workspace.py     persistent CUDA buffers, streams, and events
+    executor.py      Triton copy/compute/output schedule
+    runner.py        validation, reference dispatch, and public runner
+  paged/             fixed-host-budget page runtime
+    layout.py        page descriptors and tensor/KV layouts
+    protocols.py     PageSource/PageSink reader/writer contracts
+    memory.py        caller-owned memory source and sinks
+    memory_budget.py host allocation accounting and enforcement
+    cache.py         bounded two-region K/V cache
+    simulation.py    in-memory NVMe timing model
+    runtime/         orchestration, staging, I/O, reference, and Triton paths
+  storage/           persistent aligned backing stores
+    direct_io.py     O_DIRECT helpers and aligned bounce buffers
+    records.py       on-disk Q/KV page record construction
+    qkv_store.py     Q/KV manifest validation and page reads
+    qkv_writer.py    streaming Q/KV store construction
+    output.py        paged output writer and loader
+  projection/        hidden-state projection attention pipeline
+    types.py         projection callback contracts
+    workspace.py     persistent projection streams and buffers
+    runner.py        projected attention orchestration
+    api.py           functional convenience API
+  benchmarking/      benchmark CLIs and reusable instrumentation
+    common.py        JSON, sequence bounds, RSS, and NVML sampling
+    streaming.py     DRAM-backed and full-GPU benchmark
+    paged.py         memory, simulated-NVMe, and NVMe benchmark
+    projection.py    projected pipeline benchmark
+  kernels/           Triton kernels and launch wrappers
+
+seqattn/             compatibility facade; no implementation
+  __init__.py        re-exports the seqattn_core public surface
+  api.py …            wrappers re-exporting the matching seqattn_core module
+  benchmark.py       legacy python -m seqattn.benchmark entry point
+  paged_benchmark.py legacy python -m seqattn.paged_benchmark entry point
+  pipeline_benchmark.py legacy python -m seqattn.pipeline_benchmark entry point
+  paged/ storage/ projection/ streaming/ benchmarking/ kernels/
+                     subpackage wrappers preserving every historical
+                     module path
+```
+
+Every module in `seqattn` is a thin re-export of its `seqattn_core`
+counterpart and contains no implementation. Top-level modules such as
+`seqattn.paging`, `seqattn.nvme`, `seqattn.paged_runtime`, `seqattn.runtime`,
+`seqattn.pipeline`, and the three legacy benchmark modules are compatibility
+facades; they exist only in `seqattn`. New internal code imports the owning
+`seqattn_core` module directly; external code can retain the original import
+paths and `python -m` entry points.
+
 ## Memory hierarchy
 
 The paged operator spans five storage levels:

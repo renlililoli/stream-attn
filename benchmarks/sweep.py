@@ -8,9 +8,13 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run each seqattn benchmark point in a new process")
+    parser = argparse.ArgumentParser(
+        description="Run each seqattn benchmark point in a new process"
+    )
     parser.add_argument("--tokens", nargs="+", type=int, required=True)
-    parser.add_argument("--modes", nargs="+", choices=("seqattn", "flash2", "sdpa"), default=["seqattn", "flash2"])
+    parser.add_argument(
+        "--modes", nargs="+", choices=("seqattn", "flash2", "sdpa"), default=["seqattn", "flash2"]
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--extra", nargs=argparse.REMAINDER, default=[])
     args = parser.parse_args()
@@ -22,7 +26,7 @@ def main() -> None:
             command = [
                 sys.executable,
                 "-m",
-                "seqattn.benchmark",
+                "seqattn.benchmarking.streaming",
                 "--mode",
                 mode,
                 "--tokens",
@@ -32,10 +36,14 @@ def main() -> None:
                 *args.extra,
             ]
             completed = subprocess.run(command, check=False)
-            row = json.loads(output.read_text()) if output.exists() else {
-                "status": "runtime_error",
-                "failure_message": f"benchmark process exited {completed.returncode}",
-            }
+            row = (
+                json.loads(output.read_text())
+                if output.exists()
+                else {
+                    "status": "runtime_error",
+                    "failure_message": f"benchmark process exited {completed.returncode}",
+                }
+            )
             summary.append({"mode": mode, "tokens": tokens, **row})
     (args.output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n"
