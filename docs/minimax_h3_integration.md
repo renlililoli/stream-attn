@@ -126,19 +126,31 @@ artificial memory limit.  GPU memory is sampled for the current PID every 2ms.
 
 | Live snapshot | Native DiffSynth | `seqattn` 8GiB target |
 |---|---:|---:|
-| Completed denoise steps | 6 / 50 | 4 / 50 |
-| Latest step | 140.117 s | 224.324 s |
-| Latest observed process peak | 30,850 MiB | 7,162 MiB |
-| Latest step-end memory | 30,850 MiB | 4,434 MiB |
-| Relative memory | 100% | **23.2%** |
+| Completed denoise steps | **14 / 50, then OOM** | **14 / 50, still running** |
+| Mean step through step 14 | **140.068 s** | about 224.31 s |
+| Latest observed process peak | 30,876 MiB | **7,164 MiB** |
+| Latest step-end memory | 30,876 MiB | **4,432 MiB** |
+| Relative peak memory | 100% | **23.2%** |
 | Relative latency | 1.00× | 1.60× |
 
-The preliminary snapshot shows the capacity trade clearly: native DiffSynth is
-faster but occupies about 30.85GiB, while `seqattn` remains below 8GiB.  The
-latest `seqattn` step-end value remains stable around 4.43GiB; the larger
-7.16GiB value is a transient within-step peak captured by high-frequency NVML
-sampling.  No final completion, decode, or media claim should be made until all
-50 steps, video/audio VAE decode, and MP4 mux finish successfully.
+The native result is now final: status `oom`, 14 completed steps, 30,876MiB
+PID-level NVML peak, and a failed 3.53GiB allocation in the full-sequence MLP
+gate/up product while starting step 15.  There was no artificial native VRAM
+limit.  Its reserved memory rises gradually from 30,206MiB after step 1 to
+30,254MiB after step 14 while allocated memory at the sampled boundaries varies
+between 1,312MiB and 4,223MiB.
+
+At the matching 14-step checkpoint, `seqattn` remains below the strict 8GiB
+target.  Its step-end value stays at 4,432–4,434MiB and its within-step peak at
+7,160–7,164MiB.  This is the strongest current capacity comparison: native is
+faster per successful step but cannot finish the requested workload on the
+32GiB card, while the 8GiB-target `seqattn` process continues.  A final
+`seqattn` completion, decode, or media claim still waits for all 50 steps,
+video/audio VAE decode, and MP4 mux.
+
+Native result JSON:
+
+- `final_720p20s_native_unlimited_gpu1_720x1280_f480_s50_20260818T033056Z.json`
 
 ## Measurement protocol
 

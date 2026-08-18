@@ -39,7 +39,7 @@ chunked QKV projection → pinned CPU Q/K/V → resident-Q Triton attention
 | Experiment | Scale | Result | Why it matters |
 |---|---:|---:|---|
 | H3 8GB capacity probe | 132,288 packed tokens | **5,968 MiB** process peak | A complete 50-block denoise forward succeeds under an 8GiB whole-process target. |
-| Native-vs-seqattn live soak | 132,288 packed tokens | **30,850 vs 7,162 MiB** | Current in-progress observation is **4.31× lower GPU memory** on separate RTX 5090s. |
+| Native-vs-seqattn soak | 132,288 packed tokens | **native OOM after 14 steps** | `seqattn` reached the same point below 8GiB and continues running. |
 | Projection pipeline | 61,312 tokens | **7,108 → 3,848 MiB** | Keeping attention output on GPU cuts the measured peak by **45.9%**. |
 | Projection pipeline latency | 61,312 tokens | **919.79 → 843.44 ms** | Fusion reduces latency by **8.3%** as well as memory. |
 | H3 integration vs prior streamed path | 61,056 packed tokens | **81.5 GiB less PCIe traffic/step** | Removes the raw-attention D2H→H2D round trip across 50 H3 blocks. |
@@ -51,11 +51,12 @@ the figure is still running as of August 18, 2026; its live numbers are
 published as an explicitly preliminary snapshot, not as a completed result.
 The final report will also include both VAE decoders and MP4 muxing.
 
-The native path remains faster when its full activation set fits on a 32GiB
-GPU.  At the current live snapshot it takes about 140.1 seconds per denoise
-step versus 224.3 seconds for `seqattn`, a 1.60× slowdown.  The value proposition
-is capacity: the same 20-second workload can be executed below an 8GiB target
-instead of consuming about 30.85GiB.  Host RAM and PCIe costs are reported
+The native path is faster while it runs: 140.07 seconds per denoise step versus
+about 224.31 seconds for `seqattn`, a 1.60× slowdown.  It does not complete this
+run, however.  Unrestricted native DiffSynth reaches a 30,876MiB PID-level NVML
+peak and OOMs while starting step 15 with a 3.53GiB allocation request.  At the
+same 14-step checkpoint, `seqattn` remains stable at a 7,164MiB within-step peak
+and about 4,432MiB at each step boundary.  Host RAM and PCIe costs are reported
 rather than hidden.
 
 See the [MiniMax-H3 integration report](docs/minimax_h3_integration.md) for the

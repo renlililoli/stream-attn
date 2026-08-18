@@ -32,11 +32,11 @@
   <g filter="url(#shadow)">
     <rect x="56" y="132" width="526" height="190" rx="22" fill="#101d33" stroke="#23324e"/>
     <text x="84" y="170" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" letter-spacing="1.2">PROCESS GPU PEAK</text>
-    <text x="84" y="222" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="42" font-weight="750">30.85 GiB</text>
+    <text x="84" y="222" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="42" font-weight="750">30,876 MiB</text>
     <text x="332" y="222" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="19">native</text>
     <rect x="84" y="246" width="438" height="18" rx="9" fill="#1e293b"/>
     <rect x="84" y="246" width="422" height="18" rx="9" fill="url(#violet)"/>
-    <text x="84" y="297" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="25" font-weight="700">6.99 GiB</text>
+    <text x="84" y="297" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="25" font-weight="700">7,164 MiB</text>
     <text x="210" y="297" fill="#22d3ee" font-family="Inter,Segoe UI,sans-serif" font-size="17" font-weight="650">seqattn · 4.31× lower</text>
     <rect x="407" y="280" width="115" height="10" rx="5" fill="#1e293b"/>
     <rect x="407" y="280" width="27" height="10" rx="5" fill="url(#cyan)"/>
@@ -45,11 +45,11 @@
   <g filter="url(#shadow)">
     <rect x="618" y="132" width="526" height="190" rx="22" fill="#101d33" stroke="#23324e"/>
     <text x="646" y="170" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" letter-spacing="1.2">DENOISE LATENCY / STEP</text>
-    <text x="646" y="222" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="42" font-weight="750">140.1 s</text>
+    <text x="646" y="222" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="42" font-weight="750">140.07 s</text>
     <text x="810" y="222" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="19">native</text>
     <rect x="646" y="246" width="438" height="18" rx="9" fill="#1e293b"/>
     <rect x="646" y="246" width="274" height="18" rx="9" fill="url(#violet)"/>
-    <text x="646" y="297" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="25" font-weight="700">224.3 s</text>
+    <text x="646" y="297" fill="#e2e8f0" font-family="Inter,Segoe UI,sans-serif" font-size="25" font-weight="700">224.31 s</text>
     <text x="784" y="297" fill="#fbbf24" font-family="Inter,Segoe UI,sans-serif" font-size="17" font-weight="650">seqattn · 1.60× slower</text>
     <rect x="969" y="280" width="115" height="10" rx="5" fill="#1e293b"/>
     <rect x="969" y="280" width="115" height="10" rx="5" fill="url(#cyan)"/>
@@ -65,12 +65,12 @@
 
     <circle cx="96" cy="482" r="16" fill="#22d3ee" opacity=".16"/>
     <path d="M89 482l5 5 10-12" fill="none" stroke="#67e8f9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="126" y="488" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="17">Native full-sequence DiffSynth consumes 94.6% of the 32 GiB card.</text>
+    <text x="126" y="488" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="17">Native full-sequence DiffSynth OOMs before step 15 on the unrestricted 32 GiB card.</text>
 
     <circle cx="96" cy="526" r="16" fill="#f59e0b" opacity=".16"/>
     <path d="M96 516v12m0 7v1" fill="none" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
     <text x="126" y="532" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="17">Capacity is traded for latency, host RAM, and PCIe traffic; the final 50-step result is not yet claimed.</text>
   </g>
 
-  <text x="56" y="606" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="14">Live snapshot: native 6/50 steps, seqattn 4/50 steps · 2 ms PID-level NVML sampling · 2026-08-18 UTC</text>
+    <text x="56" y="606" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="14">Native: OOM after 14/50 steps · seqattn: 14/50 and running · 2 ms PID-level NVML sampling · 2026-08-18 UTC</text>
 </svg>
