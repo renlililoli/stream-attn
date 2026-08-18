@@ -56,7 +56,7 @@ Complete Q/K/V stays in unrestricted caller-owned pinned DRAM and only the
 seqattn HBM workspace varies:
 
 ```text
-2 / 4 / 6 / 8 / 12 / 16 GiB
+0.5 / 1 / 2 / 4 / 6 / 8 / 12 / 16 GiB
 ```
 
 Each row records the planner-selected Q chunk, actual GPU peak, execution
@@ -67,6 +67,8 @@ tradeoff.
 
 | HBM | Execution | GPU peak | Q chunk | Q passes | H2D | D2H | TFLOPS | vs resident |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.5 GiB | 681.446 s | 0.47 GiB | 576 | 712 | 7.6 TiB | 5.5 GiB | 7.1 | 13.407x |
+| 1 GiB | 106.476 s | 0.97 GiB | 9,856 | 42 | 465 GiB | 5.5 GiB | 45.2 | 2.095x |
 | 2 GiB | 106.293 s | 1.97 GiB | 28,416 | 15 | 170 GiB | 5.5 GiB | 45.3 | 2.091x |
 | 4 GiB | 107.761 s | 3.97 GiB | 65,600 | 7 | 82 GiB | 5.5 GiB | 44.6 | 2.120x |
 | 6 GiB | 108.331 s | 5.97 GiB | 102,720 | 4 | 49 GiB | 5.5 GiB | 44.4 | 2.131x |
@@ -80,23 +82,24 @@ budget.
 
 ### Interpretation
 
-Execution time increases monotonically with the workspace on the A30: the
-2GiB point is the fastest and 16GiB is 4.6% slower, while H2D traffic falls
-from 170GiB to 27GiB and Q passes fall from fifteen to two. This is the
-opposite of the 5090 result, where 4GiB to 8GiB improved execution by 5.3%
-before a plateau. The difference is that the A30 is compute-bound: the sweep
-sustains 43-45 TFLOPS, about half of the 94.6 TFLOPS the FlashAttention 2
-baseline reaches, so removing H2D rescans does not pay for itself. Larger Q
-chunks actually add cost: the FP32 online-softmax state is reloaded and stored
-once per K/V tile, so a bigger resident Q grows the per-tile state traffic
-inside the kernel and outweighs the saved H2D. On the A30 the 2GiB point is
-the fastest measured configuration, and no workspace level delivers a latency
-improvement over it.
+The A30 curve has three regions. Between 1GiB and 2GiB the operator is
+compute-bound at about 45 TFLOPS and execution is flat (106.3-106.5s); the
+two points differ by 0.17%. Above 2GiB wall time rises monotonically with the
+workspace to 111.2s at 16GiB (+4.6%): larger Q chunks grow the per-K/V-tile
+FP32 state traffic inside the kernel, and removing H2D rescans does not pay
+for itself on this GPU. At 0.5GiB the curve falls off a cliff: the planner
+drops to a 576-token Q chunk, Q passes jump to 712, H2D reaches 7.6TiB, and
+execution degrades 6.4x to 681.4s as the operator becomes PCIe-bound.
+
+This is the opposite of the 5090 result, where 4GiB to 8GiB improved
+execution by 5.3% before a plateau. On the A30 the streaming path has a
+1-2GiB sweet spot, stays within 4.6% of it up to 16GiB, and needs roughly
+1GiB of HBM workspace before repeated K/V streaming dominates the wall time.
 
 The defensible statement for this shape is: at 400K tokens on an A30, the
-operator is compute-bound, the workspace sweep spans only a 4.6% window that
-favors the smallest workspace, and the streaming path runs 2.09-2.19x slower
-than the 21.9GiB GPU-resident FlashAttention 2 path.
+operator is compute-bound from 1GiB upward with a 1-2GiB optimum, collapses
+below 1GiB, and runs 2.09-2.19x slower than the 21.9GiB GPU-resident
+FlashAttention 2 path inside the feasible region.
 
 ## Numerical sampling
 

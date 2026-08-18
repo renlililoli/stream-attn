@@ -87,6 +87,8 @@ single observation on the idle GPU, bound to its NUMA node 0 CPU affinity.
 
 | HBM workspace | Q chunk | Q passes | H2D traffic | Execution | vs GPU resident |
 |---:|---:|---:|---:|---:|---:|
+| 0.5 GiB | 576 | 712 | 7.6 TiB | 681.446 s | 13.407x |
+| 1 GiB | 9,856 | 42 | 465 GiB | 106.476 s | 2.095x |
 | 2 GiB | 28,416 | 15 | 170 GiB | 106.293 s | 2.091x |
 | 4 GiB | 65,600 | 7 | 82 GiB | 107.761 s | 2.120x |
 | 6 GiB | 102,720 | 4 | 49 GiB | 108.331 s | 2.131x |
@@ -94,13 +96,13 @@ single observation on the idle GPU, bound to its NUMA node 0 CPU affinity.
 | 12 GiB | 214,208 | 2 | 27 GiB | 110.911 s | 2.182x |
 | 16 GiB | 288,512 | 2 | 27 GiB | 111.170 s | 2.187x |
 
-Unlike the 5090 scan, execution increases monotonically with the workspace
-(+4.6% from 2GiB to 16GiB, with 2GiB fastest): at 43-45 TFLOPS the operator
-is compute-bound on the A30, so removing H2D rescans does not pay off and
-larger Q chunks only grow the per-K/V-tile FP32 state traffic. All six output
-signatures are identical; compared with FlashAttention 2 the 40 sampled BF16
-values have relative L2 `0.004160`, maximum absolute error `3.052e-5`, and
-cosine `0.99999219`. See
+Unlike the 5090 scan, the A30 is compute-bound: 1-2GiB is a flat sweet spot
+at about 45 TFLOPS, wall time rises monotonically by 4.6% up to 16GiB as
+larger Q chunks grow per-K/V-tile FP32 state traffic, and the 0.5GiB point
+collapses 6.4x to 681s with 7.6TiB of H2D once K/V re-streaming dominates.
+All eight output signatures are identical; compared with FlashAttention 2 the
+40 sampled BF16 values have relative L2 `0.004160`, maximum absolute error
+`3.052e-5`, and cosine `0.99999219`. See
 the [A30 storage-tier benchmark report](docs/a30_large_tier_benchmark_2026-08-18.md)
 for raw run values, environment, and methodology.
 
