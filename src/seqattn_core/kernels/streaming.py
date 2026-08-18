@@ -228,6 +228,10 @@ def update_attention_state(
     head_dim = q.shape[-1]
     block_d = triton.next_power_of_2(head_dim)
     grid = (triton.cdiv(q_tokens, block_m), q.shape[1])
+    # KV_QUANTIZED=False specializations never read the scale pointers, their
+    # strides, or storage_token_offset, but Triton requires every positional
+    # argument at each call site. Passing k/v and zeros keeps one kernel
+    # signature for both variants.
     _streaming_attention_update_kernel[grid](
         q,
         k,

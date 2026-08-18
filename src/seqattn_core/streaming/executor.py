@@ -125,8 +125,6 @@ class TritonExecutorMixin:
                         if not reuse_q_for_output:
                             workspace.q_free.record(compute_stream)
                             workspace.q_has_pending_compute = True
-                        else:
-                            workspace.q_has_pending_compute = False
                         if (
                             not reuse_q_for_output
                             and workspace.output_has_pending_copy[output_index]

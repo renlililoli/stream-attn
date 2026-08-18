@@ -22,7 +22,7 @@ class CacheLookup:
 
 
 class KVPageCache:
-    """Preallocated two-region K/V cache with a deterministic low-id hot set."""
+    """Preallocated two-region K/V cache with a deterministic prefix hot set."""
 
     def __init__(
         self,
@@ -79,6 +79,9 @@ class KVPageCache:
         self.hot_slot_count = min(self.slot_count, hot_slots)
         self.rolling_slot_count = self.slot_count - self.hot_slot_count
         self.hot_page_ids = frozenset(page.page_id for page in pages[: self.hot_slot_count])
+        self._hot_slot_by_id = {
+            page.page_id: slot for slot, page in enumerate(pages[: self.hot_slot_count])
+        }
         self._hot_present: set[int] = set()
         self._rolling: OrderedDict[int, int] = OrderedDict()
         self._rolling_free = deque(
@@ -105,7 +108,8 @@ class KVPageCache:
 
     def _find_slot(self, page_id: int) -> int | None:
         if page_id in self.hot_page_ids:
-            return page_id if page_id in self._hot_present else None
+            slot = self._hot_slot_by_id[page_id]
+            return slot if page_id in self._hot_present else None
         slot = self._rolling.get(page_id)
         if slot is not None:
             self._rolling.move_to_end(page_id)
@@ -168,7 +172,7 @@ class KVPageCache:
             if existing is not None:
                 return True
             if page.page_id in self.hot_page_ids:
-                slot = page.page_id
+                slot = self._hot_slot_by_id[page.page_id]
                 self._hot_present.add(page.page_id)
             elif self.rolling_slot_count:
                 if self._rolling_free:

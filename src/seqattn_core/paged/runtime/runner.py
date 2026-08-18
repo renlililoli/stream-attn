@@ -69,7 +69,9 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
             max_kv_tokens=kv_layout.total_tokens,
             config=attention_config,
         )
-        backend = resolve_backend(attention_config.backend, plan.dtype, plan.device)
+        backend = resolve_backend(
+            attention_config.backend, plan.dtype, plan.device, head_dim=plan.head_dim
+        )
         if backend == "reference" and plan.device.type != "cpu":
             raise ValueError("the paged reference backend requires device='cpu'")
         if backend == "triton" and kv_layout.storage_dtype == "fp32":

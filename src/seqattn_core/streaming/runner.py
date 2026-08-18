@@ -32,7 +32,9 @@ class StreamingAttentionRunner(TritonExecutorMixin):
         self.config.validate()
         if plan.output_mode != self.config.output_mode:
             raise ValueError("attention plan output_mode does not match runner config")
-        self.backend = resolve_backend(self.config.backend, plan.dtype, plan.device)
+        self.backend = resolve_backend(
+            self.config.backend, plan.dtype, plan.device, head_dim=plan.head_dim
+        )
         self._workspace = CudaWorkspace(plan) if self.backend == "triton" else None
 
     def _validate_inputs(

@@ -81,7 +81,7 @@ class ReferenceExecutorMixin:
                             raise AssertionError("query dtype cannot be int8")
                         if stage.k.dtype == torch.int8:
                             assert stage.k_scales is not None and stage.v_scales is not None
-                            groups = math.ceil(page.valid_tokens / 64)
+                            groups = math.ceil(page.valid_tokens / cache.layout.quant_group_tokens)
                             k_page = dequantize_int8_per_token_group(
                                 stage.k[: page.valid_tokens],
                                 stage.k_scales[:groups],
