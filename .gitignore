@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+benchmark-results/
+*.nsys-rep
+*.sqlite
