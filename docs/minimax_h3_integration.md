@@ -251,6 +251,58 @@ faster per successful step but cannot finish the requested workload on the
 `seqattn` completion, decode, or media claim still waits for all 50 steps,
 video/audio VAE decode, and MP4 mux.
 
+## Completed 6GiB end-to-end generation
+
+A shorter sequence was run on physical GPU 1 to verify the complete generation
+path under a stricter whole-process budget.  GPU 1 was empty immediately before
+launch; the run used a dedicated Docker container and NUMA node 7.  This run
+was not protected by NVIDIA `EXCLUSIVE_PROCESS`, so it is a capacity/end-to-end
+result rather than the final exclusive latency comparison.
+
+| Metric | Measured value |
+|---|---:|
+| Requested / output video | 480×832, 124 frames |
+| Duration | 5.167 seconds at 24 fps |
+| Packed sequence | 15,104 tokens |
+| DiT blocks / denoise steps | 50 / 50 |
+| Whole-process target | 6,144 MiB |
+| PyTorch allocator limit | 5,516 MiB |
+| DiffSynth weight-residency limit | 3 GiB |
+| `seqattn` workspace | 1,024 MiB |
+| PID-level NVML peak | **4,748 MiB** |
+| Torch allocated / reserved peak | 3,771.6 / 4,058 MiB |
+| CPU RSS peak | 38,697 MiB |
+| Denoise total | 764.313 s |
+| Mean / median step | 15.286 / 14.637 s |
+| Video VAE decode | 11.836 s |
+| Audio VAE decode | 0.286 s |
+| Complete pipeline | 798.938 s |
+| MP4 mux | 1.945 s |
+| Final media | H.264 832×480 + AAC stereo 32kHz |
+| Status | **success** |
+
+The first denoise step takes 32.122 seconds while the persistent runner and
+weight working set are established.  Steps 2–50 are predominantly 14.5–15.0
+seconds.  Step-end PID memory remains 2,382–2,402MiB, and the largest observed
+within-step peak is the first-step 4,748MiB.  There is no cross-step GPU-memory
+growth.
+
+Artifacts:
+
+- `short6g_seqattn_480x832_f124_s50_gpu1_480x832_f124_s50_20260818T070725Z.json`
+- `short6g_seqattn_480x832_f124_s50_gpu1_480x832_f124_s50_20260818T070725Z_memory_trace.csv.gz`
+- `short6g_seqattn_480x832_f124_s50_gpu1_480x832_f124_s50_20260818T070725Z_latents.pt`
+- `short6g_seqattn_480x832_f124_s50_gpu1_480x832_f124_s50_20260818T070725Z.mp4`
+
+The media was independently opened with PyAV.  It contains 124 H.264 frames,
+an 832×480 video stream lasting 5.1667 seconds, and a two-channel AAC stream at
+32kHz lasting 5.175 seconds.
+
+This completed point narrows the remaining 132K issue: sequence-streamed DiT
+can finish all 50 steps under 8GiB, while the very large Video VAE tile-row
+assembly still needs a CPU-backed concatenation path.  The shorter 15K output
+fits the same decoder implementation under 6GiB and completes normally.
+
 Native result JSON:
 
 - `final_720p20s_native_unlimited_gpu1_720x1280_f480_s50_20260818T033056Z.json`

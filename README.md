@@ -40,6 +40,7 @@ chunked QKV projection → pinned CPU Q/K/V → resident-Q Triton attention
 
 | Experiment | Scale | Result | Why it matters |
 |---|---:|---:|---|
+| H3 full generation | 15,104 packed tokens | **4,748 MiB under a 6GiB target** | Completes 50 denoise steps, both VAE decoders, and MP4 mux. |
 | H3 8GB capacity probe | 132,288 packed tokens | **5,968 MiB** process peak | A complete 50-block denoise forward succeeds under an 8GiB whole-process target. |
 | Native-vs-seqattn soak | 132,288 packed tokens | **native OOM after 14 steps** | `seqattn` reached the same point below 8GiB and continues running. |
 | Projection pipeline | 61,312 tokens | **7,108 → 3,848 MiB** | Keeping attention output on GPU cuts the measured peak by **45.9%**. |
@@ -52,6 +53,11 @@ NVML peak, and 48.4 GiB CPU RSS.  The 50-step video-generation soak shown in
 the figure is still running as of August 18, 2026; its live numbers are
 published as an explicitly preliminary snapshot, not as a completed result.
 The final report will also include both VAE decoders and MP4 muxing.
+
+The shorter 15,104-token run is a completed end-to-end result under a stricter
+6,144MiB process target.  It executes 50 denoise steps, Video VAE decode, Audio
+VAE decode, and MP4 mux with a 4,748MiB PID-level NVML peak.  The resulting
+H.264/AAC file contains 124 frames at 832×480 and 5.167 seconds of video.
 
 The native path is faster while it runs: 140.07 seconds per denoise step versus
 about 224.31 seconds for `seqattn`, a 1.60× slowdown.  It does not complete this
