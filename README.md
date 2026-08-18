@@ -1,17 +1,17 @@
 # seqattn
 
 `seqattn` is an inference-only, exact attention library for sequences whose
-Q/K/V tensors live in CPU DRAM.  It treats GPU memory as a managed cache:
-query super-blocks stay resident while K/V tiles stream through a small ring
-buffer.  The attention result is produced without materializing the score
-matrix or the complete Q/K/V set on the GPU.
+Q/K/V tensors live in CPU DRAM.  It uses GPU memory as a statically planned
+resident working set: query super-blocks stay resident while K/V tiles stream
+through a small ring buffer.  The attention result is produced without
+materializing the score matrix or the complete Q/K/V set on the GPU.
 
 The project follows the same IO-aware principle that makes FlashAttention
 effective inside the GPU memory hierarchy, but applies it one level higher:
 
 ```text
-FlashAttention:   HBM is the backing store, SRAM/registers are the cache
-seqattn:          CPU DRAM is the backing store, HBM is the cache
+FlashAttention:   HBM is the backing store, SRAM/registers are the working set
+seqattn:          CPU DRAM is the backing store, HBM is the working set
 ```
 
 This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
@@ -32,6 +32,77 @@ reports the resulting PCIe and latency cost explicitly.
 - JSON benchmark output, NVML process peaks, logical PCIe traffic, and NVTX ranges.
 
 V1 is inference-only: backward and dropout are intentionally unsupported.
+
+## Relationship to Stream-CQSA
+
+[Stream-CQSA](https://github.com/yiming-b/Stream-CQSA) and `seqattn` solve the
+same capacity problem with different task decompositions.  Both keep complete
+Q/K/V outside HBM and compute exact dense attention with a bounded GPU working
+set.  Stream-CQSA recursively constructs combinatorial self-attention
+subsequences; `seqattn` uses regular two-dimensional query-super-block by
+key/value-tile scheduling.
+
+For the default Stream-CQSA construction, recursion depth `t` produces `7^t`
+subsequences of approximate length `N * (3/7)^t`.  In its current CPU-backed,
+path-by-path gather implementation, the aggregate Q/K/V token occurrence is
+therefore approximately:
+
+```text
+7^t * N * (3/7)^t = 3^t * N
+```
+
+The local FlashAttention calls also cover an aggregate dense score area of:
+
+```text
+7^t * (N * (3/7)^t)^2 = (9/7)^t * N^2
+```
+
+Interactions excluded by the CQS group mask are mathematically removed, but
+the current modified FlashAttention path applies that mask after the local QK
+matrix multiplication.  Consequently, recursive decomposition can increase
+both host/device traffic and launched dense tensor-core work.
+
+If `seqattn` divides Q into `r` resident super-blocks, its logical traffic is:
+
+```text
+H2D = |Q| + r * (|K| + |V|)
+D2H = |O|
+```
+
+Every Q token is transferred once.  Each K/V tile is reused by all query rows
+in the current resident super-block, and only the final FP16/BF16 output is
+returned to the host.  With enough workspace for all Q rows (`r = 1`), Q, K,
+and V are each transferred once.
+
+Another important difference is reduction placement.  The current CPU-backed
+Stream-CQSA path reconstructs per-subsequence FP32 numerator/denominator values
+from FlashAttention output and LSE, transfers them to the CPU, and scatter-adds
+them into full-sequence FP32 accumulators.  `seqattn` instead keeps FP32
+online-softmax `(max, normalizer, accumulator)` state in HBM only for the
+resident Q super-block.  It never reconstructs an absolute `exp(LSE)` global
+denominator and does not require a full FP32 CPU numerator tensor.
+
+This gives `seqattn` several advantages for regular dense inference:
+
+- deterministic Q reuse across all K/V tiles in a super-block;
+- lower logical H2D and substantially lower D2H volume at deep decomposition;
+- no combinatorial task-count or masked-MMA amplification;
+- stable FlashAttention-style online-softmax merging on the GPU;
+- no full-sequence FP32 numerator accumulator in host RAM;
+- an existing H2D/compute/D2H pipeline with reusable K/V ring buffers;
+- native packed varlen, causal, cross-attention, GQA, and MQA interfaces.
+
+The scope is deliberately narrower.  Stream-CQSA includes research forward and
+backward paths and arbitrary CQS group masks.  `seqattn` V1 targets dense exact
+inference only; it does not currently implement backward, dropout, arbitrary
+sparse masks, a dynamic GPU page table, cache replacement, or cross-call page
+residency.  Its HBM usage is best described as a statically scheduled resident
+working set, not a general-purpose paging cache.
+
+The comparison above is an implementation and I/O-complexity comparison, not a
+claim based on a same-machine Stream-CQSA benchmark.  Direct comparisons should
+use identical shapes, dtype, GPU-memory limits, CPU NUMA placement, and measured
+H2D/D2H traffic.
 
 ## Installation
 
