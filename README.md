@@ -20,6 +20,58 @@ This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
 It targets exact long-context inference under a fixed GPU-memory budget and
 reports the resulting PCIe and latency cost explicitly.
 
+## 524K-token storage-tier benchmark
+
+The standalone runtime was tested on one 524,288-token non-causal MHA problem:
+56 Q/K/V heads, head dimension 128, and BF16 inputs. Q, K, and V are 7GiB each;
+the output is another 7GiB. The complete 28GiB GPU-resident working set fits on
+an RTX 5090, while the paged configuration uses a 2GiB operator workspace and
+an 8GiB operator-owned host budget that cannot hold the complete 14GiB K/V set.
+
+<p align="center">
+  <img src="docs/assets/large-tier-benchmark.svg" alt="524K-token HBM workspace benchmark" width="100%">
+</p>
+
+### HBM workspace sweep
+
+This scan keeps complete Q/K/V in unrestricted caller-owned pinned DRAM and
+varies only the HBM workspace. Each row is the median of one GPU2 and one GPU3
+observation; the processes were pinned to their respective CPU NUMA affinity.
+
+| HBM workspace | Q chunk | Q passes | H2D traffic | Execution | vs GPU resident |
+|---:|---:|---:|---:|---:|---:|
+| 4 GiB | 65,600 | 8 | 119 GiB | 53.313 s | 1.397x |
+| 6 GiB | 102,720 | 6 | 91 GiB | 52.403 s | 1.373x |
+| **8 GiB** | **139,904** | **4** | **63 GiB** | **50.490 s** | **1.323x** |
+| 10 GiB | 177,024 | 3 | 49 GiB | 50.521 s | 1.324x |
+| 12 GiB | 214,208 | 3 | 49 GiB | 50.498 s | 1.324x |
+| 16 GiB | 288,512 | 2 | 35 GiB | 50.471 s | 1.323x |
+
+The useful latency gain is captured by 8GiB: execution improves by 5.3% from
+4GiB to 8GiB as Q passes fall from eight to four. The 8-16GiB medians differ by
+less than 0.10%, below the observed 1.77-2.07% cross-GPU span. Larger workspaces
+continue to reduce PCIe traffic, but do not improve wall time for this shape.
+
+### Storage-tier comparison
+
+| Mode | GPU peak | Host policy | Execution | vs resident | Status |
+|---|---:|---|---:|---:|---|
+| FlashAttention GPU resident | 28.707 GiB | Full Q/K/V/output in HBM | 38.154 s | 1.000x | Stable two-run baseline |
+| `seqattn` DRAM stream, 8GiB workspace | 8.525 GiB | Unrestricted caller DRAM | 50.490 s | 1.323x | Workspace plateau |
+| `seqattn` paged DRAM, 2GiB workspace | 2.533 GiB | 8GiB operator budget | 211.254 s | 5.537x | 14GiB K/V exceeds cache |
+| `seqattn` simulated NVMe, 2GiB workspace | 2.533 GiB | 8GiB operator budget | 105.685-204.720 s | 2.770-5.366x | Timing simulation; unstable |
+
+The simulated-NVMe row applies 7GB/s reads, 6GB/s writes, fixed per-request
+latency, and queue-depth limits to in-memory pages. It validates scheduling and
+I/O accounting, but it is not a physical-NVMe performance result. Across all
+12 DRAM-workspace observations, the sampled output signatures are identical.
+Compared with FlashAttention, the 40 sampled BF16 values have relative L2
+`0.002958`, maximum absolute error `3.0518e-5`, and cosine `0.99999586`.
+
+See the [complete storage-tier benchmark report](docs/large_tier_benchmark_2026-08-18.md)
+for raw run values, cache accounting, numerical scope, caveats, and artifact
+locations.
+
 ## MiniMax-H3 integration
 
 `seqattn` is integrated into a MiniMax-H3 NF4 inference branch in
