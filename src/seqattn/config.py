@@ -48,3 +48,26 @@ class StreamingAttentionConfig:
             raise ValueError("num_stages must be within [1, 4]")
         if self.backend not in {"auto", "triton", "reference"}:
             raise ValueError(f"unsupported backend: {self.backend}")
+
+
+@dataclass(frozen=True)
+class ProjectionPipelineConfig:
+    """Execution policy for CPU-hidden -> QKV -> attention -> output projection.
+
+    Exact self-attention has a global K/V readiness barrier.  Projection chunks
+    are pipelined internally, then attention and output projection run as a
+    second pipeline without materializing raw attention output on the CPU.
+    """
+
+    projection_chunk_tokens: int = 2048
+    num_projection_buffers: int = 2
+    require_pinned_hidden: bool = True
+    pin_qkv: bool = True
+    pin_output: bool = True
+    enable_nvtx: bool = False
+
+    def validate(self) -> None:
+        if self.projection_chunk_tokens <= 0:
+            raise ValueError("projection_chunk_tokens must be positive")
+        if self.num_projection_buffers not in {1, 2, 3}:
+            raise ValueError("num_projection_buffers must be 1, 2, or 3")

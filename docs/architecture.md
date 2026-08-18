@@ -37,12 +37,47 @@ executed once per query super-block.
   K/V scan crosses a segment.
 - Causal positions use bottom-right alignment for unequal Q/K lengths.
 
+## Projected inference pipeline
+
+`ProjectedAttentionRunner` adds model-projection producer/consumer hooks around
+the Triton attention runtime:
+
+```text
+CPU hidden
+    -> double-buffered hidden H2D
+    -> GPU QKV projection callback
+    -> Q/K/V D2H into persistent pinned backing buffers
+    -> global K/V readiness barrier
+    -> Q-resident / KV-streamed Triton attention
+    -> GPU output-projection callback
+    -> projected output D2H
+```
+
+The readiness barrier is required for exact global self-attention: an early
+query cannot be finalized until projection has produced every key/value token
+in its packed segment.  Projection H2D, projection compute, and Q/K/V D2H are
+still pipelined across chunks before that barrier.
+
+The important fusion is on the consumer side.  Raw attention output remains on
+GPU and is passed directly to output projection.  Compared with a staged
+implementation, this removes exactly one raw-attention D2H and one matching H2D
+for every query token.  The callback may also include inference-only epilogues
+such as gate/residual application.
+
+QKV and output projection are callbacks rather than hard-coded matmul kernels.
+This permits ordinary BF16/FP16 linear layers, quantized modules, model-specific
+Q/K normalization, and rotary embedding while the attention core remains
+Triton.  The caller is responsible for keeping projection weights resident for
+the duration of each phase.
+
 ## Planned follow-ups
 
 - Shape-specific autotuning cache for block sizes, warps, stages, and K/V ring
   depth.
 - Optional CUDA/CUTLASS backend after Triton profiling identifies kernel-bound
   cases that cannot be resolved by scheduling or fusion.
-- Producer/consumer hooks that connect chunked QKV projection and output
-  projection without materializing all Q/K/V or attention output in CPU RAM.
+- Optional prefetched residual/epilogue buffers so model-specific residual H2D
+  overlaps the final K/V scan.
+- Projection callback variants that can write into persistent GPU output slots
+  and avoid temporary allocator traffic for standard dense linear layers.
 - Backward kernels only after the inference API and memory contract stabilize.

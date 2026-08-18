@@ -76,6 +76,8 @@ def build_plan(
     config = StreamingAttentionConfig() if config is None else config
     config.validate()
     device = torch.device(device)
+    if device.type == "cuda" and device.index is None and torch.cuda.is_available():
+        device = torch.device("cuda", torch.cuda.current_device())
     if q_heads <= 0 or kv_heads <= 0 or q_heads % kv_heads:
         raise ValueError("q_heads must be a positive multiple of kv_heads")
     if head_dim <= 0 or head_dim > 256 or head_dim % 8:

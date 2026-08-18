@@ -172,6 +172,75 @@ Pass a reusable pinned `out` buffer in latency-sensitive loops.  Omitting it is
 convenient, but allocating hundreds of MiB of pinned host memory can dominate a
 short attention call and introduce allocator jitter.
 
+### Projection-attention-output pipeline
+
+`ProjectedAttentionRunner` connects a chunked GPU QKV producer to the Triton
+attention runtime and consumes each finalized attention tile with an output
+projection before D2H:
+
+```python
+from seqattn import (
+    ProjectedAttentionRunner,
+    ProjectionPipelineConfig,
+    StreamingAttentionConfig,
+    build_plan,
+)
+
+attention_config = StreamingAttentionConfig(
+    backend="triton",
+    workspace_budget_bytes=2 * 2**30,
+    kv_chunk_tokens=4096,
+    num_output_buffers=2,
+)
+pipeline_config = ProjectionPipelineConfig(
+    projection_chunk_tokens=2048,
+    num_projection_buffers=2,
+)
+plan = build_plan(
+    q_heads=56,
+    kv_heads=56,
+    head_dim=128,
+    dtype=hidden_cpu.dtype,
+    device="cuda",
+    max_q_tokens=hidden_cpu.shape[0],
+    max_kv_tokens=hidden_cpu.shape[0],
+    config=attention_config,
+)
+runner = ProjectedAttentionRunner(plan, attention_config, pipeline_config)
+
+def project_qkv(hidden_gpu, start, stop):
+    qkv = qkv_proj(hidden_gpu).view(-1, 56, 3, 128)
+    # Model-specific Q/K normalization and RoPE can be applied here.
+    return (
+        qkv[:, :, 0, :].contiguous(),
+        qkv[:, :, 1, :].contiguous(),
+        qkv[:, :, 2, :].contiguous(),
+    )
+
+def output_projector(attention_gpu, start, stop):
+    # This callback may also perform an inference-only gate/residual epilogue.
+    return out_proj(attention_gpu)
+
+projected_cpu = runner(
+    hidden_cpu,
+    cu_seqlens,
+    project_qkv=project_qkv,
+    output_projector=output_projector,
+    output_features=hidden_size,
+)
+```
+
+Exact global self-attention still has one unavoidable barrier: every K/V token
+in a packed segment must be projected before a query result can be finalized.
+The projection phase pipelines hidden H2D, QKV compute, and Q/K/V D2H across
+chunks.  After the barrier, attention output stays on GPU and flows directly
+into output projection, removing the old raw-attention D2H followed by H2D.
+
+The projection callbacks are intentionally model-owned.  They can wrap normal
+BF16/FP16 linear layers, quantized/offloaded modules, Q/K normalization, rotary
+embedding, and output gate/residual logic while the attention core remains a
+Triton operator.
+
 `workspace_budget_bytes` only covers buffers owned by `seqattn`.  Whole-process
 budgets must also reserve memory for the CUDA context, weights, and caller-owned
 activations.
@@ -182,8 +251,9 @@ For each packed sequence and resident query super-block:
 
 1. Copy Q to its persistent GPU buffer.
 2. Stream K/V through a two- or three-slot H2D ring.
-3. Run one fused Triton update per K/V tile.  The kernel holds Q in the GPU
-   cache and updates FP32 `(max, normalizer, accumulator)` state in place.
+3. Run one fused Triton update per K/V tile.  The kernel reads Q from its
+   resident GPU buffer and updates FP32 `(max, normalizer, accumulator)` state
+   in place.
 4. Prefetch the next K/V tile while the current tile computes.
 5. Fuse final normalization and output casting.
 6. Copy the result to pinned CPU memory while the next query super-block runs.
@@ -238,6 +308,22 @@ H2D/D2H bytes.  Latency repetitions run without NVML sampling; a separate
 untimed pass collects the memory peaks so driver polling cannot contaminate
 short-kernel latency.  Use `scripts/profile_nsys.sh` for copy/compute overlap
 and kernel timelines; profiling runs are not primary latency numbers.
+
+The end-to-end projection benchmark compares the fused consumer path with a
+staged path that materializes raw attention on the CPU:
+
+```bash
+seqattn-pipeline-bench \
+  --mode pipeline \
+  --tokens 61312 \
+  --hidden-size 5376 --heads 56 --head-dim 128 \
+  --projection-chunk 2048 --workspace-mib 2048 --kv-chunk 4096 \
+  --target-vram-mib 8192 --repeats 2 \
+  --output benchmark-results/pipeline_61312.json
+```
+
+See [the projected-pipeline benchmark note](docs/projected_pipeline_benchmark.md)
+for the protocol, traffic accounting, and initial RTX 5090 results.
 
 Recommended sweeps:
 
