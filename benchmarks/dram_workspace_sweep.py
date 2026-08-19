@@ -42,6 +42,10 @@ def main() -> None:
     parser.add_argument("--causal", action="store_true")
     parser.add_argument("--workspace-gib", nargs="+", type=float, default=[4, 6, 8, 10, 12, 16])
     parser.add_argument("--kv-chunk", type=int, default=8192)
+    parser.add_argument("--block-m", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--block-n", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--num-warps", type=int, choices=(2, 4, 8))
+    parser.add_argument("--num-stages", type=int, choices=(1, 2, 3, 4))
     parser.add_argument("--cpu-workers", type=int, default=32)
     parser.add_argument("--cpu-chunk-tokens", type=int, default=4096)
     parser.add_argument("--sample-interval-ms", type=float, default=100.0)
@@ -98,8 +102,10 @@ def main() -> None:
                 workspace_budget_bytes=workspace_bytes,
                 kv_chunk_tokens=args.kv_chunk,
                 backend="triton",
-                block_m=64,
-                block_n=64,
+                block_m=args.block_m,
+                block_n=args.block_n,
+                num_warps=args.num_warps,
+                num_stages=args.num_stages,
                 num_kv_buffers=2,
                 num_output_buffers=1,
                 output_mode="host",
@@ -146,6 +152,10 @@ def main() -> None:
                     "effective_tflops": flop / execution_seconds / 1e12,
                     "q_chunk_tokens": plan.q_chunk_tokens,
                     "kv_chunk_tokens": plan.kv_chunk_tokens,
+                    "block_m": plan.block_m,
+                    "block_n": plan.block_n,
+                    "num_warps": plan.num_warps,
+                    "num_stages": plan.num_stages,
                     "estimated_workspace_bytes": plan.estimated_workspace_bytes,
                     "process_peak_rss_bytes": sampler.peak_rss_bytes,
                     "nvml_process_peak_bytes": sampler.peak_vram_bytes,

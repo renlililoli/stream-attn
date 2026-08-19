@@ -77,6 +77,12 @@ def main() -> None:
     parser.add_argument("--causal", action="store_true")
     parser.add_argument("--q-chunk", type=int)
     parser.add_argument("--kv-chunk", type=int, default=4096)
+    parser.add_argument("--block-m", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--block-n", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--num-warps", type=int, choices=(2, 4, 8))
+    parser.add_argument("--num-stages", type=int, choices=(1, 2, 3, 4))
+    parser.add_argument("--num-kv-buffers", type=int, choices=(1, 2, 3), default=2)
+    parser.add_argument("--num-output-buffers", type=int, choices=(1, 2), default=1)
     parser.add_argument("--workspace-mib", type=int, default=4096)
     parser.add_argument("--target-vram-mib", type=int)
     parser.add_argument("--safety-mib", type=int, default=128)
@@ -119,6 +125,12 @@ def main() -> None:
                 workspace_budget_bytes=args.workspace_mib * 2**20,
                 q_chunk_tokens=args.q_chunk,
                 kv_chunk_tokens=args.kv_chunk,
+                block_m=args.block_m,
+                block_n=args.block_n,
+                num_warps=args.num_warps,
+                num_stages=args.num_stages,
+                num_kv_buffers=args.num_kv_buffers,
+                num_output_buffers=args.num_output_buffers,
                 backend="triton",
                 enable_nvtx=args.nvtx,
             )
@@ -136,6 +148,12 @@ def main() -> None:
             result["plan"] = {
                 "q_chunk_tokens": plan.q_chunk_tokens,
                 "kv_chunk_tokens": plan.kv_chunk_tokens,
+                "block_m": plan.block_m,
+                "block_n": plan.block_n,
+                "num_warps": plan.num_warps,
+                "num_stages": plan.num_stages,
+                "num_kv_buffers": plan.num_kv_buffers,
+                "num_output_buffers": plan.num_output_buffers,
                 "estimated_workspace_mib": plan.estimated_workspace_bytes / 2**20,
             }
 

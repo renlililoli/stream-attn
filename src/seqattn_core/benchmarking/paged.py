@@ -101,10 +101,18 @@ def main() -> None:
     parser.add_argument("--host-budget-gib", type=float, default=8.0)
     parser.add_argument("--workspace-gib", type=float, default=2.0)
     parser.add_argument("--page-mib", type=int, default=16)
+    parser.add_argument("--q-page-mib", type=int)
+    parser.add_argument("--kv-page-mib", type=int)
     parser.add_argument("--queue-depth", type=int, default=4)
     parser.add_argument("--io-workers", type=int, default=4)
     parser.add_argument("--q-chunk", type=int)
     parser.add_argument("--kv-chunk", type=int)
+    parser.add_argument("--block-m", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--block-n", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--num-warps", type=int, choices=(2, 4, 8))
+    parser.add_argument("--num-stages", type=int, choices=(1, 2, 3, 4))
+    parser.add_argument("--num-kv-buffers", type=int, choices=(1, 2, 3), default=2)
+    parser.add_argument("--num-output-buffers", type=int, choices=(1, 2), default=2)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--store-dir", type=Path)
@@ -117,6 +125,8 @@ def main() -> None:
     parser.add_argument("--simulate-max-concurrent-reads", type=int, default=4)
     parser.add_argument("--simulate-max-concurrent-writes", type=int, default=4)
     parser.add_argument("--simulate-jitter-fraction", type=float, default=0.0)
+    parser.add_argument("--nvtx", action="store_true")
+    parser.add_argument("--cuda-profiler-repeat", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -157,6 +167,8 @@ def main() -> None:
         cu = make_bounds(args.tokens, args.segments)
         direct_io = not args.buffered_io_for_tests
         page_target_bytes = args.page_mib * 2**20
+        q_page_target_bytes = (args.q_page_mib or args.page_mib) * 2**20
+        kv_page_target_bytes = (args.kv_page_mib or args.page_mib) * 2**20
         preparation_seconds = 0.0
         quantization_seconds = 0.0
         simulated_device = None
@@ -165,13 +177,17 @@ def main() -> None:
             q = make_tensor((args.tokens, args.q_heads, args.head_dim), dtype, generator)
             k = make_tensor((args.tokens, args.kv_heads, args.head_dim), dtype, generator)
             v = make_tensor((args.tokens, args.kv_heads, args.head_dim), dtype, generator)
-            memory_source = MemoryPageSource(
+            q_memory_source = MemoryPageSource(
                 q=q,
+                cu_seqlens_q=cu,
+                page_target_bytes=q_page_target_bytes,
+                block_n=64,
+            )
+            kv_memory_source = MemoryPageSource(
                 k=k,
                 v=v,
-                cu_seqlens_q=cu,
                 cu_seqlens_k=cu,
-                page_target_bytes=page_target_bytes,
+                page_target_bytes=kv_page_target_bytes,
                 block_n=64,
             )
             storage_dtype = "bf16" if dtype == torch.bfloat16 else "fp16"
@@ -188,11 +204,21 @@ def main() -> None:
                     random_seed=args.seed,
                 )
                 simulated_device = SimulatedNvmeDevice(simulated_config)
-                source = SimulatedPageSource(memory_source, device=simulated_device)
+                q_source = SimulatedPageSource(q_memory_source, device=simulated_device)
+                kv_source = SimulatedPageSource(kv_memory_source, device=simulated_device)
                 result["simulated_nvme_config"] = simulated_config.as_dict()
             else:
-                source = memory_source
+                q_source = q_memory_source
+                kv_source = kv_memory_source
         else:
+            if (
+                q_page_target_bytes != page_target_bytes
+                or kv_page_target_bytes != page_target_bytes
+            ):
+                raise ValueError(
+                    "separate Q/KV page sizes are currently supported only by memory and "
+                    "simulated-nvme benchmarks"
+                )
             if args.store_dir is None:
                 temporary = tempfile.TemporaryDirectory(prefix="seqattn-bench-")
                 store_dir = Path(temporary.name) / "qkv"
@@ -216,16 +242,21 @@ def main() -> None:
                 direct_io=direct_io,
                 seed=args.seed,
             )
+            q_source = source
+            kv_source = source
 
         attention_config = StreamingAttentionConfig(
             workspace_budget_bytes=int(args.workspace_gib * 2**30),
             q_chunk_tokens=args.q_chunk,
             kv_chunk_tokens=args.kv_chunk,
             backend="triton",
-            block_m=64,
-            block_n=64,
-            num_kv_buffers=2,
-            num_output_buffers=2,
+            block_m=args.block_m,
+            block_n=args.block_n,
+            num_warps=args.num_warps,
+            num_stages=args.num_stages,
+            num_kv_buffers=args.num_kv_buffers,
+            num_output_buffers=args.num_output_buffers,
+            enable_nvtx=args.nvtx,
         )
         paged_config = PagedAttentionConfig(
             attention=attention_config,
@@ -233,9 +264,10 @@ def main() -> None:
             pinned_staging_budget_bytes=1 * 2**30,
             direct_io_bounce_budget_bytes=512 * 2**20,
             metadata_margin_bytes=128 * 2**20,
-            page_target_bytes=page_target_bytes,
+            page_target_bytes=kv_page_target_bytes,
             io_workers=args.io_workers,
             io_queue_depth=args.queue_depth,
+            num_output_buffers=args.num_output_buffers,
             direct_io=direct_io,
             kv_storage_dtype=storage_dtype,
         )
@@ -246,6 +278,7 @@ def main() -> None:
         torch.cuda.reset_peak_memory_stats()
         with ProcessMemorySampler() as sampler:
             for repeat in range(args.repeats):
+                profile_repeat = args.cuda_profiler_repeat == repeat
                 stats = PagedAttentionStats()
                 if args.storage in {"memory", "simulated-nvme"}:
 
@@ -257,12 +290,18 @@ def main() -> None:
                     if simulated_device is not None:
                         sink = SimulatedPageSink(sink, device=simulated_device)
                 else:
-                    assert source.path is not None
-                    output_dir = source.path.parent / f"output-{os.getpid()}-{repeat}"
+                    assert q_source.path is not None
+                    output_dir = q_source.path.parent / f"output-{os.getpid()}-{repeat}"
                     sink = NvmeOutputSink(output_dir, direct_io=direct_io)
+                if profile_repeat:
+                    torch.cuda.cudart().cudaProfilerStart()
                 started = time.perf_counter()
-                runner.run(source, source, cu, cu, sink, causal=args.causal, stats=stats)
-                torch.cuda.synchronize()
+                try:
+                    runner.run(q_source, kv_source, cu, cu, sink, causal=args.causal, stats=stats)
+                    torch.cuda.synchronize()
+                finally:
+                    if profile_repeat:
+                        torch.cuda.cudart().cudaProfilerStop()
                 durations.append(time.perf_counter() - started)
                 last_stats = stats
         assert last_stats is not None
@@ -278,6 +317,8 @@ def main() -> None:
             tokens_per_second=args.tokens / mean_seconds,
             effective_tflops=flop / mean_seconds / 1e12,
             checksum=checksum,
+            q_page_count=len(q_source.q_pages),
+            kv_page_count=len(kv_source.kv_pages),
             process_peak_rss_bytes=sampler.peak_rss_bytes,
             nvml_process_peak_bytes=sampler.peak_vram_bytes,
             torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),

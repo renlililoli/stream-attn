@@ -206,10 +206,12 @@ def run_paged(
         q_chunk_tokens=args.q_chunk,
         kv_chunk_tokens=args.kv_chunk,
         backend="triton",
-        block_m=64,
-        block_n=64,
-        num_kv_buffers=2,
-        num_output_buffers=1,
+        block_m=args.block_m,
+        block_n=args.block_n,
+        num_warps=args.num_warps,
+        num_stages=args.num_stages,
+        num_kv_buffers=args.num_kv_buffers,
+        num_output_buffers=args.num_output_buffers,
     )
     config = PagedAttentionConfig(
         attention=attention_config,
@@ -220,7 +222,7 @@ def run_paged(
         page_target_bytes=int(args.kv_page_mib * 2**20),
         io_workers=args.io_workers,
         io_queue_depth=args.queue_depth,
-        num_output_buffers=1,
+        num_output_buffers=args.num_output_buffers,
         direct_io=False,
         kv_storage_dtype=storage_dtype,
     )
@@ -269,6 +271,12 @@ def main() -> None:
     parser.add_argument("--kv-page-mib", type=float, default=16.0)
     parser.add_argument("--q-chunk", type=int)
     parser.add_argument("--kv-chunk", type=int, default=8192)
+    parser.add_argument("--block-m", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--block-n", type=int, choices=(16, 32, 64, 128))
+    parser.add_argument("--num-warps", type=int, choices=(2, 4, 8))
+    parser.add_argument("--num-stages", type=int, choices=(1, 2, 3, 4))
+    parser.add_argument("--num-kv-buffers", type=int, choices=(1, 2, 3), default=2)
+    parser.add_argument("--num-output-buffers", type=int, choices=(1, 2), default=1)
     parser.add_argument("--io-workers", type=int, default=4)
     parser.add_argument("--queue-depth", type=int, default=4)
     parser.add_argument("--simulate-read-gbps", type=float, default=7.0)
