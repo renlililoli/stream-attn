@@ -6,14 +6,14 @@ from seqattn.planner import estimate_workspace_bytes
 
 
 def test_planner_uses_largest_query_chunk_that_fits_budget():
-    shape = dict(
-        q_heads=16,
-        kv_heads=4,
-        head_dim=64,
-        dtype=torch.bfloat16,
-        num_kv_buffers=2,
-        num_output_buffers=2,
-    )
+    shape = {
+        "q_heads": 16,
+        "kv_heads": 4,
+        "head_dim": 64,
+        "dtype": torch.bfloat16,
+        "num_kv_buffers": 2,
+        "num_output_buffers": 2,
+    }
     budget = estimate_workspace_bytes(q_tokens=512, kv_tokens=256, **shape)
     plan = build_plan(
         q_heads=shape["q_heads"],
@@ -88,17 +88,59 @@ def test_joint_planner_prefers_8k_kv_and_large_resident_q_for_h3_shape():
 
 
 def test_device_consumer_plan_does_not_charge_raw_output_buffer():
-    shape = dict(
-        q_tokens=512,
-        kv_tokens=256,
-        q_heads=16,
-        kv_heads=4,
-        head_dim=64,
-        dtype=torch.bfloat16,
-        num_kv_buffers=2,
-        num_output_buffers=2,
-    )
+    shape = {
+        "q_tokens": 512,
+        "kv_tokens": 256,
+        "q_heads": 16,
+        "kv_heads": 4,
+        "head_dim": 64,
+        "dtype": torch.bfloat16,
+        "num_kv_buffers": 2,
+        "num_output_buffers": 2,
+    }
     host_output = estimate_workspace_bytes(**shape, output_mode="host")
     device_consumer = estimate_workspace_bytes(**shape, output_mode="device_consumer")
     expected_output_bytes = 2 * 512 * 16 * 64 * 2
     assert host_output - device_consumer == expected_output_bytes
+
+
+def test_default_kernel_profile_is_portable_on_cpu():
+    plan = build_plan(
+        q_heads=8,
+        kv_heads=8,
+        head_dim=128,
+        dtype=torch.bfloat16,
+        device="cpu",
+        max_q_tokens=1024,
+        max_kv_tokens=1024,
+    )
+    assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == (64, 64, 4, 2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_default_kernel_profile_uses_blackwell_d128_preset():
+    plan = build_plan(
+        q_heads=8,
+        kv_heads=8,
+        head_dim=128,
+        dtype=torch.bfloat16,
+        device="cuda",
+        max_q_tokens=1024,
+        max_kv_tokens=1024,
+    )
+    expected = (128, 64, 8, 3) if torch.cuda.get_device_capability()[0] >= 12 else (64, 64, 4, 2)
+    assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == expected
+
+
+def test_explicit_kernel_parameter_uses_portable_defaults_for_the_rest():
+    plan = build_plan(
+        q_heads=8,
+        kv_heads=8,
+        head_dim=128,
+        dtype=torch.bfloat16,
+        device="cpu",
+        max_q_tokens=1024,
+        max_kv_tokens=1024,
+        config=StreamingAttentionConfig(block_m=32),
+    )
+    assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == (32, 64, 4, 2)

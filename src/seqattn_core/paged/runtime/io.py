@@ -145,9 +145,10 @@ class PagedIoMixin:
         for index in range(depth):
             submit(index)
         for index, page in enumerate(pages):
-            wait_started = time.perf_counter()
-            metrics, lookup = pending.pop(index).result()
-            stats.io_queue_wait_seconds += time.perf_counter() - wait_started
+            with self._range("seqattn_paged:kv_page_wait"):
+                wait_started = time.perf_counter()
+                metrics, lookup = pending.pop(index).result()
+                stats.io_queue_wait_seconds += time.perf_counter() - wait_started
             self._accumulate_read(stats, metrics, lookup, source_is_nvme)
             slot = index % len(stages)
             loaded = LoadedPage(page, slot, metrics, lookup)

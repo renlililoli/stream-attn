@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass, replace
 
 import torch
 
@@ -10,6 +10,43 @@ from .config import StreamingAttentionConfig
 
 def _align_down(value: int, alignment: int) -> int:
     return value - value % alignment
+
+
+_PORTABLE_KERNEL = (64, 64, 4, 2)
+_BLACKWELL_D128_KERNEL = (128, 64, 8, 3)
+
+
+def _resolve_kernel_config(
+    config: StreamingAttentionConfig,
+    *,
+    device: torch.device,
+    head_dim: int,
+    dtype: torch.dtype,
+) -> StreamingAttentionConfig:
+    values = (config.block_m, config.block_n, config.num_warps, config.num_stages)
+    if any(value is not None for value in values):
+        base = _PORTABLE_KERNEL
+    else:
+        base = _PORTABLE_KERNEL
+        if (
+            device.type == "cuda"
+            and torch.cuda.is_available()
+            and dtype in {torch.float16, torch.bfloat16}
+            and head_dim == 128
+        ):
+            major, _ = torch.cuda.get_device_capability(device)
+            if major >= 12:
+                base = _BLACKWELL_D128_KERNEL
+    block_m, block_n, num_warps, num_stages = (
+        default if value is None else value for value, default in zip(values, base)
+    )
+    return replace(
+        config,
+        block_m=block_m,
+        block_n=block_n,
+        num_warps=num_warps,
+        num_stages=num_stages,
+    )
 
 
 @dataclass(frozen=True)
@@ -59,9 +96,7 @@ def estimate_workspace_bytes(
         if output_mode == "host"
         else 0
     )
-    kv_bytes = (
-        num_kv_buffers * 2 * kv_tokens * kv_heads * head_dim * element_size
-    )
+    kv_bytes = num_kv_buffers * 2 * kv_tokens * kv_heads * head_dim * element_size
     # Events and stream objects are small; the fixed margin mainly absorbs
     # allocator alignment and Triton launch scratch without overstating usable
     # query capacity.
@@ -146,11 +181,7 @@ def _candidate_cost(
     # ring-buffer overlap without hard-coding a shape-specific winner.
     tile_log2 = math.log2(kv_chunk / 8192)
     overlap_factor = 1.0 + 0.08 * max(-tile_log2, 0.0) + 0.65 * max(tile_log2, 0.0)
-    return (
-        kv_bytes * overlap_factor / 24e9
-        + state_bytes / 1.2e12
-        + launches * 8e-6
-    )
+    return kv_bytes * overlap_factor / 24e9 + state_bytes / 1.2e12 + launches * 8e-6
 
 
 def build_plan(
@@ -177,6 +208,12 @@ def build_plan(
         raise ValueError("dtype must be float16, bfloat16, or float32")
     if max_q_tokens <= 0 or max_kv_tokens <= 0:
         raise ValueError("max_q_tokens and max_kv_tokens must be positive")
+    config = _resolve_kernel_config(
+        config,
+        device=device,
+        head_dim=head_dim,
+        dtype=dtype,
+    )
 
     if config.kv_chunk_tokens is None:
         kv_candidates = sorted(

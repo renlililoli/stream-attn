@@ -19,10 +19,13 @@ class StreamingAttentionConfig:
     num_kv_buffers: int = 2
     num_output_buffers: int = 1
     output_mode: str = "host"
-    block_m: int = 64
-    block_n: int = 64
-    num_warps: int = 4
-    num_stages: int = 2
+    # Leaving all launch parameters unset enables a conservative device/shape
+    # preset. Setting any one parameter switches to the portable 64x64/4/2
+    # baseline and applies the supplied values as overrides.
+    block_m: int | None = None
+    block_n: int | None = None
+    num_warps: int | None = None
+    num_stages: int | None = None
     backend: str = "auto"
     require_pinned: bool = True
     pin_output: bool = True
@@ -41,13 +44,13 @@ class StreamingAttentionConfig:
             raise ValueError("num_output_buffers must be 1 or 2")
         if self.output_mode not in {"host", "device_consumer"}:
             raise ValueError("output_mode must be 'host' or 'device_consumer'")
-        if self.block_m not in {16, 32, 64, 128}:
+        if self.block_m is not None and self.block_m not in {16, 32, 64, 128}:
             raise ValueError("block_m must be one of 16, 32, 64, 128")
-        if self.block_n not in {16, 32, 64, 128}:
+        if self.block_n is not None and self.block_n not in {16, 32, 64, 128}:
             raise ValueError("block_n must be one of 16, 32, 64, 128")
-        if self.num_warps not in {2, 4, 8}:
+        if self.num_warps is not None and self.num_warps not in {2, 4, 8}:
             raise ValueError("num_warps must be 2, 4, or 8")
-        if self.num_stages not in {1, 2, 3, 4}:
+        if self.num_stages is not None and self.num_stages not in {1, 2, 3, 4}:
             raise ValueError("num_stages must be within [1, 4]")
         if self.backend not in {"auto", "triton", "reference"}:
             raise ValueError(f"unsupported backend: {self.backend}")

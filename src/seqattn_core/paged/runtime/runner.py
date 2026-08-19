@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 
 import torch
 
@@ -31,6 +32,12 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
     ) -> None:
         self.config = PagedAttentionConfig() if config is None else config
         self.device = torch.device(device)
+        self._nvtx_enabled = False
+
+    def _range(self, name: str):
+        if self._nvtx_enabled:
+            return torch.cuda.nvtx.range(name)
+        return nullcontext()
 
     @torch.no_grad()
     def run(
@@ -48,6 +55,11 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
     ) -> object:
         config = self.config if config is None else config
         config.validate()
+        self._nvtx_enabled = bool(
+            config.attention.enable_nvtx
+            and self.device.type == "cuda"
+            and torch.cuda.is_available()
+        )
         if (
             getattr(output_sink, "backing_kind", "memory") == "nvme"
             and getattr(output_sink, "direct_io", None) != config.direct_io
@@ -93,16 +105,17 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
             bounce_limit_bytes=config.direct_io_bounce_budget_bytes,
             metadata_margin_bytes=config.metadata_margin_bytes,
         )
-        staging = HostStaging(
-            q_layout,
-            kv_layout,
-            q_source.q_pages,
-            kv_source.kv_pages,
-            queue_depth=config.io_queue_depth,
-            output_buffers=config.num_output_buffers,
-            pinned=backend == "triton",
-            memory_plan=memory_plan,
-        )
+        with self._range("seqattn_paged:host_staging_allocate"):
+            staging = HostStaging(
+                q_layout,
+                kv_layout,
+                q_source.q_pages,
+                kv_source.kv_pages,
+                queue_depth=config.io_queue_depth,
+                output_buffers=config.num_output_buffers,
+                pinned=backend == "triton",
+                memory_plan=memory_plan,
+            )
         q_reader: PageReader | None = None
         kv_reader: PageReader | None = None
         writer: PageWriter | None = None
@@ -129,13 +142,16 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
                 memory_plan.cache_limit_bytes,
                 max(0, memory_plan.total_budget_bytes - memory_plan.current_bytes),
             )
-            cache = KVPageCache(
-                kv_source.kv_pages,
-                kv_layout,
-                capacity_bytes=cache_capacity,
-                hot_fraction=config.cache_hot_fraction,
-                memory_plan=memory_plan,
-            )
+            if getattr(kv_source, "backing_kind", "memory") == "memory":
+                cache_capacity = 0
+            with self._range("seqattn_paged:cache_allocate"):
+                cache = KVPageCache(
+                    kv_source.kv_pages,
+                    kv_layout,
+                    capacity_bytes=cache_capacity,
+                    hot_fraction=config.cache_hot_fraction,
+                    memory_plan=memory_plan,
+                )
             executor = ThreadPoolExecutor(
                 max_workers=config.io_workers,
                 thread_name_prefix="seqattn-io",
@@ -160,10 +176,11 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
                 backing_is_nvme(kv_source),
                 output_is_nvme,
             )
-            if backend == "reference":
-                self._run_reference(*common)
-            else:
-                self._run_triton(plan, kv_layout, *common[1:])
+            with self._range("seqattn_paged:execute"):
+                if backend == "reference":
+                    self._run_reference(*common)
+                else:
+                    self._run_triton(plan, kv_layout, *common[1:])
             self._finish_output_futures(output_futures, stats, output_is_nvme)
             result = writer.close()
             writer = None

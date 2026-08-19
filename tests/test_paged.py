@@ -85,6 +85,8 @@ def test_memory_paged_matches_fp32_reference(causal, q_heads, kv_heads):
     assert stats.operator_host_peak_bytes <= stats.host_memory_budget_bytes
     assert stats.q_pages == len(source.q_pages)
     assert stats.cache_hits + stats.cache_misses == stats.kv_pages
+    assert stats.cache_hits == 0
+    assert stats.dram_cache_peak_bytes == 0
 
 
 def test_pages_never_cross_packed_segment_boundaries():
@@ -146,9 +148,7 @@ def test_callback_sink_reuses_bounded_output_ring():
     assembled = torch.empty_like(q)
     for page, data in pages:
         assembled[page.token_start : page.token_stop].copy_(data)
-    expected = streaming_attention_reference(
-        q, k, v, cu, cu, q_chunk_tokens=7, kv_chunk_tokens=16
-    )
+    expected = streaming_attention_reference(q, k, v, cu, cu, q_chunk_tokens=7, kv_chunk_tokens=16)
     torch.testing.assert_close(assembled, expected, atol=1e-5, rtol=1e-5)
 
 
@@ -179,9 +179,7 @@ def test_int8_is_explicit_and_reports_approximation_error():
         MemoryPageSink(out),
         stats=stats,
     )
-    exact = streaming_attention_reference(
-        q, k, v, cu_q, cu_k, q_chunk_tokens=7, kv_chunk_tokens=16
-    )
+    exact = streaming_attention_reference(q, k, v, cu_q, cu_k, q_chunk_tokens=7, kv_chunk_tokens=16)
     relative_l2 = (out - exact).float().norm() / exact.float().norm()
     cosine = torch.nn.functional.cosine_similarity(
         out.flatten().float(), exact.flatten().float(), dim=0
@@ -208,4 +206,3 @@ def test_storage_dtype_mismatch_is_rejected():
         PagedAttentionRunner(paged_config("fp32"), device="cpu").run(
             source, source, cu, cu, MemoryPageSink(torch.empty_like(q))
         )
-
