@@ -3,9 +3,9 @@
 ## Scope
 
 This report measures the current `seqattn` Blackwell DRAM-streaming path as the
-operator-owned HBM workspace changes. It is a capacity and execution-time
-measurement of one exact dense-attention shape, not a comparison with an older
-kernel or another implementation.
+operator-owned HBM workspace changes. It also places the sweep next to a
+GPU-resident FlashAttention 2 observation of the same exact dense-attention
+shape. It is not a comparison with an older seqattn kernel.
 
 | Parameter | Value |
 |---|---:|
@@ -39,6 +39,13 @@ Input preparation ran once with 32 CPU workers and took 25.8366 seconds
 workspace has one observation; the table therefore reports measurements
 directly rather than means, medians, or error bars.
 
+The GPU-resident measurement ran afterward in an independent process on the
+same physical GPU. It used one full-shape warmup followed by one measured
+execution. Deterministic Q/K/V generation used the same seed, 32-worker
+4096-token chunking rule, dtype, shape, and mask as the workspace sweep. Its
+44.7888-second data generation and 1.3805-second Q/K/V HBM residency phase are
+reported separately and excluded from execution time.
+
 ## Results
 
 | HBM workspace | PID GPU peak | Resident Q | Q passes | Logical H2D | Execution | Tokens/s | Effective TFLOPS |
@@ -51,6 +58,42 @@ directly rather than means, medians, or error bars.
 | 10 GiB | 10.525 GiB | 177,024 | 3 | 49 GiB | 36.111 s | 14,519 | 218.3 |
 | 12 GiB | 12.520 GiB | 214,144 | 3 | 49 GiB | 36.053 s | 14,542 | 218.6 |
 | 14 GiB | 14.525 GiB | 251,392 | 3 | 49 GiB | 36.010 s | 14,559 | 218.9 |
+
+## GPU-resident FlashAttention 2
+
+The fully resident run used `flash-attn 2.7.4.post1+nv26.1.42222806`, imported as
+`flash_attn.flash_attn_func`, with PyTorch `2.10.0+cu128` on the same RTX 5090
+(`sm_120`). Complete Q/K/V occupies 21GiB and the HBM output adds 7GiB.
+
+| Backend | Q/K/V -> output | PID GPU peak | Torch peak | Execution | Tokens/s | Effective TFLOPS | Execution ratio |
+|---|---|---:|---:|---:|---:|---:|---:|
+| FlashAttention 2 | HBM -> HBM | 28.600 GiB | 28.109 GiB | 36.975 s | 14,180 | 213.2 | 1.000x |
+| seqattn, 2GiB | Pinned DRAM -> pinned DRAM | 2.533 GiB | 1.969 GiB | 36.247 s | 14,464 | 217.4 | 0.980x |
+| seqattn, 14GiB | Pinned DRAM -> pinned DRAM | 14.525 GiB | 13.971 GiB | 36.010 s | 14,559 | 218.9 | 0.974x |
+
+At 2GiB, seqattn reduces PID-level GPU memory by 91.1% relative to the fully
+resident run. The observed execution time is 2.0% lower at 2GiB and 2.6% lower
+at 14GiB, but each row is one observation and the differences are small enough
+that they should be treated as the same performance band rather than a stable
+cross-run ranking.
+
+The residency contracts differ. FlashAttention 2 starts with Q/K/V in HBM and
+leaves output in HBM. The measured seqattn path starts with caller-owned pinned
+DRAM and includes the final 7GiB D2H output transfer. A GPU consumer would need
+seqattn's device-consumer path or another H2D transfer; that application-level
+choice is not represented by the host-output rows above.
+
+Across the 40 sampled BF16 output values, the 14GiB seqattn row and FA2 have:
+
+```text
+relative L2:  0.002958
+max absolute: 3.052e-5
+cosine:       0.99999586
+```
+
+These are sparse signature metrics, not full-output error norms. The different
+BF16 values reflect different floating-point reduction orders; the repository's
+reference-based tests remain the correctness authority.
 
 ## Interpretation
 
@@ -86,9 +129,12 @@ correctness tests.
 - CPU affinity was fixed, but the complete host was not reserved exclusively.
 - Data preparation is reported separately and excluded from execution time.
 - The test exercises caller-owned DRAM streaming, not the paged or NVMe path.
+- The FA2 and seqattn rows were separate processes and separate single
+  observations; no confidence interval is available.
 
 The source-of-truth JSON is retained locally at:
 
 ```text
 workspace/benchmarks/results/rtx5090_dram_workspace_524k_optimized_20260819/gpu3_auto_blackwell_single.json
+workspace/benchmarks/results/rtx5090_flash_backend_524k_20260819/fa2_524288_gpu3.json
 ```

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,35 @@ def make_host_tensor(
     # single-core throughput for multi-GB buffers.
     tensor = torch.randn(shape, dtype=dtype, generator=generator)
     return tensor.pin_memory()
+
+
+def make_host_tensors_parallel(
+    shapes: tuple[tuple[int, ...], ...],
+    dtype: torch.dtype,
+    *,
+    seed: int,
+    workers: int,
+    chunk_tokens: int,
+) -> tuple[torch.Tensor, ...]:
+    if workers <= 0 or chunk_tokens <= 0:
+        raise ValueError("workers and chunk_tokens must be positive")
+    tensors = tuple(torch.empty(shape, dtype=dtype, pin_memory=True) for shape in shapes)
+    tasks = [
+        (tensor_index, chunk_index, start, min(start + chunk_tokens, tensor.shape[0]))
+        for tensor_index, tensor in enumerate(tensors)
+        for chunk_index, start in enumerate(range(0, tensor.shape[0], chunk_tokens))
+    ]
+
+    def fill(task: tuple[int, int, int, int]) -> None:
+        tensor_index, chunk_index, start, stop = task
+        generator = torch.Generator(device="cpu").manual_seed(
+            seed + tensor_index * 1_000_003 + chunk_index
+        )
+        tensors[tensor_index][start:stop].normal_(generator=generator)
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="seqattn-data") as pool:
+        list(pool.map(fill, tasks))
+    return tensors
 
 
 def process_rss_bytes() -> int:
@@ -153,6 +183,7 @@ __all__ = [
     "configure_allocator",
     "make_bounds",
     "make_host_tensor",
+    "make_host_tensors_parallel",
     "process_rss_bytes",
     "process_vram_bytes",
     "process_vram_mib",

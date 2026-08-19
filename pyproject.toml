@@ -26,6 +26,7 @@ dev = ["pytest>=8", "ruff>=0.9"]
 
 [project.scripts]
 seqattn-bench = "seqattn.benchmarking.streaming:main"
+seqattn-bench-resident = "seqattn.benchmarking.resident:main"
 seqattn-paged-bench = "seqattn.benchmarking.paged:main"
 seqattn-pipeline-bench = "seqattn.benchmarking.projection:main"
 

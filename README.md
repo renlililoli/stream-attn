@@ -52,8 +52,29 @@ larger workspaces continue to reduce Q passes and logical H2D traffic. All
 eight sampled output signatures are identical. Data preparation is excluded
 from execution time and took 25.837 seconds with 32 CPU workers.
 
+The same 28GiB Q/K/V/output shape was also measured with GPU-resident
+FlashAttention 2 (`flash-attn 2.7.4.post1+nv26.1.42222806`) on the same
+physical RTX 5090:
+
+| Backend | Q/K/V → output | PID GPU peak | Execution | Effective TFLOPS | Execution ratio |
+|---|---|---:|---:|---:|---:|
+| FlashAttention 2 | HBM → HBM | 28.600 GiB | 36.975 s | 213.2 | 1.000x |
+| **seqattn, 2GiB workspace** | **Pinned DRAM → pinned DRAM** | **2.533 GiB** | **36.247 s** | **217.4** | **0.980x** |
+| **seqattn, 14GiB workspace** | **Pinned DRAM → pinned DRAM** | **14.525 GiB** | **36.010 s** | **218.9** | **0.974x** |
+
+The current 2GiB observation uses 91.1% less process GPU memory than the fully
+resident FA2 run while remaining in the same performance band. FA2 keeps its
+output in HBM; the measured seqattn path includes the final 7GiB D2H output
+transfer. If the next operator consumes attention output on GPU, seqattn's
+device-consumer mode or a separate H2D transfer must be considered instead.
+Input generation is excluded from every row, and the FA2 row also excludes
+1.381 seconds of one-time HBM residency preparation. These are single
+observations, so the small 2.0-2.6% timing difference should not be read as a
+statistical ranking.
+
 See the [current RTX 5090 workspace report](docs/rtx5090_dram_workspace_sweep_2026-08-19.md)
-for the complete protocol, memory accounting, and measurement limits.
+for the complete protocol, FA2 numerical sample, memory accounting, and
+measurement limits.
 
 ### A30: 400K-token DRAM streaming
 
@@ -96,7 +117,7 @@ The same shape was also measured with GPU-resident FlashAttention 2
 | FlashAttention 2 | GPU HBM | 21.961 GiB | 50.827 s | 94.6 | 1.000x |
 | **seqattn, 1GiB workspace** | **Pinned CPU DRAM** | **0.968 GiB** | **102.319 s** | **47.01** | **2.013x** |
 
-FlashAttention 2 is the latency baseline when the complete 21.875GiB
+FlashAttention 2 is the latency reference when the complete 21.875GiB
 Q/K/V/output working set fits in HBM. The 1GiB seqattn point reduces the torch
 allocator peak by 95.6% by keeping Q/K/V in host DRAM, at the cost of 2.013x
 execution time. FlashAttention 2 leaves output in HBM, while the seqattn timing
@@ -106,7 +127,7 @@ FlashAttention 2 observation is retained from 2026-08-18; the optimized-kernel
 container did not include FlashAttention 2.
 
 See the [current A30 workspace report](docs/a30_dram_workspace_sweep_2026-08-19.md)
-for the complete protocol, baseline comparison, memory accounting, and
+for the complete protocol, backend comparison, memory accounting, and
 measurement limits.
 
 ## Features
@@ -515,23 +536,24 @@ seqattn-bench \
   --output benchmark-results/seqattn_61312.json
 ```
 
-Compare against full-GPU FlashAttention 2 in an independent process:
+Measure full-GPU FlashAttention in an independent process, with deterministic
+parallel input generation and Q/K/V residency preparation reported separately:
 
 ```bash
-seqattn-bench \
-  --mode flash2 \
+seqattn-bench-resident \
+  --backend flash2 \
   --tokens 61312 \
   --q-heads 56 --kv-heads 56 --head-dim 128 \
-  --target-vram-mib 8192 \
+  --cpu-workers 32 --cpu-chunk-tokens 4096 \
   --output benchmark-results/flash2_61312.json
 ```
 
-The output includes wall time, tokens/s, effective TFLOP/s, Torch
-allocated/reserved peaks, NVML process peak, planned workspace, and logical
-H2D/D2H bytes.  Latency repetitions run without NVML sampling; a separate
-untimed pass collects the memory peaks so driver polling cannot contaminate
-short-kernel latency.  Use `scripts/profile_nsys.sh` for copy/compute overlap
-and kernel timelines; profiling runs are not primary latency numbers.
+Benchmark output includes wall time, tokens/s, effective TFLOP/s, Torch
+allocated/reserved peaks, and NVML process peak. Seqattn runs additionally
+report planned workspace and logical H2D/D2H bytes; resident-backend runs
+separate input generation and one-time HBM residency from execution. Use
+`scripts/profile_nsys.sh` for copy/compute overlap and kernel timelines;
+profiling runs are not primary latency numbers.
 
 The end-to-end projection benchmark compares the fused consumer path with a
 staged path that materializes raw attention on the CPU:
