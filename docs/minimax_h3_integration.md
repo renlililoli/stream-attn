@@ -6,6 +6,25 @@ The MiniMax-H3 integration demonstrates the purpose of `seqattn` at model
 scale: preserve exact dense attention semantics while moving sequence-sized
 Q/K/V activations to CPU DRAM and bounding the GPU working set.
 
+The published NF4 integration branch is
+[`renlililoli/minimax-h3-seq-chunk-attn`](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
+It streams the complete model attention path rather than wrapping an isolated
+attention microbenchmark.
+
+### Completed result index
+
+| Workload | Current result | PID GPU peak | CPU RSS peak |
+|---|---:|---:|---:|
+| 262,720 tokens, full 50-block DiT step | **570.980 s** | **7,866 MiB** | 57,769 MiB |
+| 132,288 tokens, 50 DiT steps | **50 / 50 completed in 11,941.56 s** | **about 7,166 MiB** | about 48.4 GiB |
+| 15,104 tokens, full generation | **798.938 s** | **4,748 MiB** | 38,697 MiB |
+
+The completed 132K capacity probe used the full 50-block DiT for one denoise
+step, not a reduced-layer proxy. It measured 236.39 seconds, a 5,968MiB
+PID-level NVML peak, and about 48.4GiB CPU RSS. The separate 50-step run
+completed the denoise loop but later failed during Video VAE assembly, so it is
+a completed denoise result rather than a completed generated-video result.
+
 The strongest completed capacity result so far is a real H3-shaped,
 262,720-token, full 50-block denoise forward under an 8GiB whole-process target:
 

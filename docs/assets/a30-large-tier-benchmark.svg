@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
-  <title id="title">seqattn A30 400K-token HBM workspace benchmark</title>
-  <desc id="desc">Execution is flat at 106s for 1-2 GiB workspaces, rises 4.6% to 111s at 16 GiB, and collapses to 681s at 0.5 GiB where 7.6 TiB of H2D makes the operator PCIe-bound. Both axes are logarithmic.</desc>
+  <title id="title">seqattn A30 400K-token optimized HBM workspace benchmark</title>
+  <desc id="desc">The optimized Ampere profile reaches 102.319 seconds at 1 GiB and remains between 105.233 and 109.078 seconds from 2 to 16 GiB. At 0.5 GiB, 7.61 TiB of logical H2D traffic makes the operator PCIe-bound and execution takes 681.162 seconds. Both axes are logarithmic.</desc>
   <rect width="1200" height="680" rx="8" fill="#0b1220"/>
   <text x="48" y="58" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="30" font-weight="700">A30 400K-token exact dense attention</text>
-  <text x="48" y="90" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="17">NVIDIA A30 24GiB · 409,600 tokens · MHA 56/56/56 · BF16 · non-causal · single GPU · log axes</text>
+  <text x="48" y="90" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="17">NVIDIA A30 24GiB · 409,600 tokens · BF16 MHA 56/56/56 · 64x64 / 4 warps / 1 stage · log axes</text>
   <line x1="150" y1="560" x2="1090" y2="560" stroke="#26364d" stroke-width="1"/>
   <text x="138" y="564" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="end">100 s</text>
   <line x1="150" y1="413" x2="1090" y2="413" stroke="#26364d" stroke-width="1"/>
@@ -41,24 +41,24 @@
   <text x="1102" y="226" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13">2000</text>
   <text x="1102" y="124" fill="#64748b" font-family="Inter,Segoe UI,sans-serif" font-size="13">8000</text>
   <text x="1102" y="80" fill="#fb923c" font-family="Inter,Segoe UI,sans-serif" font-size="14">H2D GiB (log)</text>
-  <path d="M150,154 L338,547 L526,547 L714,544 L824,543 L902,540 L1012,538 L1090,538" fill="none" stroke="#38bdf8" stroke-width="3"/>
+  <path d="M150,154 L338,555 L526,549 L714,546 L824,544 L902,542 L1012,542 L1090,542" fill="none" stroke="#38bdf8" stroke-width="3"/>
   <circle cx="150" cy="154" r="5" fill="#38bdf8"/>
-  <text x="150" y="142" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">681.446s</text>
-  <circle cx="338" cy="547" r="5" fill="#38bdf8"/>
-  <text x="338" y="535" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">106.476s</text>
-  <circle cx="526" cy="547" r="5" fill="#38bdf8"/>
-  <text x="526" y="535" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">106.293s</text>
-  <circle cx="714" cy="544" r="5" fill="#38bdf8"/>
-  <text x="714" y="532" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">107.761s</text>
-  <circle cx="824" cy="543" r="5" fill="#38bdf8"/>
-  <text x="824" y="531" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">108.331s</text>
-  <circle cx="902" cy="540" r="5" fill="#38bdf8"/>
-  <text x="902" y="528" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">109.669s</text>
-  <circle cx="1012" cy="538" r="5" fill="#38bdf8"/>
-  <text x="1012" y="526" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">110.911s</text>
-  <circle cx="1090" cy="538" r="5" fill="#38bdf8"/>
-  <text x="1090" y="526" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">111.17s</text>
+  <text x="150" y="142" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">681.162s</text>
+  <circle cx="338" cy="555" r="5" fill="#38bdf8"/>
+  <text x="338" y="539" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">102.319s</text>
+  <circle cx="526" cy="549" r="5" fill="#38bdf8"/>
+  <text x="526" y="533" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">105.233s</text>
+  <circle cx="714" cy="546" r="5" fill="#38bdf8"/>
+  <text x="714" y="530" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">106.956s</text>
+  <circle cx="824" cy="544" r="5" fill="#38bdf8"/>
+  <text x="824" y="528" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">108.102s</text>
+  <circle cx="902" cy="542" r="5" fill="#38bdf8"/>
+  <text x="902" y="526" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">108.696s</text>
+  <circle cx="1012" cy="542" r="5" fill="#38bdf8"/>
+  <text x="1012" y="526" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">109.078s</text>
+  <circle cx="1090" cy="542" r="5" fill="#38bdf8"/>
+  <text x="1090" y="526" fill="#cbd5e1" font-family="Inter,Segoe UI,sans-serif" font-size="13" text-anchor="middle">108.820s</text>
   <rect x="565" y="446" width="560" height="52" rx="6" fill="#132033"/>
-  <text x="575" y="468" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="14">1-2 GiB sweet spot (compute-bound) · 0.5 GiB cliff: 7.6 TiB H2D (PCIe-bound)</text>
-  <text x="575" y="488" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13">GPU-resident FlashAttention 2 baseline: 50.827 s (94.6 TFLOPS) — sweep is 2.09-2.19x in the feasible region</text>
+  <text x="575" y="468" fill="#f8fafc" font-family="Inter,Segoe UI,sans-serif" font-size="14">1 GiB is fastest · 3.90% faster than the previous kernel · 0.5 GiB remains PCIe-bound</text>
+  <text x="575" y="488" fill="#94a3b8" font-family="Inter,Segoe UI,sans-serif" font-size="13">FlashAttention 2 reference: 50.827 s (2026-08-18) · optimized streaming is 2.01-2.15x at 1-16 GiB</text>
 </svg>

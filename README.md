@@ -55,44 +55,59 @@ from execution time and took 25.837 seconds with 32 CPU workers.
 See the [current RTX 5090 workspace report](docs/rtx5090_dram_workspace_sweep_2026-08-19.md)
 for the complete protocol, memory accounting, and measurement limits.
 
-### MiniMax-H3 integration
+### A30: 400K-token DRAM streaming
 
-`seqattn` is integrated into a MiniMax-H3 NF4 inference branch in
-[`renlililoli/minimax-h3-seq-chunk-attn`](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
-The integration streams the complete H3 attention path rather than wrapping an
-isolated attention microbenchmark:
+The current Ampere path was measured on one physical NVIDIA A30 with a single
+benchmark process and no concurrent SeqAttn scan. The problem is exact,
+non-causal BF16 MHA with 409,600 tokens, 56 Q/K/V heads, and head dimension 128.
+Q, K, and V are 5.469GiB each; output is another 5.469GiB. Complete Q/K/V
+remains in caller-owned pinned DRAM while only a planned working set resides
+in HBM.
 
-```text
-chunked QKV projection → pinned CPU Q/K/V → resident-Q Triton attention
-                       → GPU out projection + gate + residual → CPU hidden
-```
+<p align="center">
+  <img src="docs/assets/a30-large-tier-benchmark.svg" alt="A30 400K-token optimized workspace performance" width="100%">
+</p>
 
-| Workload | Current result | PID GPU peak | CPU RSS peak |
-|---|---:|---:|---:|
-| 262,720 tokens, full 50-block DiT step | **570.980 s** | **7,866 MiB** | 57,769 MiB |
-| 132,288 tokens, 50 DiT steps | **50 / 50 completed in 11,941.56 s** | **about 7,166 MiB** | about 48.4 GiB |
-| 15,104 tokens, full generation | **798.938 s** | **4,748 MiB** | 38,697 MiB |
+| HBM workspace | PID GPU peak | Resident Q | Q passes | H2D | Execution | Effective TFLOPS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.5 GiB | 0.717 GiB | 576 | 712 | 7,793 GiB | 681.162 s | 7.06 |
+| **1 GiB** | **1.229 GiB** | **9,856** | **42** | **465 GiB** | **102.319 s** | **47.01** |
+| 2 GiB | 2.221 GiB | 28,416 | 15 | 170 GiB | 105.233 s | 45.71 |
+| 4 GiB | 4.217 GiB | 65,600 | 7 | 82 GiB | 106.956 s | 44.98 |
+| 6 GiB | 6.213 GiB | 102,720 | 4 | 49 GiB | 108.102 s | 44.50 |
+| 8 GiB | 8.213 GiB | 139,904 | 3 | 38 GiB | 108.696 s | 44.26 |
+| 12 GiB | 12.213 GiB | 214,208 | 2 | 27 GiB | 109.078 s | 44.10 |
+| 16 GiB | 16.213 GiB | 288,512 | 2 | 27 GiB | 108.820 s | 44.20 |
 
-The 262K point extends the 720p H3 workload to 957 frames and executes one
-complete 50-block denoise forward with a 2GiB SeqAttn workspace and an 8GiB
-whole-process target. Full BF16 Q/K/V is 10.523GiB and Q/K/V/output is
-14.031GiB. The current path uses the automatic Blackwell kernel and fused,
-tile-local MLP execution.
+The fixed Ampere launch profile is `64x64`, 4 warps, and 1 stage at every
+point. The 1GiB observation is fastest and improves by 3.90% over the previous
+2-stage kernel. The complete 1-16GiB range stays within 6.61% of the fastest
+observation, while larger workspaces reduce Q passes and logical H2D traffic.
+At 0.5GiB, 712 Q passes generate 7.61TiB of logical H2D traffic and make the
+operator PCIe-bound. All eight sampled output signatures are identical. Data
+preparation is excluded from execution time and took 24.757 seconds with 32
+CPU workers.
 
-The completed 132K capacity probe used the full 50-block DiT for one denoise
-step, not a five-layer proxy.  It measured 236.39 seconds, 5,968 MiB PID-level
-NVML peak, and 48.4 GiB CPU RSS. The separate 50-step soak completed all 50
-DiT steps in 11,941.56 seconds with an approximately 7,166MiB peak. Its
-subsequent Video VAE assembly OOM remains recorded as a failure, so it is a
-completed denoise result rather than a completed generated-video result.
+The same shape was also measured with GPU-resident FlashAttention 2
+(`flash-attn 2.7.4.post1`) in an independent process:
 
-The shorter 15,104-token run is a completed end-to-end result under a stricter
-6,144MiB process target.  It executes 50 denoise steps, Video VAE decode, Audio
-VAE decode, and MP4 mux with a 4,748MiB PID-level NVML peak.  The resulting
-H.264/AAC file contains 124 frames at 832×480 and 5.167 seconds of video.
+| Backend | Q/K/V residency | Torch GPU peak | Execution | Effective TFLOPS | Relative latency |
+|---|---|---:|---:|---:|---:|
+| FlashAttention 2 | GPU HBM | 21.961 GiB | 50.827 s | 94.6 | 1.000x |
+| **seqattn, 1GiB workspace** | **Pinned CPU DRAM** | **0.968 GiB** | **102.319 s** | **47.01** | **2.013x** |
 
-See the [MiniMax-H3 integration report](docs/minimax_h3_integration.md) for the
-protocol, completed measurements, limitations, and reproducibility details.
+FlashAttention 2 is the latency baseline when the complete 21.875GiB
+Q/K/V/output working set fits in HBM. The 1GiB seqattn point reduces the torch
+allocator peak by 95.6% by keeping Q/K/V in host DRAM, at the cost of 2.013x
+execution time. FlashAttention 2 leaves output in HBM, while the seqattn timing
+includes the final 5.469GiB D2H output transfer. Neither execution time includes
+input preparation or the FlashAttention 2 HBM-residency preparation. The
+FlashAttention 2 observation is retained from 2026-08-18; the optimized-kernel
+container did not include FlashAttention 2.
+
+See the [current A30 workspace report](docs/a30_dram_workspace_sweep_2026-08-19.md)
+for the complete protocol, baseline comparison, memory accounting, and
+measurement limits.
 
 ## Features
 
