@@ -20,6 +20,28 @@ This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
 It targets exact long-context inference under a fixed GPU-memory budget and
 reports the resulting PCIe and latency cost explicitly.
 
+## End-to-end MiniMax-H3 integration
+
+The standalone operator is integrated into DiffSynth-Studio MiniMax-H3 by the
+[`minimax-h3-seq-chunk-attn`](https://github.com/renlililoli/minimax-h3-seq-chunk-attn)
+repository. That integration extends bounded activation memory beyond the
+attention call to embedding, QKV projection, the attention output consumer,
+fused MLP tiles, and the final layer.
+
+A measured Ref2VA task uses a 1344x768 video-and-audio reference, generates the
+same 243-frame / 10.125-second output, and builds a 158,208-token packed
+sequence. On one RTX 5090, native DiffSynth OOMs before its first denoise step
+under an 8,192 MiB whole-process target. The SeqAttn-backed path completes two
+steps, both VAE decoders, and MP4 mux at an 8,138 MiB PID NVML peak. The same
+native workflow needs a 32,092 MiB peak when the artificial limit is removed.
+
+This reduces the successful process GPU peak by 74.64%, or 3.94x. The
+steady-state second denoise step is 1.135x slower than native, while CPU RSS and
+logical PCIe traffic increase. The result is a capacity tradeoff, not a claim
+that host-backed execution is generally faster than resident FlashAttention.
+See the
+[full Ref2VA protocol and report](https://github.com/renlililoli/minimax-h3-seq-chunk-attn/blob/feature/minimax-h3-sequence-streaming/docs/minimax_h3_ref2va_768p_activation_capacity_2026-08-19.md).
+
 ## Current performance
 
 ### RTX 5090: 524K-token DRAM streaming
