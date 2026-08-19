@@ -7,31 +7,32 @@ scale: preserve exact dense attention semantics while moving sequence-sized
 Q/K/V activations to CPU DRAM and bounding the GPU working set.
 
 The strongest completed capacity result so far is a real H3-shaped,
-132,288-token, full 50-block denoise forward under an 8GiB whole-process target:
+262,720-token, full 50-block denoise forward under an 8GiB whole-process target:
 
 | Metric | Measured value |
 |---|---:|
-| Requested video | 720×1280, 480 frames |
-| Model-aligned video | 736×1280, 481 frames |
-| Duration | 20.04 seconds at 24 fps |
-| Packed sequence | **132,288 tokens** |
+| Requested video | 720×1280, 957 frames |
+| Model-aligned video | 736×1280, 957 frames |
+| Duration | 39.875 seconds at 24 fps |
+| Packed sequence | **262,720 tokens** |
 | DiT blocks | **50** |
 | Denoise steps in completed probe | 1 |
-| Denoise latency | **236.390 s** |
-| PID-level NVML peak | **5,968 MiB** |
-| Step-end process memory | 4,610 MiB |
-| Torch allocated / reserved peak | 4,840 / 5,278 MiB |
-| CPU RSS peak | 49,564 MiB (48.4 GiB) |
-| Logical H2D | 1,708,147,058,688 bytes (1,591 GiB) |
-| Logical D2H | 616,356,249,600 bytes (574 GiB) |
+| Denoise latency | **570.980 s** |
+| PID-level NVML peak | **7,866 MiB** |
+| Step-end process memory | 3,002 MiB |
+| Torch allocated / reserved peak | 6,596 / 7,176 MiB |
+| CPU RSS peak | 57,769 MiB (56.4 GiB) |
+| Logical H2D | 4,756,971,125,760 bytes (4,430 GiB) |
+| Logical D2H | 847,429,632,000 bytes (789 GiB) |
 | Status | **success** |
 
-This result establishes one complete denoise-forward capacity point.  It does
-not yet establish completion of a 50-step video.  A separate dual-GPU 50-step
-run is in progress and is reported below with an explicit live-data label.
+Full BF16 Q/K/V is 10.523GiB and Q/K/V/output is 14.031GiB at this length, so
+the attention activations alone exceed the 8GiB process target. This result
+establishes one complete denoise-forward capacity and performance point. It
+does not establish completion of a 50-step video.
 
 <p align="center">
-  <img src="assets/minimax-h3-live-overview.svg" alt="MiniMax-H3 132K-token live benchmark" width="100%">
+  <img src="assets/minimax-h3-262k-streaming-optimization.svg" alt="MiniMax-H3 262K streaming optimization comparison" width="100%">
 </p>
 
 ## What is integrated
@@ -60,9 +61,36 @@ copied back solely for output projection.  The integration also phases the QKV
 and output-projection weight leases so that these large weight groups do not
 need to be resident together.
 
-The remainder of the H3 block uses the existing two-pass CPU-backed MLP path.
-The current implementation is inference-only and exact; backward, dropout, and
-sparse attention are outside the V1 scope.
+The current default MLP path acquires FC1 and FC2 together and executes
+`FC1 -> SiLU/gate -> FC2 -> residual/gate` per tile on GPU. Only completed
+hidden tiles return to CPU. The older split path remains available for
+controlled comparisons and fallback. The implementation is inference-only and
+exact; backward, dropout, and sparse attention are outside the V1 scope.
+
+## Completed 262K optimization comparison
+
+The current path was compared with the previous implementation sequentially on
+the same physical RTX 5090 GPU3 and the same NUMA-local CPU set. Both runs used
+the same 262,720-token input, checkpoint, prompt, seed, 2GiB SeqAttn workspace,
+4,096-token K/V chunk, and 8,192MiB whole-process target.
+
+| Metric | Previous `64x64/4/2` + split MLP | Current auto Blackwell + fused MLP | Change |
+|---|---:|---:|---:|
+| Full 50-block denoise step | 806.465 s | **570.980 s** | **29.20% faster** |
+| Complete benchmark pipeline | 818.109 s | **583.017 s** | **28.74% faster** |
+| CPU RSS peak | 66,048 MiB | **57,769 MiB** | **8,279 MiB lower** |
+| PID-level NVML peak | **7,564 MiB** | 7,866 MiB | +302 MiB; both below 8GiB |
+| Logical H2D | 4,912.582 GiB | **4,430.275 GiB** | **482.307 GiB lower** |
+| Logical D2H | 1,139.999 GiB | **789.230 GiB** | **350.769 GiB lower** |
+
+Attention H2D is unchanged at 4,033.030GiB. The 833.076GiB total logical
+transfer reduction comes from eliminating the full FC1 intermediate D2H/H2D
+round trip and duplicate residual H2D. Both plans require 11 resident-Q passes,
+so the automatic Blackwell kernel improves update execution rather than
+reducing the number of complete K/V scans.
+
+This is an unprofiled one-run comparison. The complete protocol and raw
+artifact names are in the top-level 262K optimization report.
 
 ## Native baseline memory residency
 
@@ -162,7 +190,7 @@ sequence-sized DiT activations live:
 | Q/K/V | Full tensors in HBM | Full tensors in pinned DRAM; bounded resident-Q and K/V tiles in HBM |
 | Softmax state | FlashAttention-local GPU state | FP32 online state for resident Q only |
 | Attention output | Full HBM tensor | GPU tile flows directly into out projection and residual epilogue |
-| MLP intermediate | Full HBM tensor | Full CPU intermediate; bounded `fc1`/`fc2` tiles in HBM |
+| MLP intermediate | Full HBM tensor | Fused tile-local FC1/gate/FC2; no full CPU FC1 intermediate |
 
 This is why the `seqattn` process can have a higher CPU RSS while holding the
 GPU step boundary near 4.43GiB and the within-step peak near 7.16GiB.
@@ -217,9 +245,9 @@ attention D2H→H2D round trip.  The measured peak falls by more than the raw
 tensor size because the staged asynchronous path can retain several raw and
 projected output allocations until their stream work completes.
 
-## Live dual-GPU 50-step experiment
+## Completed dual-GPU 50-step experiment
 
-Status on **August 18, 2026 UTC**: in progress.
+Final status on **August 18, 2026 UTC**.
 
 The two processes use separate physical RTX 5090 GPUs so they do not compete
 for HBM or GPU compute.  They use the same image, checkpoint, prompt, seed,
@@ -227,14 +255,14 @@ requested shape, and 50-step scheduler.  CPU affinity is disjoint.  The
 `seqattn` process has an 8,192MiB whole-process target; native DiffSynth has no
 artificial memory limit.  GPU memory is sampled for the current PID every 2ms.
 
-| Live snapshot | Native DiffSynth | `seqattn` 8GiB target |
+| Final result | Native DiffSynth | `seqattn` 8GiB target |
 |---|---:|---:|
-| Completed denoise steps | **14 / 50, then OOM** | **14 / 50, still running** |
-| Mean step through step 14 | **140.068 s** | about 224.31 s |
-| Latest observed process peak | 30,876 MiB | **7,164 MiB** |
-| Latest step-end memory | 30,876 MiB | **4,432 MiB** |
+| Completed denoise steps | **14 / 50, then OOM** | **50 / 50** |
+| Mean successful step | **140.068 s** | 238.831 s |
+| Observed process peak | 30,876 MiB | **about 7,166 MiB** |
+| Final step-end memory | 30,876 MiB | **about 4,434 MiB** |
 | Relative peak memory | 100% | **23.2%** |
-| Relative latency | 1.00× | 1.60× |
+| Relative latency | 1.00× | 1.70× |
 
 The native result is now final: status `oom`, 14 completed steps, 30,876MiB
 PID-level NVML peak, and a failed 3.53GiB allocation in the full-sequence MLP
@@ -244,12 +272,12 @@ limit.  Its reserved memory rises gradually from 30,206MiB after step 1 to
 between 1,312MiB and 4,223MiB.
 
 At the matching 14-step checkpoint, `seqattn` remains below the strict 8GiB
-target.  Its step-end value stays at 4,432–4,434MiB and its within-step peak at
-7,160–7,164MiB.  This is the strongest current capacity comparison: native is
-faster per successful step but cannot finish the requested workload on the
-32GiB card, while the 8GiB-target `seqattn` process continues.  A final
-`seqattn` completion, decode, or media claim still waits for all 50 steps,
-video/audio VAE decode, and MP4 mux.
+target. Its step-end value stays near 4,432–4,434MiB and its within-step peak
+near 7,160–7,166MiB. It then completes all 50 DiT steps in 11,941.56 seconds.
+Native is faster per successful step but cannot finish the requested denoise
+workload on the 32GiB card. The subsequent Video VAE assembly OOM means this is
+not a completed decode or media-generation result. The newer 262K one-step
+experiment is now the strongest completed activation-capacity point.
 
 ## Completed 6GiB end-to-end generation
 
@@ -318,8 +346,8 @@ Native result JSON:
 - PyTorch allocator limit: target minus measured CUDA-context memory and a
   128MiB safety margin.
 - Memory source of record: PID-level NVML sampling, not Torch peak alone.
-- Sampling interval: 2ms for the 132K experiments and 5ms for the 61K serial
-  comparison.
+- Sampling interval: 100ms for the 262K optimization comparison, 2ms for the
+  132K experiments, and 5ms for the 61K serial comparison.
 - Logical H2D/D2H bytes are instrumented operator traffic and should not be
   interpreted as measured PCIe-link throughput.
 - Each completed comparison point is a single measured run; no error bars or
@@ -330,9 +358,9 @@ Native result JSON:
 The data supports a narrow, useful claim:
 
 > `seqattn` substantially lowers the GPU capacity required for exact dense H3
-> attention, allowing a 132K-token, 20-second workload to execute below an 8GiB
-> whole-process target where native full-sequence execution consumes nearly the
-> entire 32GiB RTX 5090.
+> attention, allowing a 262K-token workload with 10.523GiB of BF16 Q/K/V to
+> execute below an 8GiB whole-process target. At 132K tokens, native
+> full-sequence execution already consumes nearly the entire 32GiB RTX 5090.
 
 It does not support a claim that `seqattn` is faster than native FlashAttention
 when the full sequence fits.  Current costs include repeated K/V transfer for

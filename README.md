@@ -59,12 +59,8 @@ continue to reduce PCIe traffic, but do not improve wall time for this shape.
 | FlashAttention GPU resident | 28.707 GiB | Full Q/K/V/output in HBM | 38.154 s | 1.000x | Stable two-run baseline |
 | `seqattn` DRAM stream, 8GiB workspace | 8.525 GiB | Unrestricted caller DRAM | 50.490 s | 1.323x | Workspace plateau |
 | `seqattn` paged DRAM, 2GiB workspace | 2.533 GiB | 8GiB operator budget | 211.254 s | 5.537x | 14GiB K/V exceeds cache |
-| `seqattn` simulated NVMe, 2GiB workspace | 2.533 GiB | 8GiB operator budget | 105.685-204.720 s | 2.770-5.366x | Timing simulation; unstable |
 
-The simulated-NVMe row applies 7GB/s reads, 6GB/s writes, fixed per-request
-latency, and queue-depth limits to in-memory pages. It validates scheduling and
-I/O accounting, but it is not a physical-NVMe performance result. Across all
-12 DRAM-workspace observations, the sampled output signatures are identical.
+Across all 12 DRAM-workspace observations, the sampled output signatures are identical.
 Compared with FlashAttention, the 40 sampled BF16 values have relative L2
 `0.002958`, maximum absolute error `3.0518e-5`, and cosine `0.99999586`.
 
@@ -72,7 +68,7 @@ See the [complete storage-tier benchmark report](docs/large_tier_benchmark_2026-
 for raw run values, cache accounting, numerical scope, caveats, and artifact
 locations.
 
-## A30 400K-token storage-tier benchmark
+## A30 400K-token DRAM streaming benchmark
 
 The same 56-head MHA shape was re-run on one NVIDIA A30 (24GiB, Ampere sm_80)
 with 409,600 tokens so the complete 21.9GiB GPU-resident working set just fits
@@ -118,27 +114,33 @@ chunked QKV projection → pinned CPU Q/K/V → resident-Q Triton attention
                        → GPU out projection + gate + residual → CPU hidden
 ```
 
-<p align="center">
-  <img src="docs/assets/minimax-h3-live-overview.svg" alt="MiniMax-H3 132K-token live benchmark" width="100%">
-</p>
-
 ### Results at a glance
 
 | Experiment | Scale | Result | Why it matters |
 |---|---:|---:|---|
+| H3 optimized full DiT | 262,720 packed tokens | **806.465 -> 570.980 s** | Automatic Blackwell kernel plus fused MLP is **29.20% faster**. |
+| H3 optimized host peak | 262,720 packed tokens | **66,048 -> 57,769 MiB RSS** | Removes **8,279 MiB** where Q/K/V alone is 10.523GiB. |
 | H3 full generation | 15,104 packed tokens | **4,748 MiB under a 6GiB target** | Completes 50 denoise steps, both VAE decoders, and MP4 mux. |
-| H3 8GB capacity probe | 132,288 packed tokens | **5,968 MiB** process peak | A complete 50-block denoise forward succeeds under an 8GiB whole-process target. |
-| Native-vs-seqattn soak | 132,288 packed tokens | **native OOM after 14 steps** | `seqattn` reached the same point below 8GiB and continues running. |
-| Projection pipeline | 61,312 tokens | **7,108 → 3,848 MiB** | Keeping attention output on GPU cuts the measured peak by **45.9%**. |
-| Projection pipeline latency | 61,312 tokens | **919.79 → 843.44 ms** | Fusion reduces latency by **8.3%** as well as memory. |
-| H3 integration vs prior streamed path | 61,056 packed tokens | **81.5 GiB less PCIe traffic/step** | Removes the raw-attention D2H→H2D round trip across 50 H3 blocks. |
+| Native-vs-seqattn soak | 132,288 packed tokens | **native OOM after 14 steps** | `seqattn` completes all 50 DiT steps below 8GiB. |
+
+<p align="center">
+  <img src="docs/assets/minimax-h3-262k-streaming-optimization.svg" alt="MiniMax-H3 262K streaming optimization comparison" width="100%">
+</p>
+
+The 262K point extends the same 720p H3 workload to 957 frames and executes
+one complete 50-block denoise forward with a 2GiB SeqAttn workspace and an
+8GiB whole-process target. Full BF16 Q/K/V is 10.523GiB and Q/K/V/output is
+14.031GiB. The previous explicit `64x64/4/2` update kernel plus split MLP takes
+806.465 seconds; the current automatic Blackwell `128x64/8/3` profile plus
+fused MLP takes 570.980 seconds. Logical PCIe traffic falls by 833.076GiB per
+step and CPU RSS falls by 8,279MiB. Both runs remain below the GPU target.
 
 The completed 132K capacity probe used the full 50-block DiT for one denoise
 step, not a five-layer proxy.  It measured 236.39 seconds, 5,968 MiB PID-level
-NVML peak, and 48.4 GiB CPU RSS.  The 50-step video-generation soak shown in
-the figure is still running as of August 18, 2026; its live numbers are
-published as an explicitly preliminary snapshot, not as a completed result.
-The final report will also include both VAE decoders and MP4 muxing.
+NVML peak, and 48.4 GiB CPU RSS. The separate 50-step soak completed all 50
+DiT steps in 11,941.56 seconds with an approximately 7,166MiB peak. Its
+subsequent Video VAE assembly OOM remains recorded as a failure, so it is a
+completed denoise result rather than a completed generated-video result.
 
 The shorter 15,104-token run is a completed end-to-end result under a stricter
 6,144MiB process target.  It executes 50 denoise steps, Video VAE decode, Audio
@@ -154,8 +156,7 @@ and about 4,432MiB at each step boundary.  Host RAM and PCIe costs are reported
 rather than hidden.
 
 See the [MiniMax-H3 integration report](docs/minimax_h3_integration.md) for the
-protocol, completed measurements, live-soak boundary, and reproducibility
-details.
+protocol, completed measurements, limitations, and reproducibility details.
 
 ### What “native” keeps in GPU memory
 
@@ -171,7 +172,7 @@ encoder and both VAEs.  The key difference is activation placement:
 | Packed hidden/residual | complete tensor on GPU | complete tensor in pinned CPU DRAM; chunks on GPU |
 | Q/K/V | complete tensors on GPU | complete tensors in pinned CPU DRAM; resident Q + streamed K/V |
 | Attention output | complete tensor on GPU | consumed tile-by-tile by GPU out projection |
-| MLP `fc1`, gate/up, product | complete sequence tensors on GPU | CPU intermediate with chunked GPU compute |
+| MLP `fc1`, gate/up, product | complete sequence tensors on GPU | fused tile-local GPU FC1/gate/FC2; only final hidden tiles return to CPU |
 | Text encoder / Video VAE / Audio VAE | offloaded while DiT runs | offloaded while DiT runs |
 
 <p align="center">
@@ -627,16 +628,6 @@ seqattn-pipeline-bench \
 
 See [the projected-pipeline benchmark note](docs/projected_pipeline_benchmark.md)
 for the protocol, traffic accounting, and initial RTX 5090 results.
-
-Recommended sweeps:
-
-- sequence length: 3,072 to 61,312 tokens for MiniMax-H3 dimensions;
-- workspace: 2, 4, and 6 GiB;
-- KV chunk: 1,024, 2,048, 4,096, and 8,192 tokens;
-- GQA ratios: 1, 4, and 8;
-- causal and non-causal;
-- pinned and explicitly permitted pageable input;
-- `seqattn`, FlashAttention 2, and Torch SDPA baselines.
 
 OOM and timeout results are retained.  Do not infer unmeasured maximum sequence
 lengths or report profiled runs as normal latency measurements.
