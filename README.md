@@ -20,89 +20,42 @@ This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
 It targets exact long-context inference under a fixed GPU-memory budget and
 reports the resulting PCIe and latency cost explicitly.
 
-## 524K-token storage-tier benchmark
+## Current performance
 
-The standalone runtime was tested on one 524,288-token non-causal MHA problem:
-56 Q/K/V heads, head dimension 128, and BF16 inputs. Q, K, and V are 7GiB each;
-the output is another 7GiB. The complete 28GiB GPU-resident working set fits on
-an RTX 5090, while the paged configuration uses a 2GiB operator workspace and
-an 8GiB operator-owned host budget that cannot hold the complete 14GiB K/V set.
+### RTX 5090: 524K-token DRAM streaming
 
-<p align="center">
-  <img src="docs/assets/large-tier-benchmark.svg" alt="524K-token HBM workspace benchmark" width="100%">
-</p>
-
-### HBM workspace sweep
-
-This scan keeps complete Q/K/V in unrestricted caller-owned pinned DRAM and
-varies only the HBM workspace. Each row is the median of one GPU2 and one GPU3
-observation; the processes were pinned to their respective CPU NUMA affinity.
-
-| HBM workspace | Q chunk | Q passes | H2D traffic | Execution | vs GPU resident |
-|---:|---:|---:|---:|---:|---:|
-| 4 GiB | 65,600 | 8 | 119 GiB | 53.313 s | 1.397x |
-| 6 GiB | 102,720 | 6 | 91 GiB | 52.403 s | 1.373x |
-| **8 GiB** | **139,904** | **4** | **63 GiB** | **50.490 s** | **1.323x** |
-| 10 GiB | 177,024 | 3 | 49 GiB | 50.521 s | 1.324x |
-| 12 GiB | 214,208 | 3 | 49 GiB | 50.498 s | 1.324x |
-| 16 GiB | 288,512 | 2 | 35 GiB | 50.471 s | 1.323x |
-
-The useful latency gain is captured by 8GiB: execution improves by 5.3% from
-4GiB to 8GiB as Q passes fall from eight to four. The 8-16GiB medians differ by
-less than 0.10%, below the observed 1.77-2.07% cross-GPU span. Larger workspaces
-continue to reduce PCIe traffic, but do not improve wall time for this shape.
-
-### Storage-tier comparison
-
-| Mode | GPU peak | Host policy | Execution | vs resident | Status |
-|---|---:|---|---:|---:|---|
-| FlashAttention GPU resident | 28.707 GiB | Full Q/K/V/output in HBM | 38.154 s | 1.000x | Stable two-run baseline |
-| `seqattn` DRAM stream, 8GiB workspace | 8.525 GiB | Unrestricted caller DRAM | 50.490 s | 1.323x | Workspace plateau |
-| `seqattn` paged DRAM, 2GiB workspace | 2.533 GiB | 8GiB operator budget | 211.254 s | 5.537x | 14GiB K/V exceeds cache |
-
-Across all 12 DRAM-workspace observations, the sampled output signatures are identical.
-Compared with FlashAttention, the 40 sampled BF16 values have relative L2
-`0.002958`, maximum absolute error `3.0518e-5`, and cosine `0.99999586`.
-
-See the [complete storage-tier benchmark report](docs/large_tier_benchmark_2026-08-18.md)
-for raw run values, cache accounting, numerical scope, caveats, and artifact
-locations.
-
-## A30 400K-token DRAM streaming benchmark
-
-The same 56-head MHA shape was re-run on one NVIDIA A30 (24GiB, Ampere sm_80)
-with 409,600 tokens so the complete 21.9GiB GPU-resident working set just fits
-the card. GPU-resident FlashAttention 2 executes in 50.827s at a 21.96GiB
-torch peak. The workspace scan keeps complete Q/K/V in unrestricted
-caller-owned pinned DRAM and varies only the HBM workspace; each row is a
-single observation on the idle GPU, bound to its NUMA node 0 CPU affinity.
+The current Blackwell path was measured on one physical RTX 5090 with a single
+benchmark process and no concurrent SeqAttn scan. The problem is exact,
+non-causal BF16 MHA with 524,288 tokens, 56 Q/K/V heads, and head dimension 128.
+Q, K, and V are 7GiB each; output is another 7GiB. Complete Q/K/V remains in
+caller-owned pinned DRAM while only a planned working set resides in HBM.
 
 <p align="center">
-  <img src="docs/assets/a30-large-tier-benchmark.svg" alt="A30 400K-token HBM workspace benchmark" width="100%">
+  <img src="docs/assets/large-tier-benchmark.svg" alt="Current 524K-token RTX 5090 workspace performance" width="100%">
 </p>
 
-| HBM workspace | Q chunk | Q passes | H2D traffic | Execution | vs GPU resident |
-|---:|---:|---:|---:|---:|---:|
-| 0.5 GiB | 576 | 712 | 7.6 TiB | 681.446 s | 13.407x |
-| 1 GiB | 9,856 | 42 | 465 GiB | 106.476 s | 2.095x |
-| 2 GiB | 28,416 | 15 | 170 GiB | 106.293 s | 2.091x |
-| 4 GiB | 65,600 | 7 | 82 GiB | 107.761 s | 2.120x |
-| 6 GiB | 102,720 | 4 | 49 GiB | 108.331 s | 2.131x |
-| 8 GiB | 139,904 | 3 | 38 GiB | 109.669 s | 2.158x |
-| 12 GiB | 214,208 | 2 | 27 GiB | 110.911 s | 2.182x |
-| 16 GiB | 288,512 | 2 | 27 GiB | 111.170 s | 2.187x |
+| HBM workspace | PID GPU peak | Resident Q | Q passes | H2D | Execution | Effective TFLOPS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 GiB | 1.541 GiB | 9,856 | 54 | 763 GiB | 38.201 s | 206.3 |
+| **2 GiB** | **2.533 GiB** | **28,416** | **19** | **273 GiB** | **36.247 s** | **217.4** |
+| 4 GiB | 4.520 GiB | 65,536 | 8 | 119 GiB | 36.073 s | 218.5 |
+| 6 GiB | 6.520 GiB | 102,656 | 6 | 91 GiB | 36.122 s | 218.2 |
+| 8 GiB | 8.525 GiB | 139,904 | 4 | 63 GiB | 36.113 s | 218.2 |
+| 10 GiB | 10.525 GiB | 177,024 | 3 | 49 GiB | 36.111 s | 218.3 |
+| 12 GiB | 12.520 GiB | 214,144 | 3 | 49 GiB | 36.053 s | 218.6 |
+| 14 GiB | 14.525 GiB | 251,392 | 3 | 49 GiB | 36.010 s | 218.9 |
 
-Unlike the 5090 scan, the A30 is compute-bound: 1-2GiB is a flat sweet spot
-at about 45 TFLOPS, wall time rises monotonically by 4.6% up to 16GiB as
-larger Q chunks grow per-K/V-tile FP32 state traffic, and the 0.5GiB point
-collapses 6.4x to 681s with 7.6TiB of H2D once K/V re-streaming dominates.
-All eight output signatures are identical; compared with FlashAttention 2 the
-40 sampled BF16 values have relative L2 `0.004160`, maximum absolute error
-`3.052e-5`, and cosine `0.99999219`. See
-the [A30 storage-tier benchmark report](docs/a30_large_tier_benchmark_2026-08-18.md)
-for raw run values, environment, and methodology.
+The automatic Blackwell launch profile resolves to `128x64`, 8 warps, and 3
+stages at every point. Moving from 1GiB to 2GiB cuts execution time by 5.1%.
+The complete 2-14GiB range stays within 0.66% of the fastest observation, while
+larger workspaces continue to reduce Q passes and logical H2D traffic. All
+eight sampled output signatures are identical. Data preparation is excluded
+from execution time and took 25.837 seconds with 32 CPU workers.
 
-## MiniMax-H3 integration
+See the [current RTX 5090 workspace report](docs/rtx5090_dram_workspace_sweep_2026-08-19.md)
+for the complete protocol, memory accounting, and measurement limits.
+
+### MiniMax-H3 integration
 
 `seqattn` is integrated into a MiniMax-H3 NF4 inference branch in
 [`renlililoli/minimax-h3-seq-chunk-attn`](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
@@ -114,26 +67,17 @@ chunked QKV projection → pinned CPU Q/K/V → resident-Q Triton attention
                        → GPU out projection + gate + residual → CPU hidden
 ```
 
-### Results at a glance
+| Workload | Current result | PID GPU peak | CPU RSS peak |
+|---|---:|---:|---:|
+| 262,720 tokens, full 50-block DiT step | **570.980 s** | **7,866 MiB** | 57,769 MiB |
+| 132,288 tokens, 50 DiT steps | **50 / 50 completed in 11,941.56 s** | **about 7,166 MiB** | about 48.4 GiB |
+| 15,104 tokens, full generation | **798.938 s** | **4,748 MiB** | 38,697 MiB |
 
-| Experiment | Scale | Result | Why it matters |
-|---|---:|---:|---|
-| H3 optimized full DiT | 262,720 packed tokens | **806.465 -> 570.980 s** | Automatic Blackwell kernel plus fused MLP is **29.20% faster**. |
-| H3 optimized host peak | 262,720 packed tokens | **66,048 -> 57,769 MiB RSS** | Removes **8,279 MiB** where Q/K/V alone is 10.523GiB. |
-| H3 full generation | 15,104 packed tokens | **4,748 MiB under a 6GiB target** | Completes 50 denoise steps, both VAE decoders, and MP4 mux. |
-| Native-vs-seqattn soak | 132,288 packed tokens | **native OOM after 14 steps** | `seqattn` completes all 50 DiT steps below 8GiB. |
-
-<p align="center">
-  <img src="docs/assets/minimax-h3-262k-streaming-optimization.svg" alt="MiniMax-H3 262K streaming optimization comparison" width="100%">
-</p>
-
-The 262K point extends the same 720p H3 workload to 957 frames and executes
-one complete 50-block denoise forward with a 2GiB SeqAttn workspace and an
-8GiB whole-process target. Full BF16 Q/K/V is 10.523GiB and Q/K/V/output is
-14.031GiB. The previous explicit `64x64/4/2` update kernel plus split MLP takes
-806.465 seconds; the current automatic Blackwell `128x64/8/3` profile plus
-fused MLP takes 570.980 seconds. Logical PCIe traffic falls by 833.076GiB per
-step and CPU RSS falls by 8,279MiB. Both runs remain below the GPU target.
+The 262K point extends the 720p H3 workload to 957 frames and executes one
+complete 50-block denoise forward with a 2GiB SeqAttn workspace and an 8GiB
+whole-process target. Full BF16 Q/K/V is 10.523GiB and Q/K/V/output is
+14.031GiB. The current path uses the automatic Blackwell kernel and fused,
+tile-local MLP execution.
 
 The completed 132K capacity probe used the full 50-block DiT for one denoise
 step, not a five-layer proxy.  It measured 236.39 seconds, 5,968 MiB PID-level
@@ -147,43 +91,8 @@ The shorter 15,104-token run is a completed end-to-end result under a stricter
 VAE decode, and MP4 mux with a 4,748MiB PID-level NVML peak.  The resulting
 H.264/AAC file contains 124 frames at 832×480 and 5.167 seconds of video.
 
-The native path is faster while it runs: 140.07 seconds per denoise step versus
-about 224.31 seconds for `seqattn`, a 1.60× slowdown.  It does not complete this
-run, however.  Unrestricted native DiffSynth reaches a 30,876MiB PID-level NVML
-peak and OOMs while starting step 15 with a 3.53GiB allocation request.  At the
-same 14-step checkpoint, `seqattn` remains stable at a 7,164MiB within-step peak
-and about 4,432MiB at each step boundary.  Host RAM and PCIe costs are reported
-rather than hidden.
-
 See the [MiniMax-H3 integration report](docs/minimax_h3_integration.md) for the
 protocol, completed measurements, limitations, and reproducibility details.
-
-### What “native” keeps in GPU memory
-
-The native comparison is not a model-without-offload strawman.  It uses the
-same CPU/DRAM weight backing and DiffSynth VRAM management; no disk offload is
-used.  During denoising, DiffSynth onloads only the DiT and offloads the text
-encoder and both VAEs.  The key difference is activation placement:
-
-| Residency during the DiT loop | Native full sequence | `seqattn` |
-|---|---|---|
-| Inactive model weights | CPU DRAM | CPU DRAM |
-| DiT weights | CPU-backed; prepared/current layers can reside on GPU | same backing, with frozen post-step-1 residency |
-| Packed hidden/residual | complete tensor on GPU | complete tensor in pinned CPU DRAM; chunks on GPU |
-| Q/K/V | complete tensors on GPU | complete tensors in pinned CPU DRAM; resident Q + streamed K/V |
-| Attention output | complete tensor on GPU | consumed tile-by-tile by GPU out projection |
-| MLP `fc1`, gate/up, product | complete sequence tensors on GPU | fused tile-local GPU FC1/gate/FC2; only final hidden tiles return to CPU |
-| Text encoder / Video VAE / Audio VAE | offloaded while DiT runs | offloaded while DiT runs |
-
-<p align="center">
-  <img src="docs/assets/minimax-h3-native-residency.svg" alt="Native MiniMax-H3 memory residency" width="100%">
-</p>
-
-At 132,288 BF16 tokens, one complete hidden/residual tensor is approximately
-1.325GiB, full QKV is 5.299GiB, and the MLP `fc1` output is 7.065GiB.  Splitting
-`fc1` produces 3.532GiB gate and up views; the native OOM is the attempt to
-allocate another 3.53GiB for `SiLU(gate) * up`.  These are activation sizes,
-not checkpoint-weight sizes.
 
 ## Features
 
@@ -408,7 +317,7 @@ Exact global self-attention still has one unavoidable barrier: every K/V token
 in a packed segment must be projected before a query result can be finalized.
 The projection phase pipelines hidden H2D, QKV compute, and Q/K/V D2H across
 chunks.  After the barrier, attention output stays on GPU and flows directly
-into output projection, removing the old raw-attention D2H followed by H2D.
+into output projection, avoiding a raw-attention D2H-to-H2D round trip.
 
 The projection callbacks are intentionally model-owned.  They can wrap normal
 BF16/FP16 linear layers, quantized/offloaded modules, Q/K normalization, rotary
@@ -420,13 +329,10 @@ budgets must also reserve memory for the CUDA context, weights, and caller-owned
 activations.
 
 `output_mode="device_consumer"` additionally finalizes attention in the Q HBM
-buffer and removes the separate raw-output HBM allocation. It is opt-in: the
-61,312-token diagnostic on August 18, 2026 measured 850.8ms with Q reuse versus
-828.7ms for the same-run separate-output GPU-consumer path, so reuse was 2.7%
-slower and did not meet the 10% speedup threshold for becoming the default. The
-mode remains useful when a fixed Q chunk makes removal of the output allocation
-more important than latency; an auto planner may instead spend the freed budget
-on a larger resident Q chunk.
+buffer and removes the separate raw-output HBM allocation. This opt-in mode is
+useful when a fixed Q chunk makes the smaller allocation footprint more
+important than maximizing throughput. With automatic planning, retaining a
+separate output buffer can allow a more favorable resident-Q layout.
 
 ### Fixed-host-memory paged API
 
@@ -465,7 +371,7 @@ runner.run(
 
 `MemoryPageSource` and `MemoryPageSink` adapt caller-owned CPU tensors to the
 same interface. Complete tensors owned by the caller are not charged to the
-operator budget, so the old tensor API and a complete `MemoryPageSink` output
+operator budget, so the tensor API and a complete `MemoryPageSink` output
 are compatibility modes, not low-RAM execution.
 
 The default 8GiB host policy reserves at most 1GiB for pinned staging, 512MiB
@@ -514,11 +420,10 @@ Run one point with `seqattn-paged-bench`, or the complete matrix with
 queue-wait time, cache statistics, logical/physical NVMe bytes, H2D/D2H bytes,
 Torch/NVML GPU memory, process RSS, and operator host-memory peaks.
 
-The current project node is suitable for correctness, direct-I/O behavior, and
-memory-limit validation only. Its NFS/local SATA storage must not be used to
-claim NVMe latency. Formal runs must use a measured local device at or above
-7GB/s and pass `--formal-local-nvme`; otherwise result JSON is marked as
-functional/memory-only.
+Physical NVMe performance claims require a measured local device and
+`--formal-local-nvme`. Without that flag, result JSON is marked as
+functional/memory-only so correctness and memory-limit tests cannot be
+mistaken for storage measurements.
 
 For pipeline testing without a physical NVMe device, `simulated-nvme` keeps
 Q/K/V in caller-owned memory and applies per-page latency plus an aggregate
