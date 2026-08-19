@@ -152,6 +152,15 @@ def main() -> None:
         scale = args.head_dim**-0.5
 
         def run_once() -> torch.Tensor:
+            if args.backend == "flash4":
+                result = attention(
+                    q,
+                    k,
+                    v,
+                    softmax_scale=scale,
+                    causal=args.causal,
+                )
+                return result[0] if isinstance(result, tuple) else result
             return attention(
                 q,
                 k,

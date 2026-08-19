@@ -3,9 +3,10 @@
 ## Scope
 
 This report measures the current `seqattn` Blackwell DRAM-streaming path as the
-operator-owned HBM workspace changes. It also places the sweep next to a
-GPU-resident FlashAttention 2 observation of the same exact dense-attention
-shape. It is not a comparison with an older seqattn kernel.
+operator-owned HBM workspace changes. It also places the sweep next to
+GPU-resident FlashAttention 2 and FlashAttention 4 observations of the same
+exact dense-attention shape. It is not a comparison with an older seqattn
+kernel.
 
 | Parameter | Value |
 |---|---:|
@@ -39,11 +40,12 @@ Input preparation ran once with 32 CPU workers and took 25.8366 seconds
 workspace has one observation; the table therefore reports measurements
 directly rather than means, medians, or error bars.
 
-The GPU-resident measurement ran afterward in an independent process on the
-same physical GPU. It used one full-shape warmup followed by one measured
+The GPU-resident measurements ran afterward in independent processes on the
+same physical GPU. Each used one full-shape warmup followed by one measured
 execution. Deterministic Q/K/V generation used the same seed, 32-worker
-4096-token chunking rule, dtype, shape, and mask as the workspace sweep. Its
-44.7888-second data generation and 1.3805-second Q/K/V HBM residency phase are
+4096-token chunking rule, dtype, shape, and mask as the workspace sweep. FA2
+used 44.7888 seconds for data generation and 1.3805 seconds for HBM residency;
+FA4 used 44.6514 and 1.0693 seconds respectively. These preparation phases are
 reported separately and excluded from execution time.
 
 ## Results
@@ -59,31 +61,35 @@ reported separately and excluded from execution time.
 | 12 GiB | 12.520 GiB | 214,144 | 3 | 49 GiB | 36.053 s | 14,542 | 218.6 |
 | 14 GiB | 14.525 GiB | 251,392 | 3 | 49 GiB | 36.010 s | 14,559 | 218.9 |
 
-## GPU-resident FlashAttention 2
+## GPU-resident FlashAttention 2 and 4
 
-The fully resident run used `flash-attn 2.7.4.post1+nv26.1.42222806`, imported as
-`flash_attn.flash_attn_func`, with PyTorch `2.10.0+cu128` on the same RTX 5090
+The FA2 run used `flash-attn 2.7.4.post1+nv26.1.42222806`, imported as
+`flash_attn.flash_attn_func`. The FA4 run used `flash-attn-4 4.0.0b26`, imported
+as `flash_attn.cute.flash_attn_func`, with CuTeDSL `4.6.0.dev0` and
+`quack-kernels 0.5.3`. Both used PyTorch `2.10.0+cu128` on the same RTX 5090
 (`sm_120`). Complete Q/K/V occupies 21GiB and the HBM output adds 7GiB.
 
-| Backend | Q/K/V -> output | PID GPU peak | Torch peak | Execution | Tokens/s | Effective TFLOPS | Execution ratio |
+| Backend | Q/K/V -> output | PID GPU peak | Torch peak | Execution | Tokens/s | Effective TFLOPS | vs FA4 |
 |---|---|---:|---:|---:|---:|---:|---:|
-| FlashAttention 2 | HBM -> HBM | 28.600 GiB | 28.109 GiB | 36.975 s | 14,180 | 213.2 | 1.000x |
-| seqattn, 2GiB | Pinned DRAM -> pinned DRAM | 2.533 GiB | 1.969 GiB | 36.247 s | 14,464 | 217.4 | 0.980x |
-| seqattn, 14GiB | Pinned DRAM -> pinned DRAM | 14.525 GiB | 13.971 GiB | 36.010 s | 14,559 | 218.9 | 0.974x |
+| FlashAttention 2 | HBM -> HBM | 28.600 GiB | 28.109 GiB | 36.975 s | 14,180 | 213.2 | 1.020x |
+| FlashAttention 4 | HBM -> HBM | 28.486 GiB | 28.000 GiB | 36.267 s | 14,456 | 217.3 | 1.000x |
+| seqattn, 2GiB | Pinned DRAM -> pinned DRAM | 2.533 GiB | 1.969 GiB | 36.247 s | 14,464 | 217.4 | 0.999x |
+| seqattn, 14GiB | Pinned DRAM -> pinned DRAM | 14.525 GiB | 13.971 GiB | 36.010 s | 14,559 | 218.9 | 0.993x |
 
-At 2GiB, seqattn reduces PID-level GPU memory by 91.1% relative to the fully
-resident run. The observed execution time is 2.0% lower at 2GiB and 2.6% lower
-at 14GiB, but each row is one observation and the differences are small enough
-that they should be treated as the same performance band rather than a stable
-cross-run ranking.
+At 2GiB, seqattn reduces PID-level GPU memory by 91.1% relative to FA4 while
+the observed execution times differ by 20.8 milliseconds, or 0.06%. The 14GiB
+seqattn row is 0.71% lower than FA4. Each row is one observation, so these
+sub-percent differences should be treated as the same performance band rather
+than a stable cross-run ranking.
 
-The residency contracts differ. FlashAttention 2 starts with Q/K/V in HBM and
-leaves output in HBM. The measured seqattn path starts with caller-owned pinned
-DRAM and includes the final 7GiB D2H output transfer. A GPU consumer would need
+The residency contracts differ. FA2 and FA4 start with Q/K/V in HBM and leave
+output in HBM. The measured seqattn path starts with caller-owned pinned DRAM
+and includes the final 7GiB D2H output transfer. A GPU consumer would need
 seqattn's device-consumer path or another H2D transfer; that application-level
 choice is not represented by the host-output rows above.
 
-Across the 40 sampled BF16 output values, the 14GiB seqattn row and FA2 have:
+FA2 and FA4 produced identical values at all 40 sampled BF16 positions. The
+14GiB seqattn row compared with either resident backend has:
 
 ```text
 relative L2:  0.002958
@@ -94,6 +100,34 @@ cosine:       0.99999586
 These are sparse signature metrics, not full-output error norms. The different
 BF16 values reflect different floating-point reduction orders; the repository's
 reference-based tests remain the correctness authority.
+
+### Why seqattn appeared faster than FA2
+
+The result is not caused by FA2 falling back to an older GPU architecture.
+`cuobjdump` confirmed that the installed FA2 extension contains native
+`sm_120` cubins. A short 16K-token Nsight Systems capture, used only to inspect
+kernel selection, recorded one kernel per resident backend:
+
+| Backend | Captured kernel | 16K kernel time |
+|---|---|---:|
+| FA2 | `flash_fwd_kernel`, head dim 128, `128x64`, 4 warps | 34.652 ms |
+| FA4 | `flash_fwd_sm120` CuTeDSL kernel | 34.134 ms |
+
+FA4 is 1.5% faster in this short capture and 1.9% faster at 524K, so the newer
+SM120-specific schedule explains most of the apparent FA2 gap. Seqattn uses a
+shape-specific `128x64`, 8-warp, 3-stage Triton configuration, 8K K/V tiles,
+and resident-Q chunks. At 14GiB it executes 3 Q passes and 192 K/V tile kernels;
+at 2GiB it executes 19 Q passes and 1,216 K/V tile kernels. Kernel launch cost
+is negligible relative to a 36-second attention call. The runtime pipelines
+H2D and D2H with compute, and the flat 2-14GiB curve indicates that most copy
+work is hidden for this shape.
+
+The additional warps and deeper software pipeline are plausible reasons for
+slightly better scheduling on this exact BF16, head-dimension-128,
+single-segment shape. That is an inference from the selected configurations
+and timings, not a register/occupancy conclusion from Nsight Compute counters.
+The defensible claim is that current seqattn matches FA4 for this shape while
+using much less HBM, not that it generally outperforms FlashAttention.
 
 ## Interpretation
 
@@ -129,12 +163,15 @@ correctness tests.
 - CPU affinity was fixed, but the complete host was not reserved exclusively.
 - Data preparation is reported separately and excluded from execution time.
 - The test exercises caller-owned DRAM streaming, not the paged or NVMe path.
-- The FA2 and seqattn rows were separate processes and separate single
+- The FA2, FA4, and seqattn rows were separate processes and separate single
   observations; no confidence interval is available.
+- The 16K Nsight captures identify kernel selection only and are not used as
+  the primary 524K performance result.
 
 The source-of-truth JSON is retained locally at:
 
 ```text
 workspace/benchmarks/results/rtx5090_dram_workspace_524k_optimized_20260819/gpu3_auto_blackwell_single.json
 workspace/benchmarks/results/rtx5090_flash_backend_524k_20260819/fa2_524288_gpu3.json
+workspace/benchmarks/results/rtx5090_flash_backend_524k_20260819/fa4_524288_gpu3.json
 ```

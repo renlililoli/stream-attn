@@ -53,28 +53,29 @@ eight sampled output signatures are identical. Data preparation is excluded
 from execution time and took 25.837 seconds with 32 CPU workers.
 
 The same 28GiB Q/K/V/output shape was also measured with GPU-resident
-FlashAttention 2 (`flash-attn 2.7.4.post1+nv26.1.42222806`) on the same
-physical RTX 5090:
+FlashAttention 2 (`2.7.4.post1+nv26.1.42222806`) and FlashAttention 4
+(`4.0.0b26`) on the same physical RTX 5090:
 
-| Backend | Q/K/V → output | PID GPU peak | Execution | Effective TFLOPS | Execution ratio |
+| Backend | Q/K/V → output | PID GPU peak | Execution | Effective TFLOPS | vs FA4 |
 |---|---|---:|---:|---:|---:|
-| FlashAttention 2 | HBM → HBM | 28.600 GiB | 36.975 s | 213.2 | 1.000x |
-| **seqattn, 2GiB workspace** | **Pinned DRAM → pinned DRAM** | **2.533 GiB** | **36.247 s** | **217.4** | **0.980x** |
-| **seqattn, 14GiB workspace** | **Pinned DRAM → pinned DRAM** | **14.525 GiB** | **36.010 s** | **218.9** | **0.974x** |
+| FlashAttention 2 | HBM → HBM | 28.600 GiB | 36.975 s | 213.2 | 1.020x |
+| FlashAttention 4 | HBM → HBM | 28.486 GiB | 36.267 s | 217.3 | 1.000x |
+| **seqattn, 2GiB workspace** | **Pinned DRAM → pinned DRAM** | **2.533 GiB** | **36.247 s** | **217.4** | **0.999x** |
+| **seqattn, 14GiB workspace** | **Pinned DRAM → pinned DRAM** | **14.525 GiB** | **36.010 s** | **218.9** | **0.993x** |
 
 The current 2GiB observation uses 91.1% less process GPU memory than the fully
-resident FA2 run while remaining in the same performance band. FA2 keeps its
-output in HBM; the measured seqattn path includes the final 7GiB D2H output
-transfer. If the next operator consumes attention output on GPU, seqattn's
-device-consumer mode or a separate H2D transfer must be considered instead.
-Input generation is excluded from every row, and the FA2 row also excludes
-1.381 seconds of one-time HBM residency preparation. These are single
-observations, so the small 2.0-2.6% timing difference should not be read as a
-statistical ranking.
+resident FA4 run while matching its observed execution time within 0.06%.
+FA4 improves over FA2 by 1.9%, accounting for most of the earlier apparent
+seqattn advantage. Both FlashAttention paths keep output in HBM; the measured
+seqattn path includes the final 7GiB D2H output transfer. If the next operator
+consumes attention output on GPU, seqattn's device-consumer mode or a separate
+H2D transfer must be considered instead. Input generation and one-time HBM
+residency preparation are excluded from the resident rows. These are single
+observations, so sub-percent differences are not a statistical ranking.
 
 See the [current RTX 5090 workspace report](docs/rtx5090_dram_workspace_sweep_2026-08-19.md)
-for the complete protocol, FA2 numerical sample, memory accounting, and
-measurement limits.
+for the complete protocol, FA2/FA4 kernel analysis, numerical sample, memory
+accounting, and measurement limits.
 
 ### A30: 400K-token DRAM streaming
 
@@ -547,6 +548,9 @@ seqattn-bench-resident \
   --cpu-workers 32 --cpu-chunk-tokens 4096 \
   --output benchmark-results/flash2_61312.json
 ```
+
+Select `--backend flash4` in an environment containing `flash-attn-4` and its
+matching CuTeDSL dependencies.
 
 Benchmark output includes wall time, tokens/s, effective TFLOP/s, Torch
 allocated/reserved peaks, and NVML process peak. Seqattn runs additionally
