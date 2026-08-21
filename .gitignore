@@ -3,9 +3,16 @@ __pycache__/
 *.so
 .pytest_cache/
 .ruff_cache/
+.venv/
+.venv-*/
 build/
 dist/
 *.egg-info/
 benchmark-results/
 *.nsys-rep
 *.sqlite
+
+# Local planning and analysis notes
+/notes.md
+/project_analysis.md
+/task_plan.md

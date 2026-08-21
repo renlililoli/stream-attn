@@ -99,6 +99,43 @@ See the [current RTX 5090 workspace report](docs/rtx5090_dram_workspace_sweep_20
 for the complete protocol, FA2/FA4 kernel analysis, numerical sample, memory
 accounting, and measurement limits.
 
+### RTX 4090: 524K-token DRAM streaming
+
+The current Ada path was measured on one physical RTX 4090 with a single
+benchmark process and no concurrent SeqAttn scan. The problem is exact,
+non-causal BF16 MHA with 524,288 tokens, 56 Q/K/V heads, and head dimension 128.
+Q, K, and V are 7GiB each; output is another 7GiB. Complete Q/K/V remains in
+caller-owned pinned DRAM while only a planned working set resides in HBM. The
+complete 28GiB shape does not fit in the card's 24,564MiB HBM, so no same-shape
+resident FlashAttention row is available.
+
+<p align="center">
+  <img src="docs/assets/rtx4090-large-tier-benchmark.svg" alt="RTX 4090 524K-token workspace performance" width="100%">
+</p>
+
+| HBM workspace | PID GPU peak | Resident Q | Q passes | H2D | Execution | Effective TFLOPS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 GiB | 1.385 GiB | 9,856 | 54 | 763 GiB | 107.564 s | 73.3 |
+| **2 GiB** | **2.377 GiB** | **28,416** | **19** | **273 GiB** | **67.076 s** | **117.5** |
+| 4 GiB | 4.373 GiB | 65,600 | 8 | 119 GiB | 66.552 s | 118.4 |
+| 6 GiB | 6.369 GiB | 102,720 | 6 | 91 GiB | 66.982 s | 117.7 |
+| 8 GiB | 8.369 GiB | 139,904 | 4 | 63 GiB | 66.504 s | 118.5 |
+| 10 GiB | 10.369 GiB | 177,024 | 3 | 49 GiB | 66.691 s | 118.2 |
+| 12 GiB | 12.369 GiB | 214,208 | 3 | 49 GiB | 66.506 s | 118.5 |
+| 14 GiB | 14.369 GiB | 251,392 | 3 | 49 GiB | 66.296 s | 118.9 |
+
+The automatic Ada launch profile resolves to `64x64`, 4 warps, and 2 stages at
+every point. Moving from 1GiB to 2GiB cuts execution time by 37.64%. The
+complete 2-14GiB range stays within 1.18% of the fastest observation, while
+larger workspaces continue to reduce Q passes and logical H2D traffic. All
+eight sampled output signatures are identical. Data preparation is excluded
+from execution time and took 33.223 seconds with 32 CPU workers. A same-shape
+resident FlashAttention baseline was not run because the 28GiB working set does
+not fit in the RTX 4090's HBM.
+
+See the [current RTX 4090 workspace report](docs/rtx4090_dram_workspace_sweep_2026-08-21.md)
+for the complete protocol, memory accounting, and measurement limits.
+
 ### A30: 400K-token DRAM streaming
 
 The current Ampere path was measured on one physical NVIDIA A30 with a single
