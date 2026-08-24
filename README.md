@@ -74,6 +74,94 @@ larger workspaces continue to reduce Q passes and logical H2D traffic. All
 eight sampled output signatures are identical. Data preparation is excluded
 from execution time and took 25.837 seconds with 32 CPU workers.
 
+A separate low-workspace extension on 2026-08-24 used a fixed 2,048-token K/V
+chunk so that every point down to 256MiB remained planner-feasible. Each point
+ran serially in a fresh Python process on the same physical GPU3. The original
+table above uses an 8,192-token K/V chunk, so the two tables document different
+fixed-chunk protocols and should not be treated as one directly comparable
+workspace curve.
+
+| HBM workspace | PID GPU peak | Resident Q | Q passes | H2D | Execution | Effective TFLOPS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 256 MiB | 792 MiB | 1,920 | 274 | 3,843 GiB | 114.839 s | 68.6 |
+| 384 MiB | 922 MiB | 4,352 | 121 | 1,701 GiB | 52.594 s | 149.9 |
+| 512 MiB | 1,066 MiB | 6,656 | 79 | 1,113 GiB | 40.844 s | 193.0 |
+| 640 MiB | 1,194 MiB | 8,960 | 59 | 833 GiB | 40.124 s | 196.4 |
+| 768 MiB | 1,316 MiB | 11,264 | 47 | 665 GiB | 39.106 s | 201.5 |
+| 896 MiB | 1,444 MiB | 13,568 | 39 | 553 GiB | 38.943 s | 202.4 |
+
+The 256MiB point is dominated by 274 complete K/V streaming passes and is
+2.95x slower than the 896MiB point. Most of the recovery occurs by 512MiB;
+increasing workspace from 512MiB to 896MiB improves execution time by another
+4.65%. All six runs succeeded with the same automatic `128x64`, 8-warp,
+3-stage kernel and identical sampled output signatures. Input preparation was
+excluded from execution time, while the final 7GiB D2H output transfer was
+included.
+
+#### Prospective host-memory roofline validation
+
+A separate fixed-4K experiment independently measured concurrent pinned H2D
+bandwidth at 37.284GB/s and resident FA4 throughput at 213.323TFLOP/s before
+launching a new resident-Q sweep. For BF16 MHA this predicts
+`q*=P_FA4/B_P=5,721.6` tokens.
+
+The 37.284GB/s value is not the RTX 5090 PCIe 5.0 x16 limit. The host has only
+two populated memory-channel indices per EPYC socket; under NPS4, the GPU3-local
+NUMA node is supplied by one populated DDR5 channel. An idle-GPU diagnostic
+measured 36.14-36.92GB/s from either single populated node, but 56.76GB/s when
+the same pinned allocation was interleaved across both populated nodes on the
+socket. The frozen `B_P` therefore describes this machine's current
+NUMA-local host-supply roof, including its sparse DIMM population.
+
+<p align="center">
+  <img src="docs/assets/rtx5090-pcie-memory-population-diagnostic.svg" alt="RTX 5090 H2D bandwidth with one populated memory node versus two-node interleaving" width="100%">
+</p>
+
+A preregistered follow-up changed only pinned-memory placement from NUMA node5
+to `interleave=5,7`. Concurrent H2D increased from 37.284GB/s to 56.717GB/s,
+which moved the predicted full-roof intersection from `q*=5,721.6` to
+`q*=3,761.2`. The complete seven-point uncontended `1+3` quick sweep shows the
+corresponding leftward transition.
+
+<p align="center">
+  <img src="docs/assets/rtx5090-host-memory-roofline-bandwidth-shift.svg" alt="RTX 5090 host-memory roofline comparison for single-node and two-node interleaved pinned memory" width="100%">
+</p>
+
+| Memory policy | q | Effective q | Predicted TFLOPS | Measured TFLOPS | Measured / predicted |
+|---|---:|---:|---:|---:|---:|
+| node5 only | 4,096 | 4,096.0 | 152.72 | 150.02 | 98.24% |
+| interleave node5+7 | 3,072 | 3,066.0 | 173.90 | 171.64 | 98.70% |
+| interleave node5+7 | 3,328 | 3,318.3 | 188.20 | 185.28 | 98.45% |
+| interleave node5+7 | 3,456 | 3,449.3 | 195.63 | 192.59 | 98.44% |
+| interleave node5+7 | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
+| interleave node5+7 | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
+| interleave node5+7 | 3,840 | 3,826.9 | 213.32 | 206.98 | 97.03% |
+| interleave node5+7 | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
+
+At the same `q=4096`, interleaving raises measured throughput by 35.5%. The
+quick high-Q plateau is 205.165TFLOP/s, and its 95% threshold is first crossed
+at effective `q=3566.6`. Correcting that threshold estimates `q*=3754.3`, only
+0.183% below the preregistered `q*=3761.2`. These remain one-process
+exploratory observations; publication results still require replication.
+
+<p align="center">
+  <img src="docs/assets/rtx5090-host-memory-roofline-experiment0.svg" alt="Prospective RTX 5090 host-memory roofline validation" width="100%">
+</p>
+
+| Resident q | Q passes | Predicted TFLOPS | Measured pipeline TFLOPS | Measured / predicted |
+|---:|---:|---:|---:|---:|
+| 4,096 | 128 | 152.72 | 150.02 | 98.24% |
+| 5,504 | 96 | 203.62 | 198.86 | 97.66% |
+| 5,760 | 92 | 212.47 | 204.93 | 96.45% |
+| 8,192 | 64 | 213.32 | 206.21 | 96.66% |
+
+These first prospectively measured points lie within 3.55% of the independent
+roofline. The fine/coarse sweep and process replications are still in progress;
+see the
+[Experiment 0 report](docs/rtx5090_host_memory_roofline_experiment0_2026-08-24.md)
+for the protocol, source separation, timing boundary, current interpretation,
+and retained artifacts.
+
 The same 28GiB Q/K/V/output shape was also measured with GPU-resident
 FlashAttention 2 (`2.7.4.post1+nv26.1.42222806`) and FlashAttention 4
 (`4.0.0b26`) on the same physical RTX 5090:

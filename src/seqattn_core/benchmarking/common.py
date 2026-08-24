@@ -44,6 +44,27 @@ def make_host_tensor(
     return tensor.pin_memory()
 
 
+def make_pinned_host_tensors_parallel(
+    shapes: tuple[tuple[int, ...], ...],
+    dtype: torch.dtype,
+    *,
+    workers: int,
+) -> tuple[torch.Tensor, ...]:
+    if workers <= 0:
+        raise ValueError("workers must be positive")
+    if not shapes:
+        return ()
+
+    def allocate(shape: tuple[int, ...]) -> torch.Tensor:
+        return torch.empty(shape, dtype=dtype, pin_memory=True)
+
+    allocation_workers = min(workers, len(shapes))
+    with ThreadPoolExecutor(
+        max_workers=allocation_workers, thread_name_prefix="seqattn-alloc"
+    ) as pool:
+        return tuple(pool.map(allocate, shapes))
+
+
 def make_host_tensors_parallel(
     shapes: tuple[tuple[int, ...], ...],
     dtype: torch.dtype,
@@ -54,7 +75,7 @@ def make_host_tensors_parallel(
 ) -> tuple[torch.Tensor, ...]:
     if workers <= 0 or chunk_tokens <= 0:
         raise ValueError("workers and chunk_tokens must be positive")
-    tensors = tuple(torch.empty(shape, dtype=dtype, pin_memory=True) for shape in shapes)
+    tensors = make_pinned_host_tensors_parallel(shapes, dtype, workers=workers)
     tasks = [
         (tensor_index, chunk_index, start, min(start + chunk_tokens, tensor.shape[0]))
         for tensor_index, tensor in enumerate(tensors)
@@ -184,6 +205,7 @@ __all__ = [
     "make_bounds",
     "make_host_tensor",
     "make_host_tensors_parallel",
+    "make_pinned_host_tensors_parallel",
     "process_rss_bytes",
     "process_vram_bytes",
     "process_vram_mib",

@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 class StreamingAttentionStats:
     backend: str = ""
     wall_seconds: float = 0.0
+    compute_pipeline_seconds: float = 0.0
     q_chunks: int = 0
     kv_tiles: int = 0
     h2d_bytes: int = 0
