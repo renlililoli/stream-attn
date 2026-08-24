@@ -414,12 +414,12 @@ MHA shape, `kv_chunk=4096`, kernel `128x64/8/3`, buffer counts, host output,
 The existing bare interleaved measurement is 56.7595545GB/s. Before launching
 the new q-sweep:
 
-- [ ] Re-measure bare and concurrent H2D on physical GPU3 with pinned pages
+- [x] Re-measure bare and concurrent H2D on physical GPU3 with pinned pages
       interleaved across nodes 5 and 7.
-- [ ] Use the same two-copy 112MiB BF16 K/V payload.
-- [ ] Freeze the concurrent aggregation rule and create a separate prediction
+- [x] Use the same two-copy 112MiB BF16 K/V payload.
+- [x] Freeze the concurrent aggregation rule and create a separate prediction
       artifact before inspecting any interleaved q result.
-- [ ] Compute `q_star=P_FA4/B_P` and `q_95=0.95*q_star` from the newly measured
+- [x] Compute `q_star=P_FA4/B_P` and `q_95=0.95*q_star` from the newly measured
       concurrent bandwidth.
 
 The preliminary bare-bandwidth estimate gives:
@@ -428,6 +428,25 @@ The preliminary bare-bandwidth estimate gives:
 B_P preliminary:    56.7595545 GB/s
 q_star preliminary: 3758.3629
 q_95 preliminary:   3570.4448
+```
+
+The formal GPU3 interleaved calibration used 10 warmups and 50 samples:
+
+| Measurement | Median GB/s | p10 GB/s | p90 GB/s |
+|---|---:|---:|---:|
+| Bare | 56.7552 | 56.7497 | 56.7587 |
+| Concurrent, `q_compute=8192` | 56.7196 | 56.5220 | 56.7473 |
+| Concurrent, `q_compute=16384` | 56.7144 | 56.5102 | 56.7347 |
+
+Using the same equal-weight aggregation rule as Experiment 0A:
+
+```text
+B_P formal:         56.7170122 GB/s
+q_star predicted:   3761.1820
+q_95 predicted:     3573.1229
+q_star aligned:     3840
+q_95 aligned:       3584
+workspace at q=3840: 490356736 bytes = 467.640625 MiB
 ```
 
 The quick visualization sweep is predeclared as:

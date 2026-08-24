@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "experiment": "RTX 5090 Host-Memory Roofline Experiment 0B: NUMA-Interleaved Knee Shift",
+  "prediction_created_at_utc": "2026-08-24T07:20:09Z",
+  "prediction_created_before_q_sweep": true,
+  "calibration_git_commit": "f87e5815fd6acff272b4ff2ca6f19e4c463ababe",
+  "configuration": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "physical_gpu": 3,
+    "gpu_pci_bdf": "0000:E1:00.0",
+    "gpu_compute_mode": "Exclusive_Process",
+    "cpu_numa_node": 5,
+    "cpu_affinity": "160-191,416-447",
+    "container_memory_nodes": [
+      5,
+      7
+    ],
+    "pinned_memory_policy": "interleave=5,7",
+    "tokens": 524288,
+    "q_heads": 56,
+    "kv_heads": 56,
+    "head_dim": 128,
+    "dtype": "bfloat16",
+    "causal": false,
+    "kv_chunk_tokens": 4096,
+    "block_m": 128,
+    "block_n": 64,
+    "num_warps": 8,
+    "num_stages": 3,
+    "num_kv_buffers": 2,
+    "num_output_buffers": 1,
+    "output_mode": "host",
+    "workspace_mib_guardrail": 4096
+  },
+  "calibration_inputs": {
+    "fa4": {
+      "path": "/home/grzhu/project/video/seq_offload/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/calibration/fa4_resident.json",
+      "sha256": "58788de06222e5ee21b53598c4129d6a9b95ae2cebf7f76e58dfbd278405b0e2",
+      "package": "flash-attn-4",
+      "package_version": "4.0.0b26",
+      "warmup": 5,
+      "samples": 10,
+      "aggregation_rule": "median of per-sample effective throughput derived from CUDA-event duration",
+      "flops": 7881299347898368,
+      "median_cuda_seconds": 36.945390625,
+      "p_fa4_tflops": 213.32300374971385,
+      "p10_tflops": 212.5419044195995,
+      "p90_tflops": 213.68528216550288,
+      "output_signature_finite": true
+    },
+    "interleaved_h2d": {
+      "path": "/home/grzhu/project/video/seq_offload/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/calibration/h2d_interleave57.json",
+      "sha256": "ab70b571a5ccb1412e652a30cb5595a18056e8000a064ff07e467ad20801031b",
+      "payload_bytes": 117440512,
+      "warmup": 10,
+      "samples_per_compute_load": 50,
+      "bare_median_bytes_per_second": 56755166229.92342,
+      "compute_load_median_bytes_per_second": {
+        "8192": 56719640710.43038,
+        "16384": 56714383628.716965
+      },
+      "aggregation_rule": "equal-weight median of the q_compute=8192 and q_compute=16384 per-load medians",
+      "b_concurrent_bytes_per_second": 56717012169.57368,
+      "b_concurrent_gbps": 56.71701216957368
+    }
+  },
+  "model": {
+    "group_size": 1,
+    "k_element_bytes": 2,
+    "v_element_bytes": 2,
+    "formula": "q_star = P_FA4 * (s_K + s_V) / (4 * group_size * B_P) = P_FA4 / B_P"
+  },
+  "prediction": {
+    "q_star_predicted": 3761.181973266088,
+    "q_95_predicted": 3573.122874602783,
+    "q_star_aligned_128": 3840,
+    "q_95_aligned_128": 3584,
+    "workspace_star_predicted_bytes": 490356736,
+    "workspace_star_predicted_mib": 467.640625,
+    "workspace_q_tokens": 3840,
+    "workspace_estimator": "seqattn_core.planner.estimate_workspace_bytes"
+  },
+  "quick_sweep": {
+    "q_values": [
+      3072,
+      3328,
+      3456,
+      3584,
+      3712,
+      3840,
+      4096
+    ],
+    "warmup": 1,
+    "repeats": 3,
+    "independent_processes_per_q": 1
+  }
+}
