@@ -106,6 +106,7 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--sample-interval-ms", type=float, default=20)
+    parser.add_argument("--skip-memory-probe", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--nvtx", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
@@ -215,15 +216,22 @@ def main() -> None:
             durations.append(time.perf_counter() - started)
             if stats is not None:
                 compute_pipeline_durations.append(stats.compute_pipeline_seconds)
-        # NVML calls can perturb sub-second CUDA workloads.  Collect memory in
-        # an untimed second pass so the primary latency remains uninstrumented.
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        with MemorySampler(args.sample_interval_ms / 1000) as sampler:
-            probe_started = time.perf_counter()
-            output = run_once()
-            torch.cuda.synchronize()
-            memory_probe_seconds = time.perf_counter() - probe_started
+        # NVML calls can perturb CUDA workloads. Collect memory in an untimed
+        # second pass unless a sweep explicitly opts out to avoid one full
+        # extra long-sequence execution per point.
+        memory_probe_seconds = None
+        nvml_process_peak_mib = None
+        nvml_sample_count = 0
+        if not args.skip_memory_probe:
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            with MemorySampler(args.sample_interval_ms / 1000) as sampler:
+                probe_started = time.perf_counter()
+                output = run_once()
+                torch.cuda.synchronize()
+                memory_probe_seconds = time.perf_counter() - probe_started
+            nvml_process_peak_mib = sampler.peak_mib
+            nvml_sample_count = sampler.samples
         if not torch.isfinite(output).all():
             raise FloatingPointError("attention output contains NaN or Inf")
         q_lengths = torch.diff(cu).tolist()
@@ -249,9 +257,10 @@ def main() -> None:
             ),
             torch_peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20,
             torch_peak_reserved_mib=torch.cuda.max_memory_reserved() / 2**20,
-            nvml_process_peak_mib=sampler.peak_mib,
-            nvml_sample_count=sampler.samples,
+            nvml_process_peak_mib=nvml_process_peak_mib,
+            nvml_sample_count=nvml_sample_count,
             memory_probe_seconds=memory_probe_seconds,
+            memory_probe_skipped=args.skip_memory_probe,
             output_signature=output_signature(output),
         )
         if stats is not None:
