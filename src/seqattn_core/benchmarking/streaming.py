@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import platform
 import time
 import traceback
@@ -20,6 +21,22 @@ from .common import (
     make_bounds,
     make_host_tensor,
 )
+
+
+def output_signature(output: torch.Tensor) -> dict[str, list[float]]:
+    indices = sorted(
+        {
+            0,
+            output.shape[0] // 4,
+            output.shape[0] // 2,
+            3 * output.shape[0] // 4,
+            output.shape[0] - 1,
+        }
+    )
+    return {
+        str(index): output[index, 0, :8].float().tolist()
+        for index in indices
+    }
 
 
 def full_gpu_attention(mode, q_cpu, k_cpu, v_cpu, cu, causal, scale, out_cpu):
@@ -147,6 +164,10 @@ def main() -> None:
             runner = StreamingAttentionRunner(plan, config)
             result["plan"] = {
                 "q_chunk_tokens": plan.q_chunk_tokens,
+                "q_chunk_requested_tokens": args.q_chunk,
+                "q_passes": math.ceil(args.tokens / plan.q_chunk_tokens),
+                "q_effective_tokens": args.tokens
+                / math.ceil(args.tokens / plan.q_chunk_tokens),
                 "kv_chunk_tokens": plan.kv_chunk_tokens,
                 "block_m": plan.block_m,
                 "block_n": plan.block_n,
@@ -186,11 +207,14 @@ def main() -> None:
             run_once()
         torch.cuda.synchronize()
         durations = []
+        compute_pipeline_durations = []
         for _ in range(args.repeats):
             started = time.perf_counter()
             output = run_once()
             torch.cuda.synchronize()
             durations.append(time.perf_counter() - started)
+            if stats is not None:
+                compute_pipeline_durations.append(stats.compute_pipeline_seconds)
         # NVML calls can perturb sub-second CUDA workloads.  Collect memory in
         # an untimed second pass so the primary latency remains uninstrumented.
         torch.cuda.empty_cache()
@@ -205,21 +229,41 @@ def main() -> None:
         q_lengths = torch.diff(cu).tolist()
         flop = 4 * args.q_heads * args.head_dim * sum(length * length for length in q_lengths)
         mean_seconds = sum(durations) / len(durations)
+        mean_compute_pipeline_seconds = (
+            sum(compute_pipeline_durations) / len(compute_pipeline_durations)
+            if compute_pipeline_durations
+            else None
+        )
         result.update(
             status="success",
             seconds=durations,
             mean_seconds=mean_seconds,
             tokens_per_second=args.tokens / mean_seconds,
             effective_tflops=flop / mean_seconds / 1e12,
+            compute_pipeline_seconds=compute_pipeline_durations,
+            mean_compute_pipeline_seconds=mean_compute_pipeline_seconds,
+            compute_pipeline_effective_tflops=(
+                flop / mean_compute_pipeline_seconds / 1e12
+                if mean_compute_pipeline_seconds is not None
+                else None
+            ),
             torch_peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20,
             torch_peak_reserved_mib=torch.cuda.max_memory_reserved() / 2**20,
             nvml_process_peak_mib=sampler.peak_mib,
             nvml_sample_count=sampler.samples,
             memory_probe_seconds=memory_probe_seconds,
+            output_signature=output_signature(output),
         )
         if stats is not None:
             result["streaming_stats"] = stats.as_dict()
+            element_size = torch.empty((), dtype=dtype).element_size()
+            q_h2d_bytes = args.tokens * args.q_heads * args.head_dim * element_size
+            kv_h2d_bytes = stats.h2d_bytes - q_h2d_bytes
+            result["one_time_q_h2d_bytes"] = q_h2d_bytes
+            result["logical_kv_h2d_bytes"] = kv_h2d_bytes
+            result["logical_d2h_bytes"] = stats.d2h_bytes
             result["logical_h2d_gib"] = stats.h2d_bytes / 2**30
+            result["logical_kv_h2d_gib"] = kv_h2d_bytes / 2**30
             result["logical_d2h_gib"] = stats.d2h_bytes / 2**30
     except Exception as error:  # noqa: BLE001 - benchmark records failures as JSON
         result["status"] = "oom" if isinstance(error, torch.OutOfMemoryError) else "runtime_error"

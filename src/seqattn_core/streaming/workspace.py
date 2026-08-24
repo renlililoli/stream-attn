@@ -48,6 +48,8 @@ class CudaWorkspace:
         self.output_ready = [torch.cuda.Event() for _ in range(plan.num_output_buffers)]
         self.output_free = [torch.cuda.Event() for _ in range(plan.num_output_buffers)]
         self.output_has_pending_copy = [False for _ in range(plan.num_output_buffers)]
+        self.pipeline_start = torch.cuda.Event(enable_timing=True)
+        self.pipeline_end = torch.cuda.Event(enable_timing=True)
 
 
 __all__ = ["CudaWorkspace"]
