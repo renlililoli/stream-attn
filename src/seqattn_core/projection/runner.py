@@ -43,7 +43,7 @@ class ProjectedAttentionRunner:
         plan = self.plan
         if plan.device.type != "cuda":
             raise ValueError("the projected pipeline requires a CUDA device")
-        if self.attention_config.backend not in {"auto", "triton"}:
+        if self.attention_config.backend not in {None, "auto", "builtin", "triton"}:
             raise ValueError("the projected pipeline requires the Triton attention backend")
         if self.attention_config.require_pinned and not self.pipeline_config.pin_qkv:
             raise ValueError("Triton attention requires pinned Q/K/V backing buffers")

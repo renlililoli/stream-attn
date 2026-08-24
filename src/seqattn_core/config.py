@@ -26,7 +26,10 @@ class StreamingAttentionConfig:
     block_n: int | None = None
     num_warps: int | None = None
     num_stages: int | None = None
-    backend: str = "auto"
+    # None loads SEQATTN_BACKEND or the optional TOML configuration before
+    # falling back to the SM-aware automatic policy. "auto" bypasses external
+    # configuration and requests the automatic policy explicitly.
+    backend: str | None = None
     require_pinned: bool = True
     pin_output: bool = True
     enable_nvtx: bool = False
@@ -52,7 +55,18 @@ class StreamingAttentionConfig:
             raise ValueError("num_warps must be 2, 4, or 8")
         if self.num_stages is not None and self.num_stages not in {1, 2, 3, 4}:
             raise ValueError("num_stages must be within [1, 4]")
-        if self.backend not in {"auto", "triton", "reference"}:
+        if self.backend not in {
+            None,
+            "auto",
+            "builtin",
+            "triton",
+            "fa2",
+            "fa3",
+            "fa4",
+            "flash2",
+            "flash2_split",
+            "reference",
+        }:
             raise ValueError(f"unsupported backend: {self.backend}")
 
 

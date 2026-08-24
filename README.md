@@ -20,6 +20,51 @@ This is not a replacement for FlashAttention when full Q/K/V fit in VRAM.
 It targets exact long-context inference under a fixed GPU-memory budget and
 reports the resulting PCIe and latency cost explicitly.
 
+## Backend selection
+
+The streaming runtime exposes four CUDA paths: the built-in Triton kernel and
+optional `fa2`, `fa3`, and `fa4` split-attention adapters. `backend="builtin"`
+is the public name for the built-in kernel; the older `triton` name remains a
+compatible alias. `flash2` and `flash2_split` remain aliases for `fa2`.
+
+The default configuration reads an external preference, then applies an
+SM-aware automatic policy:
+
+| GPU architecture | `auto` preference |
+|---|---|
+| Ampere / SM80 | FA2, then built-in kernel |
+| Hopper / SM90 | FA3, then FA2, then built-in kernel |
+| Blackwell datacenter / SM100 | FA4, then built-in kernel |
+| RTX 50 / SM120 | Built-in kernel, then FA4 |
+
+SM120 deliberately keeps the previously validated built-in 5090 path as its
+default. FA4 is available through explicit configuration without silently
+changing that path. On A30, FA2 is preferred when its package can be imported;
+if it is absent, the runtime falls back to the built-in kernel.
+
+Configuration precedence is explicit `StreamingAttentionConfig.backend`, then
+`SEQATTN_BACKEND`, then TOML, then `auto`. Set `SEQATTN_CONFIG` to a TOML file,
+or use the default `${XDG_CONFIG_HOME:-~/.config}/seqattn/config.toml` location:
+
+```toml
+[attention]
+backend = "auto"  # auto, builtin, fa2, fa3, fa4, or reference
+```
+
+For deployment-time overrides:
+
+```bash
+export SEQATTN_BACKEND=fa2
+# Or point at a non-default file:
+export SEQATTN_CONFIG=/etc/seqattn/config.toml
+```
+
+Passing `backend="auto"` explicitly bypasses the environment and TOML and
+forces the SM-aware policy. External FlashAttention chunks are currently
+non-causal; an automatically selected FA backend falls back to the built-in
+kernel for causal calls, while an explicitly selected FA backend reports a
+clear error. See [backend selection and validation](docs/backend_selection.md).
+
 ## End-to-end MiniMax-H3 integration
 
 The standalone operator is integrated into DiffSynth-Studio MiniMax-H3 by the
@@ -188,6 +233,13 @@ for the complete protocol, FA2/FA4 kernel analysis, numerical sample, memory
 accounting, and measurement limits.
 
 ### A30: 400K-token DRAM streaming
+
+**August 24, 2026 backend update:** the new `fa2` streaming backend completes
+this 409,600-token shape in 51.1511 seconds at a 2GiB workspace, within 0.47%
+of resident FA2 and 16.65% faster than the current built-in kernel. The
+workspace sweep below records the earlier built-in-kernel study; use the
+[backend validation report](docs/backend_selection.md) for the current default
+selection and direct backend comparison.
 
 The current Ampere path was measured on one physical NVIDIA A30 with a single
 benchmark process and no concurrent SeqAttn scan. The problem is exact,

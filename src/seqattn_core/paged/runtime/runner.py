@@ -82,7 +82,11 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
             config=attention_config,
         )
         backend = resolve_backend(
-            attention_config.backend, plan.dtype, plan.device, head_dim=plan.head_dim
+            attention_config.backend,
+            plan.dtype,
+            plan.device,
+            head_dim=plan.head_dim,
+            allowed={"triton", "reference"},
         )
         if backend == "reference" and plan.device.type != "cpu":
             raise ValueError("the paged reference backend requires device='cpu'")

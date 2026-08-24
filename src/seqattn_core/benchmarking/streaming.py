@@ -86,7 +86,11 @@ def full_gpu_attention(mode, q_cpu, k_cpu, v_cpu, cu, causal, scale, out_cpu):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark CPU-backed sequence attention")
-    parser.add_argument("--mode", choices=("seqattn", "flash2", "sdpa"), default="seqattn")
+    parser.add_argument(
+        "--mode",
+        choices=("seqattn", "seqattn-fa2", "seqattn-flash2-split", "flash2", "sdpa"),
+        default="seqattn",
+    )
     parser.add_argument("--tokens", type=int, required=True)
     parser.add_argument("--segments", type=int, default=1)
     parser.add_argument("--q-heads", type=int, default=56)
@@ -158,7 +162,7 @@ def main() -> None:
         scale = args.head_dim**-0.5
         runner = None
         stats = None
-        if args.mode == "seqattn":
+        if args.mode in {"seqattn", "seqattn-fa2", "seqattn-flash2-split"}:
             config = StreamingAttentionConfig(
                 workspace_budget_bytes=args.workspace_mib * 2**20,
                 q_chunk_tokens=args.q_chunk,
@@ -169,7 +173,7 @@ def main() -> None:
                 num_stages=args.num_stages,
                 num_kv_buffers=args.num_kv_buffers,
                 num_output_buffers=args.num_output_buffers,
-                backend="triton",
+                backend=("builtin" if args.mode == "seqattn" else "fa2"),
                 enable_nvtx=args.nvtx,
             )
             plan = build_plan(

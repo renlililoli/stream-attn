@@ -60,6 +60,9 @@ if triton is not None:
         INITIALIZE: tl.constexpr,
         KV_QUANTIZED: tl.constexpr,
         QUANT_GROUP_TOKENS: tl.constexpr,
+        EVEN_M: tl.constexpr,
+        EVEN_N: tl.constexpr,
+        EVEN_D: tl.constexpr,
     ):
         query_block = tl.program_id(0)
         query_head = tl.program_id(1)
@@ -74,7 +77,10 @@ if triton is not None:
             + query_head * stride_qh
             + offsets_d[None, :] * stride_qd
         )
-        q = tl.load(q_ptr + q_offsets, mask=q_mask[:, None] & d_mask[None, :], other=0.0)
+        if EVEN_M and EVEN_D:
+            q = tl.load(q_ptr + q_offsets)
+        else:
+            q = tl.load(q_ptr + q_offsets, mask=q_mask[:, None] & d_mask[None, :], other=0.0)
 
         state_offsets = offsets_m * stride_st + query_head * stride_sh
         acc_offsets = (
@@ -87,13 +93,20 @@ if triton is not None:
             running_sum = tl.zeros((BLOCK_M,), tl.float32)
             accumulator = tl.zeros((BLOCK_M, BLOCK_D), tl.float32)
         else:
-            running_max = tl.load(max_ptr + state_offsets, mask=q_mask, other=-float("inf"))
-            running_sum = tl.load(sum_ptr + state_offsets, mask=q_mask, other=0.0)
-            accumulator = tl.load(
-                acc_ptr + acc_offsets,
-                mask=q_mask[:, None] & d_mask[None, :],
-                other=0.0,
-            ).to(tl.float32)
+            if EVEN_M:
+                running_max = tl.load(max_ptr + state_offsets)
+                running_sum = tl.load(sum_ptr + state_offsets)
+            else:
+                running_max = tl.load(max_ptr + state_offsets, mask=q_mask, other=-float("inf"))
+                running_sum = tl.load(sum_ptr + state_offsets, mask=q_mask, other=0.0)
+            if EVEN_M and EVEN_D:
+                accumulator = tl.load(acc_ptr + acc_offsets).to(tl.float32)
+            else:
+                accumulator = tl.load(
+                    acc_ptr + acc_offsets,
+                    mask=q_mask[:, None] & d_mask[None, :],
+                    other=0.0,
+                ).to(tl.float32)
 
         for start_n in range(0, kv_tokens, BLOCK_N):
             offsets_n = start_n + tl.arange(0, BLOCK_N)
@@ -108,8 +121,13 @@ if triton is not None:
                 + kv_head * stride_vh
                 + offsets_d[None, :] * stride_vd
             )
-            k = tl.load(k_ptr + k_offsets, mask=kv_mask[:, None] & d_mask[None, :], other=0.0)
-            v = tl.load(v_ptr + v_offsets, mask=kv_mask[:, None] & d_mask[None, :], other=0.0)
+            if EVEN_N and EVEN_D:
+                k = tl.load(k_ptr + k_offsets)
+                v = tl.load(v_ptr + v_offsets)
+            else:
+                kv_load_mask = kv_mask[:, None] & d_mask[None, :]
+                k = tl.load(k_ptr + k_offsets, mask=kv_load_mask, other=0.0)
+                v = tl.load(v_ptr + v_offsets, mask=kv_load_mask, other=0.0)
             if KV_QUANTIZED:
                 scale_group = (storage_token_offset + offsets_n) // QUANT_GROUP_TOKENS
                 k_scale_offsets = scale_group * stride_ksg + kv_head * stride_ksh
@@ -119,41 +137,58 @@ if triton is not None:
                 k = (k.to(tl.float32) * k_scale[:, None]).to(q.dtype)
                 v = (v.to(tl.float32) * v_scale[:, None]).to(q.dtype)
             logits = tl.dot(q, tl.trans(k)) * scale_log2
-            valid = q_mask[:, None] & kv_mask[None, :]
             if CAUSAL:
                 q_positions = q_local_offset + offsets_m
                 k_positions = kv_local_offset + offsets_n
-                valid &= k_positions[None, :] <= (
-                    q_positions[:, None] + causal_shift
-                )
-            logits = tl.where(valid, logits, -float("inf"))
+                valid = k_positions[None, :] <= (q_positions[:, None] + causal_shift)
+                if not EVEN_M:
+                    valid &= q_mask[:, None]
+                if not EVEN_N:
+                    valid &= kv_mask[None, :]
+                logits = tl.where(valid, logits, -float("inf"))
+            elif not (EVEN_M and EVEN_N):
+                valid = q_mask[:, None] & kv_mask[None, :]
+                logits = tl.where(valid, logits, -float("inf"))
 
             tile_max = tl.max(logits, axis=1)
             merged_max = tl.maximum(running_max, tile_max)
-            row_valid = merged_max != -float("inf")
-            alpha = tl.where(
-                row_valid,
-                tl.exp2(running_max - merged_max),
-                1.0,
-            )
-            probabilities = tl.where(
-                valid,
-                tl.exp2(logits - merged_max[:, None]),
-                0.0,
-            )
-            accumulator = accumulator * alpha[:, None] + tl.dot(
-                probabilities.to(q.dtype), v
-            )
+            if CAUSAL or not (EVEN_M and EVEN_N):
+                row_valid = merged_max != -float("inf")
+                alpha = tl.where(
+                    row_valid,
+                    tl.exp2(running_max - merged_max),
+                    1.0,
+                )
+                probabilities = tl.where(
+                    valid,
+                    tl.exp2(logits - merged_max[:, None]),
+                    0.0,
+                )
+            else:
+                alpha = tl.exp2(running_max - merged_max)
+                probabilities = tl.exp2(logits - merged_max[:, None])
+            accumulator *= alpha[:, None]
+            accumulator = tl.dot(probabilities.to(q.dtype), v, accumulator)
             running_sum = running_sum * alpha + tl.sum(probabilities, axis=1)
-            running_max = tl.where(row_valid, merged_max, running_max)
+            if CAUSAL or not (EVEN_M and EVEN_N):
+                running_max = tl.where(row_valid, merged_max, running_max)
+            else:
+                running_max = merged_max
 
-        tl.store(max_ptr + state_offsets, running_max, mask=q_mask)
-        tl.store(sum_ptr + state_offsets, running_sum, mask=q_mask)
-        tl.store(
-            acc_ptr + acc_offsets,
-            accumulator,
-            mask=q_mask[:, None] & d_mask[None, :],
-        )
+        if EVEN_M:
+            tl.store(max_ptr + state_offsets, running_max)
+            tl.store(sum_ptr + state_offsets, running_sum)
+        else:
+            tl.store(max_ptr + state_offsets, running_max, mask=q_mask)
+            tl.store(sum_ptr + state_offsets, running_sum, mask=q_mask)
+        if EVEN_M and EVEN_D:
+            tl.store(acc_ptr + acc_offsets, accumulator)
+        else:
+            tl.store(
+                acc_ptr + acc_offsets,
+                accumulator,
+                mask=q_mask[:, None] & d_mask[None, :],
+            )
 
     @triton.jit
     def _finalize_attention_kernel(
@@ -266,6 +301,9 @@ def update_attention_state(
         INITIALIZE=initialize,
         KV_QUANTIZED=False,
         QUANT_GROUP_TOKENS=64,
+        EVEN_M=q_tokens % block_m == 0,
+        EVEN_N=kv_tokens % block_n == 0,
+        EVEN_D=head_dim == block_d,
         num_warps=num_warps,
         num_stages=num_stages,
     )
@@ -337,6 +375,9 @@ def update_attention_state_int8(
         INITIALIZE=initialize,
         KV_QUANTIZED=True,
         QUANT_GROUP_TOKENS=quant_group_tokens,
+        EVEN_M=q_tokens % block_m == 0,
+        EVEN_N=kv_tokens % block_n == 0,
+        EVEN_D=head_dim == block_d,
         num_warps=num_warps,
         num_stages=num_stages,
     )

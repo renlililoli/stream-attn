@@ -10,12 +10,13 @@ from ..planner import AttentionPlan
 from ..reference import streaming_attention_reference
 from ..stats import StreamingAttentionStats
 from ..validation import require_pinned_inputs, validate_host_qkv
-from .backend import resolve_backend
+from .backend import configured_backend_name, resolve_backend
 from .executor import TritonExecutorMixin
+from .flash_split_executor import FlashSplitExecutorMixin
 from .workspace import CudaWorkspace
 
 
-class StreamingAttentionRunner(TritonExecutorMixin):
+class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
     """Reusable execution plan and CUDA workspace.
 
     One runner is intentionally single-flight. Create one runner per request
@@ -32,10 +33,24 @@ class StreamingAttentionRunner(TritonExecutorMixin):
         self.config.validate()
         if plan.output_mode != self.config.output_mode:
             raise ValueError("attention plan output_mode does not match runner config")
-        self.backend = resolve_backend(
-            self.config.backend, plan.dtype, plan.device, head_dim=plan.head_dim
+        self._backend_request = configured_backend_name(self.config.backend)
+        allowed = (
+            {"triton", "reference"}
+            if plan.output_mode == "device_consumer"
+            else {"triton", "fa2", "fa3", "fa4", "reference"}
         )
-        self._workspace = CudaWorkspace(plan) if self.backend == "triton" else None
+        self.backend = resolve_backend(
+            self._backend_request,
+            plan.dtype,
+            plan.device,
+            head_dim=plan.head_dim,
+            allowed=allowed,
+        )
+        self._workspace = (
+            CudaWorkspace(plan)
+            if self.backend in {"triton", "fa2", "fa3", "fa4"}
+            else None
+        )
 
     def _validate_inputs(
         self,
@@ -68,9 +83,14 @@ class StreamingAttentionRunner(TritonExecutorMixin):
         if self.config.pin_output and not out.is_pinned():
             raise ValueError("asynchronous D2H requires a pinned out tensor")
 
-    def _prepare_stats(self, stats: StreamingAttentionStats | None) -> StreamingAttentionStats:
+    def _prepare_stats(
+        self,
+        stats: StreamingAttentionStats | None,
+        *,
+        backend: str | None = None,
+    ) -> StreamingAttentionStats:
         stats = StreamingAttentionStats() if stats is None else stats
-        stats.backend = self.backend
+        stats.backend = self.backend if backend is None else backend
         stats.estimated_workspace_bytes = self.plan.estimated_workspace_bytes
         stats.q_chunk_tokens = self.plan.q_chunk_tokens
         stats.kv_chunk_tokens = self.plan.kv_chunk_tokens
@@ -104,9 +124,23 @@ class StreamingAttentionRunner(TritonExecutorMixin):
         if out.shape != q_cpu.shape or out.dtype != q_cpu.dtype or out.device.type != "cpu":
             raise ValueError("out must be a CPU tensor matching q shape and dtype")
 
-        stats = self._prepare_stats(stats)
+        execution_backend = self.backend
+        if causal and execution_backend in {"fa2", "fa3", "fa4"}:
+            if self._backend_request != "auto":
+                raise ValueError(
+                    f"{execution_backend} does not support external causal offsets; "
+                    "use backend='builtin'"
+                )
+            execution_backend = resolve_backend(
+                "builtin",
+                self.plan.dtype,
+                self.plan.device,
+                head_dim=self.plan.head_dim,
+            )
+
+        stats = self._prepare_stats(stats, backend=execution_backend)
         started = time.perf_counter()
-        if self.backend == "reference":
+        if execution_backend == "reference":
             result = streaming_attention_reference(
                 q_cpu,
                 k_cpu,
@@ -120,9 +154,23 @@ class StreamingAttentionRunner(TritonExecutorMixin):
                 causal=causal,
                 out=out,
             )
-        else:
+        elif execution_backend == "triton":
             self._prepare_triton_io(q_cpu, k_cpu, v_cpu, out)
             result = self._run_triton(
+                q_cpu,
+                k_cpu,
+                v_cpu,
+                q_bounds,
+                k_bounds,
+                scale,
+                causal,
+                out,
+                stats,
+            )
+        else:
+            self._prepare_triton_io(q_cpu, k_cpu, v_cpu, out)
+            result = self._run_flash_split(
+                execution_backend,
                 q_cpu,
                 k_cpu,
                 v_cpu,
