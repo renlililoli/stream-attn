@@ -73,9 +73,7 @@ class FlashSplitExecutorMixin:
                             buffer_index = kv_tile_index % plan.num_kv_buffers
                             with torch.cuda.stream(workspace.h2d_stream):
                                 if workspace.kv_has_pending_compute[buffer_index]:
-                                    workspace.h2d_stream.wait_event(
-                                        workspace.kv_free[buffer_index]
-                                    )
+                                    workspace.h2d_stream.wait_event(workspace.kv_free[buffer_index])
                                 workspace.k[buffer_index][:kv_tokens].copy_(
                                     k_cpu[kv_tile_start:kv_tile_stop],
                                     non_blocking=k_cpu.is_pinned(),
@@ -133,6 +131,7 @@ class FlashSplitExecutorMixin:
 
             workspace.pipeline_end.record(compute_stream)
             workspace.d2h_stream.synchronize()
+            workspace.pipeline_end.synchronize()
             stats.compute_pipeline_seconds += (
                 workspace.pipeline_start.elapsed_time(workspace.pipeline_end) / 1000.0
             )

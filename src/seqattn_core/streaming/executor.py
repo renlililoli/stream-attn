@@ -187,6 +187,7 @@ class TritonExecutorMixin:
                     q_chunk_index += 1
             workspace.pipeline_end.record(compute_stream)
             workspace.d2h_stream.synchronize()
+            workspace.pipeline_end.synchronize()
             stats.compute_pipeline_seconds += (
                 workspace.pipeline_start.elapsed_time(workspace.pipeline_end) / 1000.0
             )
