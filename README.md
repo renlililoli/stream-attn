@@ -74,6 +74,30 @@ larger workspaces continue to reduce Q passes and logical H2D traffic. All
 eight sampled output signatures are identical. Data preparation is excluded
 from execution time and took 25.837 seconds with 32 CPU workers.
 
+A separate low-workspace extension on 2026-08-24 used a fixed 2,048-token K/V
+chunk so that every point down to 256MiB remained planner-feasible. Each point
+ran serially in a fresh Python process on the same physical GPU3. The original
+table above uses an 8,192-token K/V chunk, so the two tables document different
+fixed-chunk protocols and should not be treated as one directly comparable
+workspace curve.
+
+| HBM workspace | PID GPU peak | Resident Q | Q passes | H2D | Execution | Effective TFLOPS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 256 MiB | 792 MiB | 1,920 | 274 | 3,843 GiB | 114.839 s | 68.6 |
+| 384 MiB | 922 MiB | 4,352 | 121 | 1,701 GiB | 52.594 s | 149.9 |
+| 512 MiB | 1,066 MiB | 6,656 | 79 | 1,113 GiB | 40.844 s | 193.0 |
+| 640 MiB | 1,194 MiB | 8,960 | 59 | 833 GiB | 40.124 s | 196.4 |
+| 768 MiB | 1,316 MiB | 11,264 | 47 | 665 GiB | 39.106 s | 201.5 |
+| 896 MiB | 1,444 MiB | 13,568 | 39 | 553 GiB | 38.943 s | 202.4 |
+
+The 256MiB point is dominated by 274 complete K/V streaming passes and is
+2.95x slower than the 896MiB point. Most of the recovery occurs by 512MiB;
+increasing workspace from 512MiB to 896MiB improves execution time by another
+4.65%. All six runs succeeded with the same automatic `128x64`, 8-warp,
+3-stage kernel and identical sampled output signatures. Input preparation was
+excluded from execution time, while the final 7GiB D2H output transfer was
+included.
+
 The same 28GiB Q/K/V/output shape was also measured with GPU-resident
 FlashAttention 2 (`2.7.4.post1+nv26.1.42222806`) and FlashAttention 4
 (`4.0.0b26`) on the same physical RTX 5090:
