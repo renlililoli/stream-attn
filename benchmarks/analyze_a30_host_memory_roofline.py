@@ -63,6 +63,29 @@ def main() -> None:
         )
     rows.sort(key=lambda row: int(row["q_tokens"]))
 
+    plateau_rows = [
+        row for row in rows if float(row["q_effective_tokens"]) >= q_star
+    ]
+    plateau_tflops = (
+        statistics.median(
+            float(row["pipeline_tflops_median"]) for row in plateau_rows
+        )
+        if plateau_rows
+        else None
+    )
+    observed_95_row = None
+    observed_95_threshold = None
+    if plateau_tflops is not None:
+        observed_95_threshold = 0.95 * plateau_tflops
+        observed_95_row = next(
+            (
+                row
+                for row in sorted(rows, key=lambda item: float(item["q_effective_tokens"]))
+                if float(row["pipeline_tflops_median"]) >= observed_95_threshold
+            ),
+            None,
+        )
+
     summary = {
         "status": "partial" if sweep.get("status") != "success" else "complete",
         "partial_label": args.partial_label,
@@ -74,6 +97,25 @@ def main() -> None:
         "b_concurrent_gbps": b_gbps,
         "q_star_predicted": q_star,
         "q_95_predicted": q_95,
+        "plateau": {
+            "definition": "median of points with q_effective >= q_star_predicted",
+            "points": len(plateau_rows),
+            "pipeline_tflops_median": plateau_tflops,
+            "observed_over_fa2": plateau_tflops / p_fa2 if plateau_tflops else None,
+        },
+        "observed_knee": {
+            "definition": "first ascending Q point reaching 95% of measured plateau",
+            "threshold_tflops": observed_95_threshold,
+            "q_tokens": observed_95_row["q_tokens"] if observed_95_row else None,
+            "q_effective_tokens": (
+                observed_95_row["q_effective_tokens"] if observed_95_row else None
+            ),
+            "intersection_estimate": (
+                float(observed_95_row["q_effective_tokens"]) / 0.95
+                if observed_95_row
+                else None
+            ),
+        },
         "rows": rows,
     }
     args.output_summary.parent.mkdir(parents=True, exist_ok=True)
@@ -134,12 +176,19 @@ def main() -> None:
         label="Measured SeqAttn",
     )
     absolute_label_positions = {
-        7424: (-6, 10, "right"),
-        7680: (0, -16, "center"),
-        8192: (8, 10, "left"),
+        6784: (-8, 10, "right"),
+        7040: (4, 14, "left"),
+        7296: (0, -36, "center"),
+        7552: (9, -18, "left"),
+        7680: (11, 22, "left"),
+        8192: (9, 11, "left"),
         12288: (-6, 8, "right"),
+        16384: (-6, 8, "right"),
     }
+    labeled_q = {2048, 4096, 6144, 6784, 7040, 7296, 7552, 7680, 8192, 12288, 16384}
     for row in rows:
+        if int(row["q_tokens"]) not in labeled_q:
+            continue
         offset_x, offset_y, alignment = absolute_label_positions.get(
             int(row["q_tokens"]), (4, 6, "left")
         )
@@ -179,12 +228,18 @@ def main() -> None:
         label="Measured SeqAttn",
     )
     normalized_label_positions = {
-        7424: (-6, 10, "right"),
-        7680: (0, -16, "center"),
-        8192: (8, 10, "left"),
+        6784: (-8, 10, "right"),
+        7040: (4, 14, "left"),
+        7296: (0, -36, "center"),
+        7552: (9, -18, "left"),
+        7680: (11, 22, "left"),
+        8192: (9, 11, "left"),
         12288: (-6, 8, "right"),
+        16384: (-6, 8, "right"),
     }
     for row in rows:
+        if int(row["q_tokens"]) not in labeled_q:
+            continue
         offset_x, offset_y, alignment = normalized_label_positions.get(
             int(row["q_tokens"]), (4, 6, "left")
         )
