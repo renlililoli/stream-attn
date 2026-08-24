@@ -6,14 +6,11 @@ from dataclasses import dataclass, replace
 import torch
 
 from .config import StreamingAttentionConfig
+from .kernels.profiles import PORTABLE_KERNEL, resolve_builtin_kernel_profile
 
 
 def _align_down(value: int, alignment: int) -> int:
     return value - value % alignment
-
-
-_PORTABLE_KERNEL = (64, 64, 4, 2)
-_BLACKWELL_D128_KERNEL = (128, 64, 8, 3)
 
 
 def _resolve_kernel_config(
@@ -25,18 +22,13 @@ def _resolve_kernel_config(
 ) -> StreamingAttentionConfig:
     values = (config.block_m, config.block_n, config.num_warps, config.num_stages)
     if any(value is not None for value in values):
-        base = _PORTABLE_KERNEL
+        base = PORTABLE_KERNEL
     else:
-        base = _PORTABLE_KERNEL
-        if (
-            device.type == "cuda"
-            and torch.cuda.is_available()
-            and dtype in {torch.float16, torch.bfloat16}
-            and head_dim == 128
-        ):
-            major, _ = torch.cuda.get_device_capability(device)
-            if major >= 12:
-                base = _BLACKWELL_D128_KERNEL
+        base = resolve_builtin_kernel_profile(
+            device=device,
+            head_dim=head_dim,
+            dtype=dtype,
+        )
     block_m, block_n, num_warps, num_stages = (
         default if value is None else value for value, default in zip(values, base)
     )

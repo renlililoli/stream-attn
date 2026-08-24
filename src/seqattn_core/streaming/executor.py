@@ -35,6 +35,7 @@ class TritonExecutorMixin:
         q_chunk_index = 0
 
         with torch.cuda.device(plan.device):
+            workspace.pipeline_start.record(compute_stream)
             for q_start, q_stop, k_start, k_stop in zip(
                 q_bounds[:-1], q_bounds[1:], k_bounds[:-1], k_bounds[1:]
             ):
@@ -184,7 +185,11 @@ class TritonExecutorMixin:
                     workspace.output_has_pending_copy[output_index] = True
                     stats.d2h_bytes += output_gpu.numel() * output_gpu.element_size()
                     q_chunk_index += 1
+            workspace.pipeline_end.record(compute_stream)
             workspace.d2h_stream.synchronize()
+            stats.compute_pipeline_seconds += (
+                workspace.pipeline_start.elapsed_time(workspace.pipeline_end) / 1000.0
+            )
         return out_cpu
 
 

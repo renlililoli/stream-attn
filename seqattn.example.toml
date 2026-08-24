@@ -1,0 +1,4 @@
+[attention]
+# auto uses an SM-aware preference order and falls back when an optional
+# FlashAttention package is not installed.
+backend = "auto"

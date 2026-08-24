@@ -15,9 +15,11 @@ seqattn_core/        implementation only; no compat facades
   validation.py      host tensor and sequence validation
   quantization.py    per-token-group INT8 quantization
   streaming/         contiguous CPU-DRAM -> HBM execution
-    backend.py       backend selection and capability checks
+    backend.py       config loading, SM policy, and capability checks
+    flash_backends.py explicit FA2/FA3/FA4 partial-forward adapters
+    flash_split_executor.py shared FA streaming and FP32 combine schedule
     workspace.py     persistent CUDA buffers, streams, and events
-    executor.py      Triton copy/compute/output schedule
+    executor.py      built-in Triton copy/compute/output schedule
     runner.py        validation, reference dispatch, and public runner
   paged/             fixed-host-budget page runtime
     layout.py        page descriptors and tensor/KV layouts
@@ -84,8 +86,11 @@ The GPU operator has two tiling levels:
   overlap; a third buffer is available for systems where the copy engine needs
   more queue depth.
 
-Within a K/V tile, the Triton kernel uses `BLOCK_M x BLOCK_N` attention tiles
-and never writes the score matrix to global memory.
+Within a K/V tile, the built-in Triton kernel uses `BLOCK_M x BLOCK_N`
+attention tiles and never writes the score matrix to global memory. Optional
+FA2/FA3/FA4 adapters replace only this partial-forward operation; they retain
+the same host streaming schedule and merge normalized partial output with FP32
+LSE on the GPU.
 
 ## Fused recurrence
 
@@ -215,8 +220,8 @@ the duration of each phase.
   depth.
 - io_uring and GPUDirect Storage implementations under the existing
   `PageSource`/`PageSink` contract.
-- Optional CUDA/CUTLASS backend after Triton profiling identifies kernel-bound
-  cases that cannot be resolved by scheduling or fusion.
+- Validate and tune the existing FA3 and FA4 adapters on SM90 and Blackwell,
+  including their lower-level preallocated-output interfaces.
 - Optional prefetched residual/epilogue buffers so model-specific residual H2D
   overlaps the final K/V scan.
 - Projection callback variants that can write into persistent GPU output slots

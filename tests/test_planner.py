@@ -3,6 +3,7 @@ import torch
 
 from seqattn import StreamingAttentionConfig, build_plan
 from seqattn.planner import estimate_workspace_bytes
+from seqattn_core.kernels import profiles as kernel_profiles
 
 
 def test_planner_uses_largest_query_chunk_that_fits_budget():
@@ -128,8 +129,53 @@ def test_default_kernel_profile_uses_blackwell_d128_preset():
         max_q_tokens=1024,
         max_kv_tokens=1024,
     )
-    expected = (128, 64, 8, 3) if torch.cuda.get_device_capability()[0] >= 12 else (64, 64, 4, 2)
+    major, _ = torch.cuda.get_device_capability()
+    if major >= 12:
+        expected = (128, 64, 8, 3)
+    elif (
+        major == 8
+        and "A30" in torch.cuda.get_device_name().upper()
+        and kernel_profiles.triton_major_minor() == (3, 7)
+    ):
+        expected = (128, 64, 8, 4)
+    else:
+        expected = (64, 64, 4, 2)
     assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == expected
+
+
+def test_default_kernel_profile_uses_a30_triton37_d128_preset(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (8, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "NVIDIA A30")
+    monkeypatch.setattr(kernel_profiles, "triton_major_minor", lambda: (3, 7))
+    plan = build_plan(
+        q_heads=8,
+        kv_heads=8,
+        head_dim=128,
+        dtype=torch.bfloat16,
+        device="cuda:0",
+        max_q_tokens=1024,
+        max_kv_tokens=1024,
+    )
+    assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == (128, 64, 8, 4)
+
+
+@pytest.mark.parametrize("triton_version", [(3, 3), (3, 8), None])
+def test_a30_d128_preset_falls_back_outside_triton37(monkeypatch, triton_version):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (8, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "NVIDIA A30")
+    monkeypatch.setattr(kernel_profiles, "triton_major_minor", lambda: triton_version)
+    plan = build_plan(
+        q_heads=8,
+        kv_heads=8,
+        head_dim=128,
+        dtype=torch.bfloat16,
+        device="cuda:0",
+        max_q_tokens=1024,
+        max_kv_tokens=1024,
+    )
+    assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == (64, 64, 4, 2)
 
 
 def test_explicit_kernel_parameter_uses_portable_defaults_for_the_rest():
