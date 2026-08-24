@@ -2,10 +2,10 @@
 
 Date: 2026-08-24
 
-Status: in progress. This report contains the independent calibration and the
-first four prospectively measured Q points. The remaining fine/coarse sweep,
-independent process replications, and profiler captures are still running or
-pending.
+Status: in progress. This report contains the independent calibration, the
+first single-node prospective Q points, and the complete seven-point
+NUMA-interleaved quick sweep. The remaining fine/coarse sweep, independent
+process replications, and profiler captures are still pending.
 
 ## Question
 
@@ -184,19 +184,45 @@ committed before any interleaved q result at
   <img src="assets/rtx5090-host-memory-roofline-bandwidth-shift.svg" alt="Single-node and interleaved host-memory rooflines with measured SeqAttn points" width="100%">
 </p>
 
-The first uncontended quick points use one warmup and three measured repeats:
+The complete uncontended quick sweep uses one warmup and three measured
+repeats in one independent process per Q value. Every resumed process used
+explicit `numactl --interleave=5,7`, 32 input-generation workers, parallel
+pinned Q/K/V allocation, and output-buffer allocation overlapped with input
+preparation.
 
 | Policy | Requested q | Effective q | Predicted TFLOPS | Pipeline TFLOPS | Observed / predicted |
 |---|---:|---:|---:|---:|---:|
 | Single node | 4,096 | 4,096.0 | 152.72 | 150.02 | 98.24% |
+| Interleaved | 3,072 | 3,066.0 | 173.90 | 171.64 | 98.70% |
+| Interleaved | 3,328 | 3,318.3 | 188.20 | 185.28 | 98.45% |
+| Interleaved | 3,456 | 3,449.3 | 195.63 | 192.59 | 98.44% |
 | Interleaved | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
 | Interleaved | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
+| Interleaved | 3,840 | 3,826.9 | 213.32 | 206.98 | 97.03% |
 | Interleaved | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
 
 At identical `q=4096`, the measured throughput rises from 150.02 to
 203.35TFLOP/s, a 35.5% gain caused only by the host-memory placement change.
-The new transition is already visible around 3.6K-3.8K effective Q, close to
-the independently predicted `q_star=3761.18`.
+All seven interleaved points reach 95.32% to 98.70% of the prospective model.
+The three points below 3.5K effective Q remain within 1.56% of the predicted
+host-bandwidth branch.
+
+For a preliminary quick-sweep knee calculation, define the high-Q plateau as
+the median of the `q=3840` and `q=4096` process results:
+
+```text
+quick plateau:                 205.165 TFLOP/s
+eta versus resident FA4:       0.96176
+95% quick-plateau threshold:   194.907 TFLOP/s
+first effective q above 95%:   3566.585 tokens (requested q=3584)
+corrected intersection:        3566.585 / 0.95 = 3754.300 tokens
+prediction error versus q*:    -0.183%
+```
+
+This is the predeclared directional acceptance signal: the transition moved
+from approximately 5.3K-5.5K effective Q under single-node placement to about
+3.6K-3.8K after the measured bandwidth increase. It is not the publication
+estimate because each point still has only one independent process.
 
 One `q=3840` process produced per-repeat pipeline times of 38.33, 62.83, and
 73.90 seconds. The progressive slowdown coincided with unrelated host jobs
@@ -207,20 +233,17 @@ Q/K/V/output allocation; node7 had only about 8.6GiB free, below its roughly
 knee plot. GPU `Exclusive_Process` prevents CUDA-context contention but does
 not isolate host DRAM capacity or bandwidth.
 
-This comparison is preliminary because only three clean interleaved points are
-available. It nevertheless supports the direction and approximate magnitude
-of the predicted knee shift. Remaining points and the `q=3840` rerun require
-an uncontended host-memory window.
+The parallel allocation path was validated before resuming the formal points.
+A 448MiB four-tensor pinned-allocation smoke completed in 1.305 seconds, and a
+16K-token streaming smoke completed successfully with 1.284 seconds of data
+preparation. Full 524K preparation for the four resumed points took 26.7 to
+64.7 seconds; none repeated the earlier five-minute single-threaded stall.
 
-The experiment was paused on 2026-08-24 with no benchmark process left
-running. A second `q=3840` attempt was stopped after more than five minutes of
-host-side preparation: its RSS had reached approximately 24GiB, its main
-thread occupied one CPU core, GPU utilization remained 0%, and it had not
-written a result. A benchmark-only parallel pinned-allocation path has been
-implemented but not yet validated. Compilation passed; its first smoke test
-was blocked when an unrelated process acquired physical GPU3 under
-`Exclusive_Process`. On resume, validate that path with a small allocation and
-streaming run before launching another full 524K-token point.
+One resumed launcher was accidentally started without the explicit
+`numactl --interleave=5,7` prefix. NUMA counters showed its allocation landing
+almost entirely on node5, so it was interrupted before producing a result
+JSON. Its incomplete manifest is retained under `q_sweep_quick_resume/` and is
+excluded. The valid rerun is under `q_sweep_quick_resume_interleave57/`.
 
 ## Current Conclusion
 
@@ -265,6 +288,10 @@ workspace/benchmarks/results/rtx5090_pcie_memory_population_20260824/
 
 Raw interleaved calibration and q results:
 workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/
+
+Clean resumed interleaved Q results:
+workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/q_sweep_quick_resume_interleave57/
+workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/q_sweep_quick_missing_interleave57/
 ```
 
 The original plot and observation summary are regenerated with

@@ -120,7 +120,7 @@ NUMA-local host-supply roof, including its sparse DIMM population.
 A preregistered follow-up changed only pinned-memory placement from NUMA node5
 to `interleave=5,7`. Concurrent H2D increased from 37.284GB/s to 56.717GB/s,
 which moved the predicted full-roof intersection from `q*=5,721.6` to
-`q*=3,761.2`. The first three uncontended `1+3` points already show the
+`q*=3,761.2`. The complete seven-point uncontended `1+3` quick sweep shows the
 corresponding leftward transition.
 
 <p align="center">
@@ -130,15 +130,19 @@ corresponding leftward transition.
 | Memory policy | q | Effective q | Predicted TFLOPS | Measured TFLOPS | Measured / predicted |
 |---|---:|---:|---:|---:|---:|
 | node5 only | 4,096 | 4,096.0 | 152.72 | 150.02 | 98.24% |
+| interleave node5+7 | 3,072 | 3,066.0 | 173.90 | 171.64 | 98.70% |
+| interleave node5+7 | 3,328 | 3,318.3 | 188.20 | 185.28 | 98.45% |
+| interleave node5+7 | 3,456 | 3,449.3 | 195.63 | 192.59 | 98.44% |
 | interleave node5+7 | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
 | interleave node5+7 | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
+| interleave node5+7 | 3,840 | 3,826.9 | 213.32 | 206.98 | 97.03% |
 | interleave node5+7 | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
 
 At the same `q=4096`, interleaving raises measured throughput by 35.5%. The
-remaining quick points are paused because unrelated host jobs reduced node7
-free memory below the approximately 14GiB needed there for one full
-interleaved Q/K/V/output allocation. The first `q=3840` process is retained as
-contaminated evidence and excluded from the knee estimate.
+quick high-Q plateau is 205.165TFLOP/s, and its 95% threshold is first crossed
+at effective `q=3566.6`. Correcting that threshold estimates `q*=3754.3`, only
+0.183% below the preregistered `q*=3761.2`. These remain one-process
+exploratory observations; publication results still require replication.
 
 <p align="center">
   <img src="docs/assets/rtx5090-host-memory-roofline-experiment0.svg" alt="Prospective RTX 5090 host-memory roofline validation" width="100%">

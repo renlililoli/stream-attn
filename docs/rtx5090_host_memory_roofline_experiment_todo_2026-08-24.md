@@ -485,40 +485,39 @@ Current quick status:
 
 | q | Pipeline TFLOPS | Status |
 |---:|---:|---|
+| 3,072 | 171.642 | clean |
+| 3,328 | 185.282 | clean |
+| 3,456 | 192.590 | clean |
 | 3,584 | 196.978 | clean |
 | 3,712 | 200.320 | clean |
+| 3,840 | 206.984 | clean rerun |
 | 4,096 | 203.347 | clean |
-| 3,840 | 135.061 | excluded: progressive host-memory contention |
 
-- [x] Generate the first two-roof comparison plot from the three clean points.
-- [ ] Re-run `q=3840` after node7 has at least 16GiB free before allocation.
-- [ ] Complete `q=3072`, `3328`, and `3456` in an uncontended host-memory
+- [x] Generate the two-roof comparison plot from all seven clean quick points.
+- [x] Re-run `q=3840` after node7 has at least 16GiB free before allocation.
+- [x] Complete `q=3072`, `3328`, and `3456` in an uncontended host-memory
       window.
-- [ ] Avoid interpreting GPU `Exclusive_Process` as host-memory isolation.
+- [x] Avoid interpreting GPU `Exclusive_Process` as host-memory isolation.
 - [ ] Consider a reuse-one-allocation multi-q exploratory runner if repeated
       28GiB pinned allocations remain the dominant turnaround cost.
 
-Pause snapshot, 2026-08-24:
+Resume snapshot, 2026-08-24:
 
+- The parallel pinned-allocation path passed a 448MiB allocation smoke and a
+  16K-token streaming smoke before the resumed full-size runs.
+- Every valid resumed point used 32 data-generation workers and explicit
+  `numactl --interleave=5,7` around the orchestrator process.
+- Full-size data preparation took 26.7-64.7 seconds for the resumed points;
+  the earlier five-minute preparation stall did not recur.
+- One launcher omitted the explicit interleave prefix. NUMA counters exposed
+  the protocol violation before any result JSON was written, and the process
+  was interrupted. Its incomplete `q_sweep_quick_resume/` manifest is retained
+  and excluded.
+- The preliminary high-Q plateau from `q=3840` and `4096` is 205.165TFLOP/s.
+  Its 95% threshold is first crossed at effective `q=3566.585`; correcting the
+  threshold gives `q*=3754.300`, 0.183% below the preregistered 3761.182.
 - No SeqAttn benchmark or calibration process remains running in
-  `seqattn-roofline-gpu3-interleave57`.
-- The second `q=3840` rerun was stopped after more than five minutes because it
-  was still preparing pinned host tensors: RSS had reached approximately
-  24GiB, the main thread was using one CPU core, GPU utilization was 0%, and no
-  result JSON had been written.
-- A benchmark-only WIP change now issues the Q/K/V pinned allocations in
-  parallel, keeps chunk filling on 32 CPU workers, and overlaps output-buffer
-  allocation with input preparation.
-- Python compilation passed inside the container. The first allocation smoke
-  test could not run because physical GPU3 had already been acquired by an
-  unrelated process (`PID 3156762`) under `Exclusive_Process`; this is an
-  environment block, not a successful validation of the WIP path.
-- On resume, first wait for GPU3 to become context-free, then run a small
-  pinned-allocation smoke test and a small streaming smoke test before another
-  524K-token `q=3840` process.
-- The three clean interleaved observations and the two-bandwidth comparison
-  figure are checkpointed now; no conclusion depends on the excluded or
-  incomplete `q=3840` runs.
+  `seqattn-roofline-gpu3-interleave57` after the completed quick sweep.
 
 ## Deferred Robustness Experiments
 
