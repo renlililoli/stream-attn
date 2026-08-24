@@ -6,6 +6,7 @@ import math
 import platform
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import torch
@@ -20,6 +21,7 @@ from .common import (
     configure_allocator,
     make_bounds,
     make_host_tensors_parallel,
+    make_pinned_host_tensors_parallel,
 )
 
 
@@ -128,22 +130,29 @@ def main() -> None:
         result["memory_policy"] = configure_allocator(args.target_vram_mib, args.safety_mib)
         dtype = getattr(torch, args.dtype)
         preparation_started = time.perf_counter()
-        q, k, v = make_host_tensors_parallel(
-            (
-                (args.tokens, args.q_heads, args.head_dim),
-                (args.tokens, args.kv_heads, args.head_dim),
-                (args.tokens, args.kv_heads, args.head_dim),
-            ),
-            dtype,
-            seed=args.seed,
-            workers=args.cpu_workers,
-            chunk_tokens=args.cpu_chunk_tokens,
-        )
-        output_buffer = torch.empty(
-            (args.tokens, args.q_heads, args.head_dim),
-            dtype=dtype,
-            pin_memory=True,
-        )
+        with ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="seqattn-prepare"
+        ) as pool:
+            inputs = pool.submit(
+                make_host_tensors_parallel,
+                (
+                    (args.tokens, args.q_heads, args.head_dim),
+                    (args.tokens, args.kv_heads, args.head_dim),
+                    (args.tokens, args.kv_heads, args.head_dim),
+                ),
+                dtype,
+                seed=args.seed,
+                workers=args.cpu_workers,
+                chunk_tokens=args.cpu_chunk_tokens,
+            )
+            output = pool.submit(
+                make_pinned_host_tensors_parallel,
+                ((args.tokens, args.q_heads, args.head_dim),),
+                dtype,
+                workers=1,
+            )
+            q, k, v = inputs.result()
+            (output_buffer,) = output.result()
         result["data_preparation_seconds"] = time.perf_counter() - preparation_started
         cu = make_bounds(args.tokens, args.segments)
         scale = args.head_dim**-0.5

@@ -117,6 +117,29 @@ NUMA-local host-supply roof, including its sparse DIMM population.
   <img src="docs/assets/rtx5090-pcie-memory-population-diagnostic.svg" alt="RTX 5090 H2D bandwidth with one populated memory node versus two-node interleaving" width="100%">
 </p>
 
+A preregistered follow-up changed only pinned-memory placement from NUMA node5
+to `interleave=5,7`. Concurrent H2D increased from 37.284GB/s to 56.717GB/s,
+which moved the predicted full-roof intersection from `q*=5,721.6` to
+`q*=3,761.2`. The first three uncontended `1+3` points already show the
+corresponding leftward transition.
+
+<p align="center">
+  <img src="docs/assets/rtx5090-host-memory-roofline-bandwidth-shift.svg" alt="RTX 5090 host-memory roofline comparison for single-node and two-node interleaved pinned memory" width="100%">
+</p>
+
+| Memory policy | q | Effective q | Predicted TFLOPS | Measured TFLOPS | Measured / predicted |
+|---|---:|---:|---:|---:|---:|
+| node5 only | 4,096 | 4,096.0 | 152.72 | 150.02 | 98.24% |
+| interleave node5+7 | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
+| interleave node5+7 | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
+| interleave node5+7 | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
+
+At the same `q=4096`, interleaving raises measured throughput by 35.5%. The
+remaining quick points are paused because unrelated host jobs reduced node7
+free memory below the approximately 14GiB needed there for one full
+interleaved Q/K/V/output allocation. The first `q=3840` process is retained as
+contaminated evidence and excluded from the knee estimate.
+
 <p align="center">
   <img src="docs/assets/rtx5090-host-memory-roofline-experiment0.svg" alt="Prospective RTX 5090 host-memory roofline validation" width="100%">
 </p>

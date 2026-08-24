@@ -153,6 +153,75 @@ The `q=4736` run also completed after that start time and is excluded from
 formal observations. The q-sweep remains paused until an uncontended target GPU
 is available.
 
+## Preliminary Bandwidth-Shift Validation
+
+Experiment 0B changes only pinned-memory placement from `membind=5` to
+`interleave=5,7`. The shape, GPU, K/V chunk, kernel profile, buffer counts,
+workspace guardrail, output mode, and FA4 roof remain fixed.
+
+The GPU3 calibration was completed before the new q-sweep:
+
+| Measurement | Median GB/s |
+|---|---:|
+| Single-node concurrent `B_P` | 37.2840 |
+| Interleaved bare H2D | 56.7552 |
+| Interleaved concurrent, `q_compute=8192` | 56.7196 |
+| Interleaved concurrent, `q_compute=16384` | 56.7144 |
+| Frozen interleaved `B_P` | **56.7170** |
+
+This bandwidth increase changes the prospective prediction from:
+
+```text
+single node: q_star=5721.56, q_95=5435.49
+interleaved: q_star=3761.18, q_95=3573.12
+```
+
+The predicted full-roof intersection moves left by 34.3%. The prediction was
+committed before any interleaved q result at
+`docs/experiments/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/prediction.json`.
+
+<p align="center">
+  <img src="assets/rtx5090-host-memory-roofline-bandwidth-shift.svg" alt="Single-node and interleaved host-memory rooflines with measured SeqAttn points" width="100%">
+</p>
+
+The first uncontended quick points use one warmup and three measured repeats:
+
+| Policy | Requested q | Effective q | Predicted TFLOPS | Pipeline TFLOPS | Observed / predicted |
+|---|---:|---:|---:|---:|---:|
+| Single node | 4,096 | 4,096.0 | 152.72 | 150.02 | 98.24% |
+| Interleaved | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
+| Interleaved | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
+| Interleaved | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
+
+At identical `q=4096`, the measured throughput rises from 150.02 to
+203.35TFLOP/s, a 35.5% gain caused only by the host-memory placement change.
+The new transition is already visible around 3.6K-3.8K effective Q, close to
+the independently predicted `q_star=3761.18`.
+
+One `q=3840` process produced per-repeat pipeline times of 38.33, 62.83, and
+73.90 seconds. The progressive slowdown coincided with unrelated host jobs
+consuming tens of GiB and reducing node7 free memory. A requested rerun then
+stalled before GPU execution while building the approximately 28GiB pinned
+Q/K/V/output allocation; node7 had only about 8.6GiB free, below its roughly
+14GiB interleaved share. These runs are retained but excluded from the quick
+knee plot. GPU `Exclusive_Process` prevents CUDA-context contention but does
+not isolate host DRAM capacity or bandwidth.
+
+This comparison is preliminary because only three clean interleaved points are
+available. It nevertheless supports the direction and approximate magnitude
+of the predicted knee shift. Remaining points and the `q=3840` rerun require
+an uncontended host-memory window.
+
+The experiment was paused on 2026-08-24 with no benchmark process left
+running. A second `q=3840` attempt was stopped after more than five minutes of
+host-side preparation: its RSS had reached approximately 24GiB, its main
+thread occupied one CPU core, GPU utilization remained 0%, and it had not
+written a result. A benchmark-only parallel pinned-allocation path has been
+implemented but not yet validated. Compilation passed; its first smoke test
+was blocked when an unrelated process acquired physical GPU3 under
+`Exclusive_Process`. On resume, validate that path with a small allocation and
+streaming run before launching another full 524K-token point.
+
 ## Current Conclusion
 
 The prospective model has passed its first out-of-sample check. The low-Q
@@ -188,9 +257,16 @@ docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/observations.
 PCIe/memory-population diagnostic summary:
 docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/pcie_memory_population_diagnostic.json
 
+Bandwidth-shift comparison summary:
+docs/experiments/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/comparison_observations.json
+
 Raw PCIe/memory-population runs:
 workspace/benchmarks/results/rtx5090_pcie_memory_population_20260824/
+
+Raw interleaved calibration and q results:
+workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/
 ```
 
-The plot and observation summary are regenerated with
-`benchmarks/analyze_host_memory_roofline.py`.
+The original plot and observation summary are regenerated with
+`benchmarks/analyze_host_memory_roofline.py`. The bandwidth-shift comparison is
+regenerated with `benchmarks/analyze_host_memory_roofline_comparison.py`.

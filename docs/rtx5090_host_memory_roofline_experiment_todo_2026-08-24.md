@@ -481,6 +481,45 @@ direction and approximate magnitude predicted from the independently measured
 bandwidth increase. Original single-node anomaly replications, including
 `q=6272` and `q=7296`, are explicitly scheduled after this quick comparison.
 
+Current quick status:
+
+| q | Pipeline TFLOPS | Status |
+|---:|---:|---|
+| 3,584 | 196.978 | clean |
+| 3,712 | 200.320 | clean |
+| 4,096 | 203.347 | clean |
+| 3,840 | 135.061 | excluded: progressive host-memory contention |
+
+- [x] Generate the first two-roof comparison plot from the three clean points.
+- [ ] Re-run `q=3840` after node7 has at least 16GiB free before allocation.
+- [ ] Complete `q=3072`, `3328`, and `3456` in an uncontended host-memory
+      window.
+- [ ] Avoid interpreting GPU `Exclusive_Process` as host-memory isolation.
+- [ ] Consider a reuse-one-allocation multi-q exploratory runner if repeated
+      28GiB pinned allocations remain the dominant turnaround cost.
+
+Pause snapshot, 2026-08-24:
+
+- No SeqAttn benchmark or calibration process remains running in
+  `seqattn-roofline-gpu3-interleave57`.
+- The second `q=3840` rerun was stopped after more than five minutes because it
+  was still preparing pinned host tensors: RSS had reached approximately
+  24GiB, the main thread was using one CPU core, GPU utilization was 0%, and no
+  result JSON had been written.
+- A benchmark-only WIP change now issues the Q/K/V pinned allocations in
+  parallel, keeps chunk filling on 32 CPU workers, and overlaps output-buffer
+  allocation with input preparation.
+- Python compilation passed inside the container. The first allocation smoke
+  test could not run because physical GPU3 had already been acquired by an
+  unrelated process (`PID 3156762`) under `Exclusive_Process`; this is an
+  environment block, not a successful validation of the WIP path.
+- On resume, first wait for GPU3 to become context-free, then run a small
+  pinned-allocation smoke test and a small streaming smoke test before another
+  524K-token `q=3840` process.
+- The three clean interleaved observations and the two-bandwidth comparison
+  figure are checkpointed now; no conclusion depends on the excluded or
+  incomplete `q=3840` runs.
+
 ## Deferred Robustness Experiments
 
 These are not required for Experiment 0 and must not delay the primary 4K
