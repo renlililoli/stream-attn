@@ -20,6 +20,62 @@ The Q sweep then tests whether SeqAttn reaches its measured plateau near the
 pre-registered prediction. A later fixed-4K workspace sweep maps the validated
 Q knee back to an HBM budget.
 
+## Current Execution Status
+
+```text
+branch:              rtx5090-low-workspace-sweep-20260824
+documentation commit: 3d13d75
+calibration script:  benchmarks/host_memory_roofline_calibration.py
+experiment container: seqattn-roofline-gpu3
+committed image tag: diffsynth:cu128-roofline-fa4-20260824
+committed image ID:  sha256:0a5009b416016c52edbe8c05eedc9025e57ef47fde2c8f5e70775ba4a14cf1c5
+image created:       2026-08-24T03:49:56.173587513Z
+physical GPU:        GPU3
+container cpuset:    160-191,416-447
+container mem nodes: 5
+container security:  seccomp=unconfined for NUMA policy calls
+```
+
+The dedicated container is based on `diffsynth:cu128` and retains PyTorch
+`2.10.0+cu128` and CUDA 12.8. It adds the fixed resident-roof stack used by the
+2026-08-19 report:
+
+```text
+flash-attn-4:                4.0.0b26
+nvidia-cutlass-dsl:          4.6.0.dev0
+nvidia-cutlass-dsl-libs-base: 4.6.0.dev0
+quack-kernels:               0.5.3
+cuda-python:                 12.9.4
+apache-tvm-ffi:              0.1.13.post3
+torch-c-dlpack-ext:          0.1.5
+```
+
+Completed calibration artifacts are under:
+
+```text
+workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/
+```
+
+The first formal 4K K/V H2D calibration used 10 warmups and 50 samples:
+
+| Measurement | Median GB/s | p10 GB/s | p90 GB/s |
+|---|---:|---:|---:|
+| Bare, two 56MiB copies | 37.264 | 36.995 | 37.341 |
+| Concurrent, `q_compute=8192` | 37.300 | 36.965 | 37.357 |
+| Concurrent, `q_compute=16384` | 37.268 | 37.037 | 37.320 |
+
+The two concurrent medians differ by 0.085%, so the initial scalar-bandwidth
+stability check passes. This result is intentionally not yet converted into a
+Q-knee prediction because the formal 524K FA4 calibration is still pending.
+
+NUMA sampling during the live pinned allocation reported about 740MiB on node
+5 out of 815MiB total process memory. The remaining node 1/7 pages were mainly
+shared library mappings; the process heap was on node 5.
+
+FA4 import and compilation were validated with a 16K-token smoke test. The
+single measured CUDA-event observation was 35.049ms and 219.18 effective
+TFLOP/s. It is only a smoke result and must not be used as `P_FA4`.
+
 ## Locked Primary Configuration
 
 ```text
@@ -104,14 +160,14 @@ compare the 95% threshold directly with the 100% roof intersection.
 
 ## Phase 1: Topology and NUMA Verification
 
-- [ ] Save `nvidia-smi topo -m`.
-- [ ] Save `lscpu -e=CPU,NODE,SOCKET`.
-- [ ] Save `numactl --hardware`.
-- [ ] Save `/sys/bus/pci/devices/0000:E1:00.0/numa_node`.
-- [ ] Run formal jobs with CPU and memory binding to node 5.
-- [ ] Verify actual pinned-memory page placement with `numastat -p PID` and
+- [x] Save `nvidia-smi topo -m`.
+- [x] Save `lscpu -e=CPU,NODE,SOCKET`.
+- [x] Save `numactl --hardware`.
+- [x] Save `/sys/bus/pci/devices/0000:E1:00.0/numa_node`.
+- [x] Run formal jobs with CPU and memory binding to node 5.
+- [x] Verify actual pinned-memory page placement with `numastat -p PID` and
       `/proc/PID/numa_maps` during a live allocation.
-- [ ] Record driver, CUDA, PyTorch, Triton, FA4, container image ID, clocks,
+- [ ] Record driver, CUDA, PyTorch, Triton, FA4, committed image ID, clocks,
       temperature, and active compute PIDs.
 
 NUMA STREAM is optional supporting evidence. Its result must not be substituted
@@ -119,13 +175,13 @@ for pinned H2D bandwidth in the roofline model.
 
 ## Phase 2: Bare Pinned H2D Calibration
 
-- [ ] Add a benchmark that allocates NUMA-local pinned host K and V tensors.
-- [ ] Allocate separate GPU K and V destinations matching runtime layout.
-- [ ] Issue two back-to-back asynchronous 56MiB copies on one H2D stream.
-- [ ] Place timing events after any buffer-free wait and around only the two
+- [x] Add a benchmark that allocates NUMA-local pinned host K and V tensors.
+- [x] Allocate separate GPU K and V destinations matching runtime layout.
+- [x] Issue two back-to-back asynchronous 56MiB copies on one H2D stream.
+- [x] Place timing events after any buffer-free wait and around only the two
       copies.
-- [ ] Run at least 10 warmups and 50 measured samples.
-- [ ] Report raw bytes, each duration, median, p10, p90, GB/s, and GiB/s.
+- [x] Run at least 10 warmups and 50 measured samples.
+- [x] Report raw bytes, each duration, median, p10, p90, GB/s, and GiB/s.
 - [ ] Optionally measure 2K and 8K payloads as a fixed-latency diagnostic.
 
 Primary output:
@@ -136,14 +192,14 @@ results/experiment0/h2d_bare.json
 
 ## Phase 3: Concurrent Pinned H2D Calibration
 
-- [ ] Reuse the exact SeqAttn update kernel and `128x64/8/3` launch profile.
-- [ ] Run representative GPU compute while the copy stream transfers the next
+- [x] Reuse the exact SeqAttn update kernel and `128x64/8/3` launch profile.
+- [x] Run representative GPU compute while the copy stream transfers the next
       two 56MiB K/V buffers.
-- [ ] Measure at least `q_compute=8192` and `q_compute=16384` without using any
+- [x] Measure at least `q_compute=8192` and `q_compute=16384` without using any
       new Q-sweep result to select them.
-- [ ] Use preallocated timing events so event creation is outside measurement.
-- [ ] Report copy-service time after `kv_free`, excluding compute backpressure.
-- [ ] Compare the two compute-load medians. If they differ by more than 5%, do
+- [x] Use preallocated timing events so event creation is outside measurement.
+- [x] Report copy-service time after `kv_free`, excluding compute backpressure.
+- [x] Compare the two compute-load medians. If they differ by more than 5%, do
       not freeze a single scalar `B_P` without documenting the dependence.
 - [ ] Capture one Nsight Systems trace to verify copy/compute overlap and the
       placement of `kv_ready` and `kv_free` waits.
@@ -163,6 +219,7 @@ results/experiment0/h2d_concurrent.json
 - [ ] Run at least 5 warmups and 10 measured repetitions.
 - [ ] Report all durations and median/p10/p90 effective TFLOP/s.
 - [ ] Record output signature and finite-value checks.
+- [x] Validate the fixed FA4 stack with a 16K-token compile/execution smoke.
 
 Primary output:
 
@@ -286,4 +343,3 @@ Experiment 0 is complete only when:
 5. The fixed-4K workspace sweep validates the Q-to-HBM mapping.
 6. All raw JSON, commands, environment records, and profiler artifacts are
    retained.
-
