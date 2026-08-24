@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seqattn-core"
-version = "0.3.0"
+version = "0.3.0a1"
 description = "Core paged exact-attention runtime with bounded HBM and host-memory working sets"
 readme = "README.md"
 requires-python = ">=3.10"

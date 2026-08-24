@@ -403,6 +403,10 @@ Linux, CUDA, PyTorch 2.5+, and Triton 3.1+ are the initial supported platform.
 The distribution contains only the `seqattn_core` package; compatibility
 facades from development snapshots are not shipped.
 
+Version suffixes distinguish maturity: `.devN` identifies development
+snapshots, `aN` identifies minimum feature-complete Alpha releases, and an
+unsuffixed version is reserved for a stable release.
+
 ## API
 
 The functional API mirrors the important parts of FlashAttention's dense and
