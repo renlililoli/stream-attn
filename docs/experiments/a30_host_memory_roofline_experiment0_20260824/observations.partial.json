@@ -1,0 +1,74 @@
+{
+  "b_concurrent_gbps": 12.357663422004407,
+  "completed_points": 5,
+  "p_fa2_tflops": 92.1633624923028,
+  "partial_label": "partial: 5/14 Q points",
+  "prediction_path": "docs/experiments/a30_host_memory_roofline_experiment0_20260824/prediction.json",
+  "q_95_predicted": 7085.092980585989,
+  "q_star_predicted": 7457.992611143146,
+  "requested_points": 14,
+  "rows": [
+    {
+      "normalized_q": 0.9003433562441452,
+      "observed_over_fa2": 0.8840419606761974,
+      "observed_over_predicted": 0.981894245728707,
+      "pipeline_tflops_median": 81.47627968020647,
+      "pipeline_tflops_p10": 81.47535249434507,
+      "pipeline_tflops_p90": 81.47690500649554,
+      "predicted_tflops": 82.97867110906566,
+      "q_effective_tokens": 6714.754098360656,
+      "q_passes": 61,
+      "q_tokens": 6784
+    },
+    {
+      "normalized_q": 0.980731155908801,
+      "observed_over_fa2": 0.9235175534139942,
+      "observed_over_predicted": 0.9416622974093352,
+      "pipeline_tflops_median": 85.11448304329856,
+      "pipeline_tflops_p10": 85.0994873869769,
+      "pipeline_tflops_p90": 85.1258223939831,
+      "predicted_tflops": 90.38748102951794,
+      "q_effective_tokens": 7314.285714285715,
+      "q_passes": 56,
+      "q_tokens": 7424
+    },
+    {
+      "normalized_q": 1.0170545320535713,
+      "observed_over_fa2": 0.9591148977012294,
+      "observed_over_predicted": 0.9591148977012294,
+      "pipeline_tflops_median": 88.39525398860631,
+      "pipeline_tflops_p10": 88.00339017823356,
+      "pipeline_tflops_p90": 89.28622572129383,
+      "predicted_tflops": 92.1633624923028,
+      "q_effective_tokens": 7585.185185185185,
+      "q_passes": 54,
+      "q_tokens": 7680
+    },
+    {
+      "normalized_q": 1.098418894617857,
+      "observed_over_fa2": 0.9388762920432467,
+      "observed_over_predicted": 0.9388762920432467,
+      "pipeline_tflops_median": 86.5299960390109,
+      "pipeline_tflops_p10": 86.51289796906215,
+      "pipeline_tflops_p90": 86.53264222890404,
+      "predicted_tflops": 92.1633624923028,
+      "q_effective_tokens": 8192.0,
+      "q_passes": 50,
+      "q_tokens": 8192
+    },
+    {
+      "normalized_q": 1.61532190384979,
+      "observed_over_fa2": 0.9481167474596726,
+      "observed_over_predicted": 0.9481167474596726,
+      "pipeline_tflops_median": 87.38162748114891,
+      "pipeline_tflops_p10": 87.15641143030928,
+      "pipeline_tflops_p90": 87.71387095594257,
+      "predicted_tflops": 92.1633624923028,
+      "q_effective_tokens": 12047.058823529413,
+      "q_passes": 34,
+      "q_tokens": 12288
+    }
+  ],
+  "status": "partial",
+  "sweep_path": "/tmp/a30_host_memory_roofline_experiment0_20260824/sweep/q_sweep_round1.partial-5of14.json"
+}

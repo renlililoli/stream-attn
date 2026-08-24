@@ -1,0 +1,46 @@
+{
+  "calibration_inputs": {
+    "bare_h2d": {
+      "median_gbps": 12.357767588640366,
+      "path": "/tmp/a30_host_memory_roofline_experiment0_20260824/calibration/bare_h2d.json",
+      "sha256": "210c62ee09a5ae6c181e63ad57c5e3e50a566c0690a366bc41e1dd2e4331cb1a"
+    },
+    "concurrent_h2d": {
+      "b_concurrent_gbps": 12.357663422004407,
+      "path": "/tmp/a30_host_memory_roofline_experiment0_20260824/calibration/fa2_concurrent_h2d.json",
+      "per_q_median_gbps": [
+        12.357829594424144,
+        12.35749724958467
+      ],
+      "sha256": "9d7583f2b204c3f1dd1c3025e118b2a642780fddbc218da501acdc332d3a6350"
+    },
+    "resident_fa2": {
+      "p_fa2_tflops": 92.1633624923028,
+      "path": "/tmp/a30_host_memory_roofline_experiment0_20260824/calibration/resident_fa2.json",
+      "sha256": "34b3a175dda0dfaabd591a60369d966a0059b604a9646a42a1bad5aad2000f6d"
+    }
+  },
+  "created_unix_seconds": 1787559283.8710835,
+  "git_commit": "006b995fbc3e25005f8c9abe33fbac2eaa92f16d",
+  "locked_configuration": {
+    "backend": "fa2",
+    "causal": false,
+    "dtype": "bfloat16",
+    "gpu": "NVIDIA A30",
+    "head_dim": 128,
+    "kv_chunk_tokens": 4096,
+    "kv_heads": 56,
+    "q_heads": 56,
+    "tokens": 409600,
+    "workspace_guardrail_mib": 4096
+  },
+  "prediction": {
+    "formula": "min(B_P * q_effective / 1000, P_FA2)",
+    "q_95_predicted": 7085.092980585989,
+    "q_star_aligned_128": 7552,
+    "q_star_predicted": 7457.992611143146,
+    "workspace_at_q_star_aligned_bytes": 704880640,
+    "workspace_at_q_star_aligned_mib": 672.2265625
+  },
+  "prediction_created_before_q_sweep": true
+}
