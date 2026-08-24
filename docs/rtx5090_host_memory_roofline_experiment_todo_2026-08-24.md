@@ -105,9 +105,10 @@ Raw diagnostic artifacts are under:
 workspace/benchmarks/results/rtx5090_pcie_memory_population_20260824/
 ```
 
-The q-sweep is paused while physical GPU3 is shared by an unrelated training
-process that started at 2026-08-24 06:28:45 UTC. The `q=4736` result completed
-after that time and must not be used as an uncontended formal observation.
+The first fine q-sweep is complete. The `q=4736` result completed while
+physical GPU3 was shared by an unrelated training process and must not be used
+as an uncontended formal observation. Replication of the original single-node
+points is deferred until after the NUMA-interleaved knee-shift experiment.
 
 NUMA sampling during the live pinned allocation reported about 740MiB on node
 5 out of 815MiB total process memory. The remaining node 1/7 pages were mainly
@@ -393,6 +394,74 @@ Initial budgets:
 - [ ] Keep preparation time outside execution and final host D2H inside the
       full application timing.
 
+## Experiment 0B: NUMA-Interleaved Knee Shift
+
+This controlled follow-up tests whether changing only effective host-supply
+bandwidth moves the resident-Q knee by the predicted amount.
+
+Locked differences from Experiment 0A:
+
+```text
+CPU affinity:          NUMA node5 CPUs, 160-191,416-447
+pinned-memory policy:  interleave=5,7
+container mem nodes:   5,7
+```
+
+Everything else remains fixed, including physical GPU3, the 524,288-token BF16
+MHA shape, `kv_chunk=4096`, kernel `128x64/8/3`, buffer counts, host output,
+4GiB workspace guardrail, and resident FA4 roof.
+
+The existing bare interleaved measurement is 56.7595545GB/s. Before launching
+the new q-sweep:
+
+- [ ] Re-measure bare and concurrent H2D on physical GPU3 with pinned pages
+      interleaved across nodes 5 and 7.
+- [ ] Use the same two-copy 112MiB BF16 K/V payload.
+- [ ] Freeze the concurrent aggregation rule and create a separate prediction
+      artifact before inspecting any interleaved q result.
+- [ ] Compute `q_star=P_FA4/B_P` and `q_95=0.95*q_star` from the newly measured
+      concurrent bandwidth.
+
+The preliminary bare-bandwidth estimate gives:
+
+```text
+B_P preliminary:    56.7595545 GB/s
+q_star preliminary: 3758.3629
+q_95 preliminary:   3570.4448
+```
+
+The quick visualization sweep is predeclared as:
+
+```text
+q = 3072 3328 3456 3584 3712 3840 4096
+per q: 1 warmup + 3 measured repeats in one independent process
+```
+
+This first pass is exploratory and optimized for turnaround. Publication
+replications remain three independent processes with five measured repeats per
+process and will be run only after the knee-shift plot is inspected.
+
+The first comparison plot must contain, on the same axes:
+
+- the original single-node measured points;
+- the new `interleave=5,7` measured points;
+- the original 37.284GB/s exact staircase roof;
+- the newly measured interleaved-bandwidth exact staircase roof;
+- the shared 213.323TFLOP/s resident FA4 roof;
+- both predicted knee markers.
+
+Acceptance signal:
+
+```text
+single-node observed knee:   approximately 5.3K-5.5K effective q
+interleaved predicted knee:  approximately 3.6K-3.8K effective q
+```
+
+The experiment supports the model only if the new transition moves left in the
+direction and approximate magnitude predicted from the independently measured
+bandwidth increase. Original single-node anomaly replications, including
+`q=6272` and `q=7296`, are explicitly scheduled after this quick comparison.
+
 ## Deferred Robustness Experiments
 
 These are not required for Experiment 0 and must not delay the primary 4K
@@ -404,6 +473,8 @@ validation:
 - [ ] Extend to GQA, FP16, causal attention, and INT8 K/V.
 - [ ] Add a same-kernel GPU-backed SeqAttn roof.
 - [ ] Replace planner heuristics with measured hardware profiles.
+- [ ] Replicate the original single-node `q=5248`, `q=6272`, and `q=7296`
+      points after completing the quick NUMA-interleaved comparison.
 
 ## Completion Criteria
 
