@@ -2,10 +2,10 @@
 
 Date: 2026-08-24
 
-Status: in progress. This report contains the independent calibration, the
-first single-node prospective Q points, and the complete seven-point
-NUMA-interleaved quick sweep. The remaining fine/coarse sweep, independent
-process replications, and profiler captures are still pending.
+Status: in progress. Independent calibration, balanced sampling around both
+predicted Q knees, and clean reruns of the previously contaminated points are
+complete. The remaining coarse sweep, independent process replications, and
+profiler captures are still pending.
 
 ## Question
 
@@ -20,7 +20,7 @@ The workspace is held at 4GiB and only resident Q is varied. The prediction was
 committed before any new Q-sweep result was launched.
 
 <p align="center">
-  <img src="assets/rtx5090-host-memory-roofline-experiment0.svg" alt="RTX 5090 host-memory roofline prediction and first measured Q points" width="100%">
+  <img src="assets/rtx5090-host-memory-roofline-experiment0.svg" alt="RTX 5090 host-memory roofline prediction and balanced measured Q points" width="100%">
 </p>
 
 ## Locked Shape
@@ -62,22 +62,29 @@ workspace(q=5760, k=4096) = 573.4609375 MiB
 The pre-registration is
 [`prediction.json`](experiments/rtx5090_host_memory_roofline_experiment0_20260824/prediction.json).
 
-## First Observations
+## Single-Node Observations
 
-Each row is one independent process with one warmup and five measured
-executions. The primary throughput uses a CUDA-event interval ending after the
+The initial points use one warmup and five measured executions. The 2026-08-24
+balanced rerun uses one warmup and three measured executions in a fresh process
+per Q value. The primary throughput uses a CUDA-event interval ending after the
 last finalize on the compute stream, so it excludes only the final D2H tail.
 The full host-output wall interval is retained separately.
 
 | Requested q | Effective q | Q passes | Predicted TFLOPS | Measured pipeline TFLOPS | Measured / predicted | Measured / FA4 |
 |---:|---:|---:|---:|---:|---:|---:|
 | 4,096 | 4,096.0 | 128 | 152.72 | 150.02 | 98.24% | 70.33% |
+| 4,224 | 4,194.3 | 125 | 156.38 | 153.25 | 98.00% | 71.84% |
+| 4,736 | 4,723.3 | 111 | 176.10 | 171.95 | 97.64% | 80.61% |
+| 5,248 | 5,242.9 | 100 | 195.48 | 188.72 | 96.55% | 88.47% |
 | 5,504 | 5,461.3 | 96 | 203.62 | 198.86 | 97.66% | 93.22% |
 | 5,760 | 5,698.8 | 92 | 212.47 | 204.93 | 96.45% | 96.07% |
+| 5,888 | 5,825.4 | 90 | 213.32 | 200.10 | 93.80% | 93.80% |
+| 6,272 | 6,241.5 | 84 | 213.32 | 202.35 | 94.85% | 94.85% |
+| 6,784 | 6,721.6 | 78 | 213.32 | 204.48 | 95.85% | 95.85% |
 | 8,192 | 8,192.0 | 64 | 213.32 | 206.21 | 96.66% | 96.66% |
 
-The first four observations are within 1.76% to 3.55% of the prospective
-model. In particular:
+The six points on the predicted bandwidth branch are within 1.76% to 3.55% of
+the prospective model. In particular:
 
 1. At `q=4096`, the model predicts the PCIe branch rather than the compute
    roof. Measured throughput is 98.24% of that prediction.
@@ -85,16 +92,23 @@ model. In particular:
    throughput is 97.66% of the predicted PCIe roof at that point.
 3. At the aligned intersection `q=5760`, SeqAttn reaches 96.07% of the
    independently measured resident FA4 roof.
-4. Increasing Q to 8,192 raises throughput only from 204.93 to 206.21 TFLOP/s,
-   which is early evidence of the predicted plateau.
+4. The clean `q=4736` rerun reaches 97.64% of its prediction, replacing the
+   contaminated 159.87TFLOP/s observation.
+5. The three new points above the predicted intersection rise from 200.10 to
+   204.48TFLOP/s before reaching 206.21TFLOP/s at `q=8192`.
 
-The observed plateau is currently about 3.3% below `P_FA4`. This is not a
+Using `q=5888`, `6272`, `6784`, and `8192`, the single-node plateau median is
+203.411TFLOP/s, or 95.35% of `P_FA4`. This is not a
 failure of the host-link intensity model: FA4 and SeqAttn are different
 kernels. It measures the cross-kernel efficiency factor that the experiment
 was designed to expose:
 
 ```text
-eta = P_SeqAttn,plateau / P_FA4 ~= 0.967
+eta_single = P_SeqAttn,plateau / P_FA4 = 0.9535
+95% plateau threshold                         = 193.240 TFLOP/s
+first measured effective q above threshold    = 5,461.333 (requested q=5,504)
+corrected intersection                        = 5,748.772 tokens
+prediction error versus q*=5,721.564          = +0.48%
 ```
 
 The full sweep is needed before freezing `eta` or the observed 5% knee.
@@ -149,9 +163,13 @@ profile without changing the SeqAttn kernel.
 
 One GPU3 recheck performed after an unrelated training process started at
 2026-08-24 06:28:45 UTC fell to 27.50GB/s and was rejected as contaminated.
-The `q=4736` run also completed after that start time and is excluded from
-formal observations. The q-sweep remains paused until an uncontended target GPU
-is available.
+The original `q=4736` run also completed after that start time. A clean rerun on
+the integrated commit measured 171.95TFLOP/s with per-repeat pipeline times of
+45.822, 45.808, and 45.871 seconds; only this rerun enters the formal summary.
+The earlier `q=6272` and `q=7296` values were also treated as suspect because
+they fell to about 191TFLOP/s while adjacent plateau points remained near
+205TFLOP/s. The clean `q=6272` rerun reached 202.35TFLOP/s; `q=7296` remains
+excluded because it was not required by the balanced sampling plan.
 
 ## Preliminary Bandwidth-Shift Validation
 
@@ -198,22 +216,23 @@ preparation.
 | Interleaved | 3,456 | 3,449.3 | 195.63 | 192.59 | 98.44% |
 | Interleaved | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
 | Interleaved | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
-| Interleaved | 3,840 | 3,826.9 | 213.32 | 206.98 | 97.03% |
-| Interleaved | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
+| Interleaved | 3,840 | 3,826.9 | 213.32 | 206.19 | 96.66% |
+| Interleaved | 4,096 | 4,096.0 | 213.32 | 203.07 | 95.19% |
+| Interleaved | 4,480 | 4,443.1 | 213.32 | 202.64 | 94.99% |
 
 At identical `q=4096`, the measured throughput rises from 150.02 to
-203.35TFLOP/s, a 35.5% gain caused only by the host-memory placement change.
-All seven interleaved points reach 95.32% to 98.70% of the prospective model.
+203.07TFLOP/s, a 35.4% gain caused only by the host-memory placement change.
+All eight interleaved points reach 94.99% to 98.70% of the prospective model.
 The three points below 3.5K effective Q remain within 1.56% of the predicted
 host-bandwidth branch.
 
-For a preliminary quick-sweep knee calculation, define the high-Q plateau as
-the median of the `q=3840` and `q=4096` process results:
+For the balanced rerun, define the high-Q plateau as the median of `q=3840`,
+`4096`, and `4480`:
 
 ```text
-quick plateau:                 205.165 TFLOP/s
-eta versus resident FA4:       0.96176
-95% quick-plateau threshold:   194.907 TFLOP/s
+balanced plateau:              203.072 TFLOP/s
+eta versus resident FA4:       0.95195
+95% plateau threshold:         192.919 TFLOP/s
 first effective q above 95%:   3566.585 tokens (requested q=3584)
 corrected intersection:        3566.585 / 0.95 = 3754.300 tokens
 prediction error versus q*:    -0.183%
@@ -224,14 +243,13 @@ from approximately 5.3K-5.5K effective Q under single-node placement to about
 3.6K-3.8K after the measured bandwidth increase. It is not the publication
 estimate because each point still has only one independent process.
 
-One `q=3840` process produced per-repeat pipeline times of 38.33, 62.83, and
+One old `q=3840` process produced per-repeat pipeline times of 38.33, 62.83, and
 73.90 seconds. The progressive slowdown coincided with unrelated host jobs
-consuming tens of GiB and reducing node7 free memory. A requested rerun then
-stalled before GPU execution while building the approximately 28GiB pinned
-Q/K/V/output allocation; node7 had only about 8.6GiB free, below its roughly
-14GiB interleaved share. These runs are retained but excluded from the quick
-knee plot. GPU `Exclusive_Process` prevents CUDA-context contention but does
-not isolate host DRAM capacity or bandwidth.
+consuming tens of GiB and reducing node7 free memory. Those runs remain in the
+raw artifact directory but are excluded. The clean integrated-branch rerun
+measured 38.199, 38.223, and 38.248 seconds, corresponding to 206.19TFLOP/s.
+GPU `Exclusive_Process` prevents CUDA-context contention but does not isolate
+host DRAM capacity or bandwidth.
 
 The parallel allocation path was validated before resuming the formal points.
 A 448MiB four-tensor pinned-allocation smoke completed in 1.305 seconds, and a
@@ -245,14 +263,35 @@ almost entirely on node5, so it was interrupted before producing a result
 JSON. Its incomplete manifest is retained under `q_sweep_quick_resume/` and is
 excluded. The valid rerun is under `q_sweep_quick_resume_interleave57/`.
 
+## Balanced Knee Sampling
+
+The 2026-08-24 rerun samples the two policies at approximately matching
+normalized positions to the right of their distinct predicted knees. Every row
+uses one warmup and three measured executions in one fresh process.
+
+| Policy | q* | Requested q | Effective q / q* | Pipeline TFLOPS |
+|---|---:|---:|---:|---:|
+| `membind=5` | 5,721.56 | 5,888 | 1.018 | 200.10 |
+| `interleave=5,7` | 3,761.18 | 3,840 | 1.017 | 206.19 |
+| `membind=5` | 5,721.56 | 6,272 | 1.091 | 202.35 |
+| `interleave=5,7` | 3,761.18 | 4,096 | 1.089 | 203.07 |
+| `membind=5` | 5,721.56 | 6,784 | 1.175 | 204.48 |
+| `interleave=5,7` | 3,761.18 | 4,480 | 1.181 | 202.64 |
+
+The concurrent H2D rechecks immediately before the reruns measured
+37.23-37.30GB/s for `membind=5` and 56.71-56.72GB/s for
+`interleave=5,7`, consistent with both frozen predictions. The paired samples
+therefore compare two stable host-supply roofs rather than two different
+contention states.
+
 ## Current Conclusion
 
-The prospective model has passed its first out-of-sample check. The low-Q
-point follows the independently measured H2D slope, and the predicted
-intersection lands in the measured transition to a roughly 206TFLOP/s
-plateau. The evidence is already stronger than the old retrospective
-20.9GB/s calculation because neither `B_P` nor `P_FA4` was derived from these Q
-points.
+The prospective model now has balanced observations on both sides of both
+predicted knees. The bandwidth branches remain within 1.3-4.4% of prediction,
+and the threshold-corrected intersections differ from the independently
+predicted q* values by +0.48% for `membind=5` and -0.18% for
+`interleave=5,7`. The host-memory placement change moves the measured
+transition in the predicted direction without changing the attention kernel.
 
 This is still an interim result. Publication claims require:
 
@@ -292,6 +331,9 @@ workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleav
 Clean resumed interleaved Q results:
 workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/q_sweep_quick_resume_interleave57/
 workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824/q_sweep_quick_missing_interleave57/
+
+Balanced single-node/interleaved rerun and calibration:
+workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/
 ```
 
 The original plot and observation summary are regenerated with

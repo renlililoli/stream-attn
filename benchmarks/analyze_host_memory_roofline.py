@@ -104,7 +104,7 @@ def main() -> None:
         }
     )
     figure, (absolute, normalized) = plt.subplots(1, 2, figsize=(11.2, 4.2))
-    q_max = max([10_000, *(int(row["q_tokens"]) for row in rows)])
+    q_max = max(8_500, max(int(row["q_tokens"]) for row in rows) + 512)
     q_curve = list(range(1, q_max + 256, 128))
     roof_curve = [min(b_gbps * q / 1000.0, p_fa4) for q in q_curve]
     absolute.plot(q_curve, roof_curve, color="#1f6f5f", linewidth=2.2, label="Predicted roofline")
@@ -121,13 +121,28 @@ def main() -> None:
         zorder=3,
         label="Measured SeqAttn",
     )
+    label_offsets = {
+        4096: (-34, 7),
+        4736: (4, 7),
+        5504: (-32, 8),
+        5760: (-36, -11),
+        5888: (4, 8),
+        6272: (4, -11),
+        6784: (4, 8),
+        8192: (4, -11),
+    }
     for row in rows:
+        q_tokens = int(row["q_tokens"])
+        if q_tokens not in label_offsets:
+            continue
+        offset = label_offsets[q_tokens]
         absolute.annotate(
-            f"q={row['q_tokens']}",
+            f"q={q_tokens}",
             (row["q_effective_tokens"], row["pipeline_tflops_median"]),
-            xytext=(4, 6),
+            xytext=offset,
             textcoords="offset points",
             fontsize=8,
+            va="bottom" if offset[1] > 0 else "top",
         )
     absolute.set_title("Absolute host-memory roofline")
     absolute.set_xlabel("Effective resident Q tokens")
@@ -157,12 +172,17 @@ def main() -> None:
         label="Measured SeqAttn",
     )
     for row in rows:
+        q_tokens = int(row["q_tokens"])
+        if q_tokens not in label_offsets:
+            continue
+        offset = label_offsets[q_tokens]
         normalized.annotate(
-            f"{row['q_tokens']}",
+            f"{q_tokens}",
             (row["normalized_q"], row["observed_over_fa4"]),
-            xytext=(4, 6),
+            xytext=offset,
             textcoords="offset points",
             fontsize=8,
+            va="bottom" if offset[1] > 0 else "top",
         )
     normalized.set_title("Normalized model comparison")
     normalized.set_xlabel("q_effective / q*_predicted")

@@ -1,7 +1,7 @@
 {
   "b_concurrent_gbps": 37.28403455497023,
   "p_fa4_tflops": 213.32300374971385,
-  "prediction_path": "/opt/seqattn/docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/prediction.json",
+  "prediction_path": "docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/prediction.json",
   "q_95_predicted": 5435.48615328736,
   "q_star_predicted": 5721.564371881432,
   "rows": [
@@ -21,6 +21,57 @@
         "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_sentinel/round_01/q_04096.json"
       ],
       "wall_tflops_median": 150.02863754960296
+    },
+    {
+      "normalized_q": 0.7330694417444402,
+      "observed_over_fa4": 0.7184054452651382,
+      "observed_over_predicted": 0.9799964428412031,
+      "pipeline_tflops_median": 153.25240749410992,
+      "pipeline_tflops_p10": 153.25240749410992,
+      "pipeline_tflops_p90": 153.25240749410992,
+      "predicted_tflops": 156.3805752700499,
+      "processes": 1,
+      "q_effective_tokens": 4194.304,
+      "q_passes": 125,
+      "q_tokens": 4224,
+      "source_paths": [
+        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_04224.json"
+      ],
+      "wall_tflops_median": 153.24927803306178
+    },
+    {
+      "normalized_q": 0.8255286506131083,
+      "observed_over_fa4": 0.8060728339155806,
+      "observed_over_predicted": 0.9764322937997632,
+      "pipeline_tflops_median": 171.95387817191587,
+      "pipeline_tflops_p10": 171.95387817191587,
+      "pipeline_tflops_p90": 171.95387817191587,
+      "predicted_tflops": 176.10425143023633,
+      "processes": 1,
+      "q_effective_tokens": 4723.315315315315,
+      "q_passes": 111,
+      "q_tokens": 4736,
+      "source_paths": [
+        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_04736.json"
+      ],
+      "wall_tflops_median": 171.9434055547076
+    },
+    {
+      "normalized_q": 0.9163368021805504,
+      "observed_over_fa4": 0.8846856178313407,
+      "observed_over_predicted": 0.9654590056037351,
+      "pipeline_tflops_median": 188.723793369953,
+      "pipeline_tflops_p10": 188.723793369953,
+      "pipeline_tflops_p90": 188.723793369953,
+      "predicted_tflops": 195.47571908756234,
+      "processes": 1,
+      "q_effective_tokens": 5242.88,
+      "q_passes": 100,
+      "q_tokens": 5248,
+      "source_paths": [
+        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_05248.json"
+      ],
+      "wall_tflops_median": 188.72273937287048
     },
     {
       "normalized_q": 0.9545175022714065,
@@ -57,21 +108,55 @@
       "wall_tflops_median": 204.92351848061503
     },
     {
-      "normalized_q": 1.272690003028542,
-      "observed_over_fa4": 0.8944854113593977,
-      "observed_over_predicted": 0.8944854113593977,
-      "pipeline_tflops_median": 190.81431476148515,
-      "pipeline_tflops_p10": 190.81431476148515,
-      "pipeline_tflops_p90": 190.81431476148515,
+      "normalized_q": 1.0181520024228337,
+      "observed_over_fa4": 0.9380184778074484,
+      "observed_over_predicted": 0.9380184778074484,
+      "pipeline_tflops_median": 200.1009192586192,
+      "pipeline_tflops_p10": 200.1009192586192,
+      "pipeline_tflops_p90": 200.1009192586192,
       "predicted_tflops": 213.32300374971385,
       "processes": 1,
-      "q_effective_tokens": 7281.777777777777,
-      "q_passes": 72,
-      "q_tokens": 7296,
+      "q_effective_tokens": 5825.422222222222,
+      "q_passes": 90,
+      "q_tokens": 5888,
       "source_paths": [
-        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_07296.json"
+        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_05888.json"
       ],
-      "wall_tflops_median": 190.7874534784064
+      "wall_tflops_median": 200.09348929033058
+    },
+    {
+      "normalized_q": 1.090877145453036,
+      "observed_over_fa4": 0.9485498243270511,
+      "observed_over_predicted": 0.9485498243270511,
+      "pipeline_tflops_median": 202.34749773170995,
+      "pipeline_tflops_p10": 202.34749773170995,
+      "pipeline_tflops_p90": 202.34749773170995,
+      "predicted_tflops": 213.32300374971385,
+      "processes": 1,
+      "q_effective_tokens": 6241.523809523809,
+      "q_passes": 84,
+      "q_tokens": 6272,
+      "source_paths": [
+        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_06272.json"
+      ],
+      "wall_tflops_median": 202.33216810577758
+    },
+    {
+      "normalized_q": 1.1747907720263464,
+      "observed_over_fa4": 0.9585246949325252,
+      "observed_over_predicted": 0.9585246949325252,
+      "pipeline_tflops_median": 204.4753670912844,
+      "pipeline_tflops_p10": 204.4753670912844,
+      "pipeline_tflops_p90": 204.4753670912844,
+      "predicted_tflops": 213.32300374971385,
+      "processes": 1,
+      "q_effective_tokens": 6721.641025641025,
+      "q_passes": 78,
+      "q_tokens": 6784,
+      "source_paths": [
+        "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_06784.json"
+      ],
+      "wall_tflops_median": 204.46410525058906
     },
     {
       "normalized_q": 1.43177625340711,
@@ -92,8 +177,13 @@
     }
   ],
   "source_paths": [
+    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_04736.json",
+    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_05888.json",
+    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_06272.json",
+    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_balanced_rerun_20260824/membind5/round_01/q_06784.json",
+    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_04224.json",
+    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_05248.json",
     "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_05760.json",
-    "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_fine_round1/round_01/q_07296.json",
     "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_sentinel/round_01/q_04096.json",
     "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_sentinel/round_01/q_05504.json",
     "/workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q_sweep_k4096_sentinel/round_01/q_08192.json"

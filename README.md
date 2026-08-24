@@ -165,8 +165,8 @@ NUMA-local host-supply roof, including its sparse DIMM population.
 A preregistered follow-up changed only pinned-memory placement from NUMA node5
 to `interleave=5,7`. Concurrent H2D increased from 37.284GB/s to 56.717GB/s,
 which moved the predicted full-roof intersection from `q*=5,721.6` to
-`q*=3,761.2`. The complete seven-point uncontended `1+3` quick sweep shows the
-corresponding leftward transition.
+`q*=3,761.2`. A balanced `1+3` rerun samples both policies at matching
+normalized positions to the right of their distinct predicted knees.
 
 <p align="center">
   <img src="docs/assets/rtx5090-host-memory-roofline-bandwidth-shift.svg" alt="RTX 5090 host-memory roofline comparison for single-node and two-node interleaved pinned memory" width="100%">
@@ -180,11 +180,12 @@ corresponding leftward transition.
 | interleave node5+7 | 3,456 | 3,449.3 | 195.63 | 192.59 | 98.44% |
 | interleave node5+7 | 3,584 | 3,566.6 | 202.29 | 196.98 | 97.38% |
 | interleave node5+7 | 3,712 | 3,692.2 | 209.41 | 200.32 | 95.66% |
-| interleave node5+7 | 3,840 | 3,826.9 | 213.32 | 206.98 | 97.03% |
-| interleave node5+7 | 4,096 | 4,096.0 | 213.32 | 203.35 | 95.32% |
+| interleave node5+7 | 3,840 | 3,826.9 | 213.32 | 206.19 | 96.66% |
+| interleave node5+7 | 4,096 | 4,096.0 | 213.32 | 203.07 | 95.19% |
+| interleave node5+7 | 4,480 | 4,443.1 | 213.32 | 202.64 | 94.99% |
 
-At the same `q=4096`, interleaving raises measured throughput by 35.5%. The
-quick high-Q plateau is 205.165TFLOP/s, and its 95% threshold is first crossed
+At the same `q=4096`, interleaving raises measured throughput by 35.4%. The
+balanced high-Q plateau is 203.072TFLOP/s, and its 95% threshold is first crossed
 at effective `q=3566.6`. Correcting that threshold estimates `q*=3754.3`, only
 0.183% below the preregistered `q*=3761.2`. These remain one-process
 exploratory observations; publication results still require replication.
@@ -196,12 +197,18 @@ exploratory observations; publication results still require replication.
 | Resident q | Q passes | Predicted TFLOPS | Measured pipeline TFLOPS | Measured / predicted |
 |---:|---:|---:|---:|---:|
 | 4,096 | 128 | 152.72 | 150.02 | 98.24% |
+| 4,736 | 111 | 176.10 | 171.95 | 97.64% |
 | 5,504 | 96 | 203.62 | 198.86 | 97.66% |
 | 5,760 | 92 | 212.47 | 204.93 | 96.45% |
+| 5,888 | 90 | 213.32 | 200.10 | 93.80% |
+| 6,272 | 84 | 213.32 | 202.35 | 94.85% |
+| 6,784 | 78 | 213.32 | 204.48 | 95.85% |
 | 8,192 | 64 | 213.32 | 206.21 | 96.66% |
 
-These first prospectively measured points lie within 3.55% of the independent
-roofline. The fine/coarse sweep and process replications are still in progress;
+The single-node threshold-corrected intersection is `q*=5748.8`, 0.48% above
+the preregistered 5721.6-token prediction. Clean reruns also replace the
+previously contaminated `q=4736`, `q=6272`, and interleaved `q=3840`
+observations. The coarse sweep and process replications are still in progress;
 see the
 [Experiment 0 report](docs/rtx5090_host_memory_roofline_experiment0_2026-08-24.md)
 for the protocol, source separation, timing boundary, current interpretation,
