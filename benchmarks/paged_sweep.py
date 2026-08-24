@@ -40,7 +40,7 @@ def main() -> None:
         command = [
             sys.executable,
             "-m",
-            "seqattn.benchmarking.paged",
+            "seqattn_core.benchmarking.paged",
             "--tokens",
             str(tokens),
             "--host-budget-gib",

@@ -26,7 +26,7 @@ def main() -> None:
             command = [
                 sys.executable,
                 "-m",
-                "seqattn.benchmarking.streaming",
+                "seqattn_core.benchmarking.streaming",
                 "--mode",
                 mode,
                 "--tokens",

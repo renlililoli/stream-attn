@@ -11,7 +11,7 @@ from pathlib import Path
 
 import torch
 
-from seqattn import (
+from seqattn_core import (
     CallbackOutputSink,
     MemoryPageSource,
     PagedAttentionConfig,
@@ -23,7 +23,7 @@ from seqattn import (
     SimulatedPageSource,
     StreamingAttentionConfig,
 )
-from seqattn.benchmarking.common import ProcessMemorySampler, atomic_json, make_bounds
+from seqattn_core.benchmarking.common import ProcessMemorySampler, atomic_json, make_bounds
 
 
 def make_tensors_parallel(

@@ -5,7 +5,7 @@ import os
 import pytest
 import torch
 
-from seqattn import (
+from seqattn_core import (
     HostMemoryPlan,
     MemoryPageSink,
     NvmeOutputSink,
@@ -16,8 +16,9 @@ from seqattn import (
     StreamingAttentionConfig,
     load_nvme_output,
 )
-from seqattn.nvme import DIRECT_IO_ALIGNMENT, _open_file
-from seqattn.reference import streaming_attention_reference
+from seqattn_core.reference import streaming_attention_reference
+from seqattn_core.storage import DIRECT_IO_ALIGNMENT
+from seqattn_core.storage.direct_io import _open_file
 
 
 def make_data(dtype=torch.float32):
@@ -162,9 +163,7 @@ def test_short_read_is_reported(tmp_path):
     os.truncate(store.kv_path, store.kv_path.stat().st_size - DIRECT_IO_ALIGNMENT)
     reader = store.open_reader(plan, 1)
     page = store.kv_pages[-1]
-    k_out = torch.empty(
-        (page.padded_tokens, store.kv_layout.heads, store.kv_layout.head_dim)
-    )
+    k_out = torch.empty((page.padded_tokens, store.kv_layout.heads, store.kv_layout.head_dim))
     v_out = torch.empty_like(k_out)
     try:
         with pytest.raises(OSError, match="short read"):
@@ -257,7 +256,7 @@ def test_disk_full_error_cleans_unpublished_store(monkeypatch, tmp_path):
 
 def test_interrupted_writer_removes_unpublished_files(tmp_path):
     q, k, v, cu_q, cu_k = make_data()
-    from seqattn import KVLayout, TensorLayout
+    from seqattn_core import KVLayout, TensorLayout
 
     writer = NvmeQKVWriter(
         tmp_path / "interrupted",

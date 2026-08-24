@@ -2,11 +2,12 @@
 
 ## Package boundaries
 
-The repository ships two packages: `seqattn_core` holds the implementation,
-and `seqattn` is a pure compatibility facade.
+The repository ships one Python package: `seqattn_core`. It owns both the
+public API and all implementation modules. The former `seqattn` compatibility
+facade is intentionally not part of the core-only distribution.
 
 ```text
-seqattn_core/        implementation only; no compat facades
+seqattn_core/        public API and implementation; no compat facades
   api.py             functional public API
   config.py          execution policy dataclasses
   planner.py         workspace and budget planning
@@ -45,26 +46,13 @@ seqattn_core/        implementation only; no compat facades
     streaming.py     DRAM-backed and full-GPU benchmark
     paged.py         memory, simulated-NVMe, and NVMe benchmark
     projection.py    projected pipeline benchmark
-  kernels/           Triton kernels and launch wrappers
-
-seqattn/             compatibility facade; no implementation
-  __init__.py        re-exports the seqattn_core public surface
-  api.py …            wrappers re-exporting the matching seqattn_core module
-  benchmark.py       legacy python -m seqattn.benchmark entry point
-  paged_benchmark.py legacy python -m seqattn.paged_benchmark entry point
-  pipeline_benchmark.py legacy python -m seqattn.pipeline_benchmark entry point
-  paged/ storage/ projection/ streaming/ benchmarking/ kernels/
-                     subpackage wrappers preserving every historical
-                     module path
+  kernels/           Triton kernels and launch helpers
 ```
 
-Every module in `seqattn` is a thin re-export of its `seqattn_core`
-counterpart and contains no implementation. Top-level modules such as
-`seqattn.paging`, `seqattn.nvme`, `seqattn.paged_runtime`, `seqattn.runtime`,
-`seqattn.pipeline`, and the three legacy benchmark modules are compatibility
-facades; they exist only in `seqattn`. New internal code imports the owning
-`seqattn_core` module directly; external code can retain the original import
-paths and `python -m` entry points.
+Public imports use `seqattn_core` directly. Installed commands retain the
+`seqattn-bench*` names, but their entry points resolve to
+`seqattn_core.benchmarking`. Compatibility-only module paths are not carried
+forward in the minimum core release.
 
 ## Memory hierarchy
 

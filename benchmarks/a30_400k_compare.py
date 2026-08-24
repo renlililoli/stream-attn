@@ -9,23 +9,20 @@ from pathlib import Path
 
 import torch
 
-from seqattn import (
+from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     StreamingAttentionStats,
     build_plan,
 )
-from seqattn.benchmarking.common import atomic_json, make_bounds, make_host_tensors_parallel
+from seqattn_core.benchmarking.common import atomic_json, make_bounds, make_host_tensors_parallel
 
 
 def output_signature(output: torch.Tensor) -> dict[str, list[float]]:
     tokens = output.shape[-3]
     indices = sorted({0, tokens // 4, tokens // 2, 3 * tokens // 4, tokens - 1})
     if output.device.type == "cuda":
-        return {
-            str(index): output[0, index, 0, :8].float().cpu().tolist()
-            for index in indices
-        }
+        return {str(index): output[0, index, 0, :8].float().cpu().tolist() for index in indices}
     return {str(index): output[index, 0, :8].float().tolist() for index in indices}
 
 
@@ -212,9 +209,7 @@ def main() -> None:
         )
         result["status"] = "success"
     except Exception as error:  # noqa: BLE001 - benchmark must preserve partial results
-        result["status"] = (
-            "oom" if isinstance(error, torch.OutOfMemoryError) else "runtime_error"
-        )
+        result["status"] = "oom" if isinstance(error, torch.OutOfMemoryError) else "runtime_error"
         result["failure_message"] = f"{type(error).__name__}: {error}"
         result["traceback"] = traceback.format_exc()
     atomic_json(args.output, result)

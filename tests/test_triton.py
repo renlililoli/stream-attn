@@ -1,17 +1,15 @@
 import pytest
 import torch
 
-from seqattn import (
+from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     build_plan,
 )
-from seqattn.kernels import triton_is_available
-from seqattn.reference import streaming_attention_reference
+from seqattn_core.kernels import triton_is_available
+from seqattn_core.reference import streaming_attention_reference
 
-pytestmark = pytest.mark.skipif(
-    not triton_is_available(), reason="requires CUDA and Triton"
-)
+pytestmark = pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
@@ -146,7 +144,7 @@ def test_device_consumer_q_reuse_matches_separate_output_path():
 
 
 def test_triton_backend_rejects_small_head_dim():
-    from seqattn.streaming import resolve_backend
+    from seqattn_core.streaming import resolve_backend
 
     with pytest.raises(ValueError, match="head_dim >= 16"):
         resolve_backend("triton", torch.bfloat16, torch.device("cuda"), head_dim=8)

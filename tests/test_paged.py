@@ -3,7 +3,7 @@ import itertools
 import pytest
 import torch
 
-from seqattn import (
+from seqattn_core import (
     CallbackOutputSink,
     MemoryPageSink,
     MemoryPageSource,
@@ -12,7 +12,7 @@ from seqattn import (
     PagedAttentionStats,
     StreamingAttentionConfig,
 )
-from seqattn.reference import streaming_attention_reference
+from seqattn_core.reference import streaming_attention_reference
 
 
 def make_bounds(lengths):

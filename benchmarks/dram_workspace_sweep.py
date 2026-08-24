@@ -15,13 +15,13 @@ from large_tier_comparison import (
     make_tensors_parallel,
 )
 
-from seqattn import (
+from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     StreamingAttentionStats,
     build_plan,
 )
-from seqattn.benchmarking.common import ProcessMemorySampler, make_bounds
+from seqattn_core.benchmarking.common import ProcessMemorySampler, make_bounds
 
 
 def atomic_json(path: Path, payload: object) -> None:

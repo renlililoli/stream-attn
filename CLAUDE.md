@@ -52,14 +52,14 @@ ruff format --check .
 python -m build
 ```
 
-Ruff targets Python 3.10 with a 100-column line length. `tests/test_module_layout.py` enforces the implementation/facade boundary described below.
+Ruff targets Python 3.10 with a 100-column line length. `tests/test_module_layout.py` enforces the core-only package boundary described below.
 
 ## Package architecture
 
-The source tree intentionally contains two packages:
-
-- `src/seqattn_core/` owns all implementation. Add new logic here and import other internals through `seqattn_core` paths.
-- `src/seqattn/` is a pure compatibility facade. Its modules only re-export `seqattn_core`; legacy paths such as `seqattn.runtime`, `seqattn.paging`, and `seqattn.pipeline` must preserve public object identity. Do not put implementation in this package or add compatibility-only modules to `seqattn_core`.
+The source tree intentionally contains one package: `src/seqattn_core/`. It
+owns the public API and all implementation. Import public and internal modules
+through `seqattn_core`; do not recreate compatibility-only `seqattn` facade
+modules inside the core package.
 
 The three main execution paths share configuration, planning, validation, statistics, and Triton kernels:
 
@@ -67,7 +67,7 @@ The three main execution paths share configuration, planning, validation, statis
 2. **Paged memory/NVMe** (`paged/`, `storage/`): `PagedAttentionRunner` adapts `PageSource`/`PageSink` contracts, allocates all operator-owned host resources through `HostMemoryPlan`, streams Q and K/V pages through staging rings and a bounded two-region K/V cache, then dispatches to reference or Triton execution. `storage/` implements aligned Q/KV records, atomic manifest-last publication, output stores, and explicit `O_DIRECT` I/O.
 3. **Projected pipeline** (`projection/`): `ProjectedAttentionRunner` pipelines CPU hidden-state H2D, model-owned QKV callbacks, and Q/K/V D2H into persistent pinned buffers. After a global K/V readiness barrier, streamed attention passes each GPU output tile directly to the model-owned output-projection callback before projected output D2H, avoiding a raw-attention CPU round trip.
 
-`kernels/streaming.py` contains the fused Triton online-softmax update/finalization kernels. `benchmarking/` owns the installed CLI implementations; the top-level benchmark modules under `seqattn` are legacy entry-point facades.
+`kernels/streaming.py` contains the fused Triton online-softmax update/finalization kernels. `benchmarking/` owns the installed CLI implementations.
 
 ## Execution and memory invariants
 

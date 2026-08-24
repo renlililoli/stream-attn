@@ -13,13 +13,13 @@ from pathlib import Path
 
 import torch
 
-from seqattn import (
+from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     StreamingAttentionStats,
     build_plan,
 )
-from seqattn.benchmarking.common import atomic_json, make_bounds
+from seqattn_core.benchmarking.common import atomic_json, make_bounds
 
 
 @dataclass(frozen=True)

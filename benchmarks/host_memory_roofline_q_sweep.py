@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from seqattn.benchmarking.common import atomic_json
+from seqattn_core.benchmarking.common import atomic_json
 
 
 COARSE_Q = (2048, 4096, 6144, 8192, 10240, 12288, 16384, 24576, 32768)
@@ -187,9 +187,7 @@ def main() -> None:
                 payload = json.loads(output.read_text(encoding="ascii"))
                 row["status"] = payload.get("status", "unknown")
                 row["mean_seconds"] = payload.get("mean_seconds")
-                row["mean_compute_pipeline_seconds"] = payload.get(
-                    "mean_compute_pipeline_seconds"
-                )
+                row["mean_compute_pipeline_seconds"] = payload.get("mean_compute_pipeline_seconds")
                 row["compute_pipeline_effective_tflops"] = payload.get(
                     "compute_pipeline_effective_tflops"
                 )

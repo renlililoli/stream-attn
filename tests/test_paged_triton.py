@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from seqattn import (
+from seqattn_core import (
     MemoryPageSink,
     MemoryPageSource,
     PagedAttentionConfig,
@@ -9,13 +9,11 @@ from seqattn import (
     PagedAttentionStats,
     StreamingAttentionConfig,
 )
-from seqattn.kernels import triton_is_available
-from seqattn.reference import streaming_attention_reference
+from seqattn_core.kernels import triton_is_available
+from seqattn_core.reference import streaming_attention_reference
 
 
-pytestmark = pytest.mark.skipif(
-    not triton_is_available(), reason="requires CUDA and Triton"
-)
+pytestmark = pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
 
 
 @pytest.mark.parametrize("storage_dtype", ["bf16", "int8"])
@@ -90,4 +88,3 @@ def test_paged_triton_matches_reference(storage_dtype):
         assert relative_l2 < 0.03
         assert cosine > 0.995
     assert stats.operator_host_peak_bytes <= config.host_memory_budget_bytes
-

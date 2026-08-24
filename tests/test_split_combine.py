@@ -1,15 +1,13 @@
 import pytest
 import torch
 
-from seqattn.kernels import (
+from seqattn_core.kernels import (
     initialize_split_attention_state,
     merge_split_attention_state,
     triton_is_available,
 )
 
-pytestmark = pytest.mark.skipif(
-    not triton_is_available(), reason="requires CUDA and Triton"
-)
+pytestmark = pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
 
 
 def test_split_attention_state_matches_logsumexp_reference():
@@ -34,8 +32,7 @@ def test_split_attention_state_matches_logsumexp_reference():
     weight_a = torch.exp(lse_a_rows - expected_lse).nan_to_num()
     weight_b = torch.exp(lse_b_rows - expected_lse).nan_to_num()
     expected_output = (
-        weight_a.unsqueeze(-1) * partial_a.float()
-        + weight_b.unsqueeze(-1) * partial_b.float()
+        weight_a.unsqueeze(-1) * partial_a.float() + weight_b.unsqueeze(-1) * partial_b.float()
     )
 
     torch.testing.assert_close(state_lse, expected_lse, atol=2e-6, rtol=2e-6)

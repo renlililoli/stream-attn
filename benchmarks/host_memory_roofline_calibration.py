@@ -13,8 +13,8 @@ from pathlib import Path
 
 import torch
 
-from seqattn.benchmarking.common import atomic_json
-from seqattn.kernels import update_attention_state
+from seqattn_core.benchmarking.common import atomic_json
+from seqattn_core.kernels import update_attention_state
 
 
 def percentile(values: list[float], quantile: float) -> float:
@@ -197,9 +197,7 @@ def run_concurrent(
     v_buffers = [torch.empty_like(v_host, device="cuda") for _ in range(2)]
     running_max = torch.empty((q_tokens, q_heads), dtype=torch.float32, device="cuda")
     running_sum = torch.empty_like(running_max)
-    accumulator = torch.empty(
-        (q_tokens, q_heads, head_dim), dtype=torch.float32, device="cuda"
-    )
+    accumulator = torch.empty((q_tokens, q_heads, head_dim), dtype=torch.float32, device="cuda")
     compute_stream = torch.cuda.Stream()
     h2d_stream = torch.cuda.Stream()
     kv_ready = [torch.cuda.Event() for _ in range(2)]
@@ -310,8 +308,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     configuration = {
-        key: str(value) if isinstance(value, Path) else value
-        for key, value in vars(args).items()
+        key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()
     }
 
     result: dict[str, object] = {

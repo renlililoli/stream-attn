@@ -400,6 +400,8 @@ pip install -e '.[cuda,benchmark,dev]'
 ```
 
 Linux, CUDA, PyTorch 2.5+, and Triton 3.1+ are the initial supported platform.
+The distribution contains only the `seqattn_core` package; compatibility
+facades from development snapshots are not shipped.
 
 ## API
 
@@ -408,7 +410,7 @@ varlen call shapes, but inputs and outputs are CPU tensors:
 
 ```python
 import torch
-from seqattn import StreamingAttentionConfig, streaming_attn_varlen_func
+from seqattn_core import StreamingAttentionConfig, streaming_attn_varlen_func
 
 q = torch.randn(61_312, 56, 128, dtype=torch.bfloat16, pin_memory=True)
 k = torch.randn(61_312, 56, 128, dtype=torch.bfloat16, pin_memory=True)
@@ -436,7 +438,7 @@ For repeated transformer layers or denoise steps, build one plan and reuse one
 runner.  This keeps buffers, streams, and CUDA events persistent:
 
 ```python
-from seqattn import StreamingAttentionRunner, build_plan
+from seqattn_core import StreamingAttentionRunner, build_plan
 
 config = StreamingAttentionConfig(
     workspace_budget_bytes=4 * 2**30,
@@ -468,7 +470,7 @@ attention runtime and consumes each finalized attention tile with an output
 projection before D2H:
 
 ```python
-from seqattn import (
+from seqattn_core import (
     ProjectedAttentionRunner,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
@@ -530,7 +532,7 @@ BF16/FP16 linear layers, quantized/offloaded modules, Q/K normalization, rotary
 embedding, and output gate/residual logic while the attention core remains a
 Triton operator.
 
-`workspace_budget_bytes` only covers buffers owned by `seqattn`.  Whole-process
+`workspace_budget_bytes` only covers buffers owned by `seqattn_core`. Whole-process
 budgets must also reserve memory for the CUDA context, weights, and caller-owned
 activations.
 
@@ -547,7 +549,7 @@ one caller-selected page into a preallocated staging buffer, while `PageSink`
 consumes an output page immediately:
 
 ```python
-from seqattn import (
+from seqattn_core import (
     NvmeOutputSink,
     NvmeQKVStore,
     PagedAttentionConfig,
@@ -647,7 +649,7 @@ seqattn-paged-bench \
 ```
 
 The simulator is implemented separately from the real direct-I/O backend in
-`seqattn.simulated_nvme`. Concurrent requests share one device bandwidth
+`seqattn_core.paged.simulation`. Concurrent requests share one device bandwidth
 timeline, so adding I/O workers does not multiply the configured bandwidth.
 Read and write limits are independent, and fixed command latency may overlap.
 Simulation results always set `storage_performance_valid=false`; they model

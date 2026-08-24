@@ -55,7 +55,7 @@ only correctness and memory-cap results from it.
 
 ## In-memory NVMe simulation
 
-`seqattn.simulated_nvme` is intentionally separate from the real file-format
+`seqattn_core.paged.simulation` is intentionally separate from the real file-format
 and `O_DIRECT` implementation. It wraps any `PageSource` or `PageSink`, leaves
 page contents unchanged, and delays each actual page operation. For one
 direction, the model is:

@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from seqattn import StreamingAttentionConfig, build_plan
-from seqattn.planner import estimate_workspace_bytes
+from seqattn_core import StreamingAttentionConfig, build_plan
+from seqattn_core.planner import estimate_workspace_bytes
 from seqattn_core.kernels import profiles as kernel_profiles
 
 

@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from seqattn import HostMemoryPlan, KVLayout
-from seqattn.cache import KVPageCache
-from seqattn.paging import build_page_descriptors, replace_page
+from seqattn_core import HostMemoryPlan, KVLayout
+from seqattn_core.paged import build_page_descriptors, replace_page
+from seqattn_core.paged.cache import KVPageCache
 
 
 def test_two_region_cache_has_deterministic_hot_set_and_rolling_eviction():

@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from seqattn import StreamingAttentionConfig, streaming_attn_func
+from seqattn_core import StreamingAttentionConfig, streaming_attn_func
 
 
 def test_dense_api_reference_backend():

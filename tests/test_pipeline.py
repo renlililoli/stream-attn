@@ -3,14 +3,14 @@ import math
 import pytest
 import torch
 
-from seqattn import (
+from seqattn_core import (
     ProjectedAttentionRunner,
     ProjectedAttentionStats,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
     build_plan,
 )
-from seqattn.kernels import triton_is_available
+from seqattn_core.kernels import triton_is_available
 
 
 def test_projection_pipeline_config_validation():
@@ -29,16 +29,12 @@ def test_projected_pipeline_matches_full_gpu(dtype):
     heads = 4
     head_dim = 16
     inner = heads * head_dim
-    hidden_cpu = torch.randn(
-        tokens, hidden_features, dtype=dtype, pin_memory=True
-    )
+    hidden_cpu = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
     cu = torch.tensor([0, 37, 37, 97], dtype=torch.int32)
     qkv_linear = torch.nn.Linear(hidden_features, inner * 3, bias=False).to(
         device="cuda", dtype=dtype
     )
-    out_linear = torch.nn.Linear(inner, hidden_features, bias=False).to(
-        device="cuda", dtype=dtype
-    )
+    out_linear = torch.nn.Linear(inner, hidden_features, bias=False).to(device="cuda", dtype=dtype)
 
     def project_qkv(hidden, start, stop):
         del start, stop
@@ -123,16 +119,12 @@ def test_projected_runner_reuse_has_bounded_allocator_growth():
     heads = 4
     head_dim = 16
     inner = heads * head_dim
-    hidden_cpu = torch.randn(
-        tokens, hidden_features, dtype=dtype, pin_memory=True
-    )
+    hidden_cpu = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
     cu = torch.tensor([0, tokens], dtype=torch.int32)
     qkv_linear = torch.nn.Linear(hidden_features, inner * 3, bias=False).to(
         device="cuda", dtype=dtype
     )
-    out_linear = torch.nn.Linear(inner, hidden_features, bias=False).to(
-        device="cuda", dtype=dtype
-    )
+    out_linear = torch.nn.Linear(inner, hidden_features, bias=False).to(device="cuda", dtype=dtype)
 
     def project_qkv(hidden, start, stop):
         del start, stop
@@ -166,9 +158,7 @@ def test_projected_runner_reuse_has_bounded_allocator_growth():
         attention_config,
         ProjectionPipelineConfig(projection_chunk_tokens=96),
     )
-    out = torch.empty(
-        (tokens, hidden_features), dtype=dtype, pin_memory=True
-    )
+    out = torch.empty((tokens, hidden_features), dtype=dtype, pin_memory=True)
     runner(
         hidden_cpu,
         cu,

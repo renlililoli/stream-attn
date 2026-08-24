@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from seqattn import StreamingAttentionConfig, StreamingAttentionRunner, build_plan
-from seqattn.reference import streaming_attention_reference
+from seqattn_core import StreamingAttentionConfig, StreamingAttentionRunner, build_plan
+from seqattn_core.reference import streaming_attention_reference
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_gpu  # noqa: F401

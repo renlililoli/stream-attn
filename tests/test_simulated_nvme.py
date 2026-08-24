@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 import torch
 
-from seqattn import (
+from seqattn_core import (
     MemoryPageSink,
     MemoryPageSource,
     PagedAttentionConfig,
@@ -18,8 +18,8 @@ from seqattn import (
     SimulatedPageSource,
     StreamingAttentionConfig,
 )
-from seqattn.reference import streaming_attention_reference
-from seqattn.simulated_nvme import _BandwidthTimeline
+from seqattn_core.reference import streaming_attention_reference
+from seqattn_core.paged.simulation import _BandwidthTimeline
 
 
 def test_aggregate_bandwidth_timeline_is_deterministic():
