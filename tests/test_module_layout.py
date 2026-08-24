@@ -33,7 +33,7 @@ def test_subpackages_export_the_canonical_implementations():
     assert PackagedStreamingAttentionRunner is StreamingAttentionRunner
 
 
-def test_benchmark_modules_expose_installed_entry_points():
+def test_repository_benchmark_modules_expose_main_functions():
     assert callable(MemorySampler)
     assert callable(ProcessMemorySampler)
     assert callable(streaming_benchmark_main)

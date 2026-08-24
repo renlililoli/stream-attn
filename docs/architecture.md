@@ -41,7 +41,7 @@ seqattn_core/        public API and implementation; no compat facades
     workspace.py     persistent projection streams and buffers
     runner.py        projected attention orchestration
     api.py           functional convenience API
-  benchmarking/      benchmark CLIs and reusable instrumentation
+  benchmarking/      repository benchmark tools; excluded from release wheels
     common.py        JSON, sequence bounds, RSS, and NVML sampling
     streaming.py     DRAM-backed and full-GPU benchmark
     paged.py         memory, simulated-NVMe, and NVMe benchmark
@@ -49,9 +49,10 @@ seqattn_core/        public API and implementation; no compat facades
   kernels/           Triton kernels and launch helpers
 ```
 
-Public imports use `seqattn_core` directly. Installed commands retain the
-`seqattn-bench*` names, but their entry points resolve to
-`seqattn_core.benchmarking`. Compatibility-only module paths are not carried
+Public imports use `seqattn_core` directly. The release wheel excludes
+`seqattn_core.benchmarking` and does not install benchmark command-line entry
+points. Those modules remain in the source repository so experiments and
+figures stay reproducible. Compatibility-only module paths are not carried
 forward in the minimum core release.
 
 ## Memory hierarchy

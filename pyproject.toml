@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seqattn-core"
-version = "0.3.0a1"
+version = "0.3.0a2"
 description = "Core paged exact-attention runtime with bounded HBM and host-memory working sets"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,18 +24,12 @@ classifiers = [
 
 [project.optional-dependencies]
 cuda = ["triton>=3.1"]
-benchmark = ["pynvml>=12", "pandas>=2", "matplotlib>=3.8"]
 dev = ["pytest>=8", "ruff>=0.9"]
-
-[project.scripts]
-seqattn-bench = "seqattn_core.benchmarking.streaming:main"
-seqattn-bench-resident = "seqattn_core.benchmarking.resident:main"
-seqattn-paged-bench = "seqattn_core.benchmarking.paged:main"
-seqattn-pipeline-bench = "seqattn_core.benchmarking.projection:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["seqattn_core*"]
+exclude = ["seqattn_core.benchmarking", "seqattn_core.benchmarking.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

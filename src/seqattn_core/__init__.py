@@ -74,4 +74,4 @@ __all__ = [
     "streaming_projected_self_attention",
 ]
 
-__version__ = "0.3.0a1"
+__version__ = "0.3.0a2"
