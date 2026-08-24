@@ -19,7 +19,7 @@ from .common import (
     atomic_json,
     configure_allocator,
     make_bounds,
-    make_host_tensor,
+    make_host_tensors_parallel,
 )
 
 
@@ -107,6 +107,8 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--sample-interval-ms", type=float, default=20)
     parser.add_argument("--skip-memory-probe", action="store_true")
+    parser.add_argument("--cpu-workers", type=int, default=32)
+    parser.add_argument("--cpu-chunk-tokens", type=int, default=4096)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--nvtx", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
@@ -125,15 +127,24 @@ def main() -> None:
     try:
         result["memory_policy"] = configure_allocator(args.target_vram_mib, args.safety_mib)
         dtype = getattr(torch, args.dtype)
-        generator = torch.Generator(device="cpu").manual_seed(args.seed)
-        q = make_host_tensor((args.tokens, args.q_heads, args.head_dim), dtype, generator)
-        k = make_host_tensor((args.tokens, args.kv_heads, args.head_dim), dtype, generator)
-        v = make_host_tensor((args.tokens, args.kv_heads, args.head_dim), dtype, generator)
+        preparation_started = time.perf_counter()
+        q, k, v = make_host_tensors_parallel(
+            (
+                (args.tokens, args.q_heads, args.head_dim),
+                (args.tokens, args.kv_heads, args.head_dim),
+                (args.tokens, args.kv_heads, args.head_dim),
+            ),
+            dtype,
+            seed=args.seed,
+            workers=args.cpu_workers,
+            chunk_tokens=args.cpu_chunk_tokens,
+        )
         output_buffer = torch.empty(
             (args.tokens, args.q_heads, args.head_dim),
             dtype=dtype,
             pin_memory=True,
         )
+        result["data_preparation_seconds"] = time.perf_counter() - preparation_started
         cu = make_bounds(args.tokens, args.segments)
         scale = args.head_dim**-0.5
         runner = None
