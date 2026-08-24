@@ -42,6 +42,7 @@ def main() -> None:
     parser.add_argument("--round-start", type=int, default=1)
     parser.add_argument("--shuffle-seed", type=int, default=20260824)
     parser.add_argument("--q-values", type=int, nargs="*")
+    parser.add_argument("--git-commit")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--continue-on-error", action="store_true")
@@ -56,7 +57,9 @@ def main() -> None:
     q_values = sorted(set(args.q_values or (COARSE_Q + FINE_Q)))
     if not q_values or any(q <= 0 or q % 128 for q in q_values):
         raise ValueError("all Q values must be positive multiples of 128")
-    git_commit = command_output(["git", "rev-parse", "HEAD"])
+    git_commit = args.git_commit or command_output(["git", "rev-parse", "HEAD"])
+    if not git_commit:
+        raise RuntimeError("git commit is unavailable; pass --git-commit explicitly")
     manifest_path = args.output_dir / "manifest.json"
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, object] = {
