@@ -98,6 +98,19 @@ workspace at q=5760:    601317376 bytes = 573.4609375 MiB
 The machine-readable pre-registration is committed at
 `docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/prediction.json`.
 
+The first prospective observations are now available:
+
+| requested q | effective q | predicted TFLOPS | pipeline TFLOPS | observed / predicted |
+|---:|---:|---:|---:|---:|
+| 4096 | 4096.0 | 152.72 | 150.02 | 98.24% |
+| 5504 | 5461.3 | 203.62 | 198.86 | 97.66% |
+| 5760 | 5698.8 | 212.47 | 204.93 | 96.45% |
+| 8192 | 8192.0 | 213.32 | 206.21 | 96.66% |
+
+The live report is
+`docs/rtx5090_host_memory_roofline_experiment0_2026-08-24.md`. The remaining
+fine/coarse points and independent process replications are still pending.
+
 ## Locked Primary Configuration
 
 ```text
@@ -298,7 +311,7 @@ spacing around the prediction while keeping every value divisible by 128.
       before primary timing.
 - [ ] Record requested Q, aligned Q, effective Q, Q passes, execution samples,
       effective TFLOP/s, logical K/V H2D, one-time Q H2D, D2H, and signatures.
-- [ ] Add compute-stream completion timing so the primary roofline metric can
+- [x] Add compute-stream completion timing so the primary roofline metric can
       exclude the final D2H tail. Keep full host-output wall time as a secondary
       application metric.
 

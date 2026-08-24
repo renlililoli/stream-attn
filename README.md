@@ -98,6 +98,31 @@ increasing workspace from 512MiB to 896MiB improves execution time by another
 excluded from execution time, while the final 7GiB D2H output transfer was
 included.
 
+#### Prospective host-memory roofline validation
+
+A separate fixed-4K experiment independently measured concurrent pinned H2D
+bandwidth at 37.284GB/s and resident FA4 throughput at 213.323TFLOP/s before
+launching a new resident-Q sweep. For BF16 MHA this predicts
+`q*=P_FA4/B_P=5,721.6` tokens.
+
+<p align="center">
+  <img src="docs/assets/rtx5090-host-memory-roofline-experiment0.svg" alt="Prospective RTX 5090 host-memory roofline validation" width="100%">
+</p>
+
+| Resident q | Q passes | Predicted TFLOPS | Measured pipeline TFLOPS | Measured / predicted |
+|---:|---:|---:|---:|---:|
+| 4,096 | 128 | 152.72 | 150.02 | 98.24% |
+| 5,504 | 96 | 203.62 | 198.86 | 97.66% |
+| 5,760 | 92 | 212.47 | 204.93 | 96.45% |
+| 8,192 | 64 | 213.32 | 206.21 | 96.66% |
+
+These first prospectively measured points lie within 3.55% of the independent
+roofline. The fine/coarse sweep and process replications are still in progress;
+see the
+[Experiment 0 report](docs/rtx5090_host_memory_roofline_experiment0_2026-08-24.md)
+for the protocol, source separation, timing boundary, current interpretation,
+and retained artifacts.
+
 The same 28GiB Q/K/V/output shape was also measured with GPU-resident
 FlashAttention 2 (`2.7.4.post1+nv26.1.42222806`) and FlashAttention 4
 (`4.0.0b26`) on the same physical RTX 5090:
