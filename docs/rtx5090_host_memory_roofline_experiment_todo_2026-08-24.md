@@ -65,16 +65,38 @@ The first formal 4K K/V H2D calibration used 10 warmups and 50 samples:
 | Concurrent, `q_compute=16384` | 37.268 | 37.037 | 37.320 |
 
 The two concurrent medians differ by 0.085%, so the initial scalar-bandwidth
-stability check passes. This result is intentionally not yet converted into a
-Q-knee prediction because the formal 524K FA4 calibration is still pending.
+stability check passes. The concurrent input is frozen as the equal-weight
+median of the two per-compute-load medians:
+
+```text
+B_P = 37.2840346 GB/s
+```
 
 NUMA sampling during the live pinned allocation reported about 740MiB on node
 5 out of 815MiB total process memory. The remaining node 1/7 pages were mainly
 shared library mappings; the process heap was on node 5.
 
-FA4 import and compilation were validated with a 16K-token smoke test. The
-single measured CUDA-event observation was 35.049ms and 219.18 effective
-TFLOP/s. It is only a smoke result and must not be used as `P_FA4`.
+FA4 import and compilation were first validated with a 16K-token smoke test.
+The formal 524,288-token run then used 5 warmups and 10 measured CUDA-event
+samples:
+
+```text
+median latency:  36.945390625 s
+P_FA4 median:    213.3230037 TFLOP/s
+P_FA4 p10/p90:   212.5419044 / 213.6852822 TFLOP/s
+```
+
+The independently frozen prospective prediction is:
+
+```text
+q_star_predicted:       5721.5644
+q_95_predicted:         5435.4862
+q_star_aligned_128:     5760
+workspace at q=5760:    601317376 bytes = 573.4609375 MiB
+```
+
+The machine-readable pre-registration is committed at
+`docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/prediction.json`.
 
 ## Locked Primary Configuration
 
@@ -212,13 +234,13 @@ results/experiment0/h2d_concurrent.json
 
 ## Phase 4: Resident FA4 Calibration
 
-- [ ] Use the exact 524,288-token BF16 MHA shape and non-causal mask.
-- [ ] Place Q/K/V in HBM before the timing interval.
-- [ ] Time only the FA4 call with CUDA events.
-- [ ] Exclude host-to-GPU preparation and GPU-to-host output copies.
-- [ ] Run at least 5 warmups and 10 measured repetitions.
-- [ ] Report all durations and median/p10/p90 effective TFLOP/s.
-- [ ] Record output signature and finite-value checks.
+- [x] Use the exact 524,288-token BF16 MHA shape and non-causal mask.
+- [x] Place Q/K/V in HBM before the timing interval.
+- [x] Time only the FA4 call with CUDA events.
+- [x] Exclude host-to-GPU preparation and GPU-to-host output copies.
+- [x] Run at least 5 warmups and 10 measured repetitions.
+- [x] Report all durations and median/p10/p90 effective TFLOP/s.
+- [x] Record output signature and finite-value checks.
 - [x] Validate the fixed FA4 stack with a 16K-token compile/execution smoke.
 
 Primary output:
@@ -229,14 +251,14 @@ results/experiment0/fa4_resident.json
 
 ## Phase 5: Freeze Prediction Before Q Sweep
 
-- [ ] Select and document the concurrent-bandwidth aggregation rule.
-- [ ] Compute `q_star_predicted = P_FA4 / B_P` using decimal SI units.
-- [ ] Compute `q_95_predicted = 0.95 * q_star_predicted`.
-- [ ] Align candidate Q chunks to `BLOCK_M=128` only after retaining the raw
+- [x] Select and document the concurrent-bandwidth aggregation rule.
+- [x] Compute `q_star_predicted = P_FA4 / B_P` using decimal SI units.
+- [x] Compute `q_95_predicted = 0.95 * q_star_predicted`.
+- [x] Align candidate Q chunks to `BLOCK_M=128` only after retaining the raw
       continuous predictions.
-- [ ] Use `estimate_workspace_bytes()` to predict the corresponding 4K HBM
+- [x] Use `estimate_workspace_bytes()` to predict the corresponding 4K HBM
       budget; do not duplicate the planner memory formula by hand.
-- [ ] Write and commit `prediction.json` before launching the new Q sweep.
+- [x] Write and commit `prediction.json` before launching the new Q sweep.
 
 Required artifact fields:
 
