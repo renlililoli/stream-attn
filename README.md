@@ -105,6 +105,18 @@ bandwidth at 37.284GB/s and resident FA4 throughput at 213.323TFLOP/s before
 launching a new resident-Q sweep. For BF16 MHA this predicts
 `q*=P_FA4/B_P=5,721.6` tokens.
 
+The 37.284GB/s value is not the RTX 5090 PCIe 5.0 x16 limit. The host has only
+two populated memory-channel indices per EPYC socket; under NPS4, the GPU3-local
+NUMA node is supplied by one populated DDR5 channel. An idle-GPU diagnostic
+measured 36.14-36.92GB/s from either single populated node, but 56.76GB/s when
+the same pinned allocation was interleaved across both populated nodes on the
+socket. The frozen `B_P` therefore describes this machine's current
+NUMA-local host-supply roof, including its sparse DIMM population.
+
+<p align="center">
+  <img src="docs/assets/rtx5090-pcie-memory-population-diagnostic.svg" alt="RTX 5090 H2D bandwidth with one populated memory node versus two-node interleaving" width="100%">
+</p>
+
 <p align="center">
   <img src="docs/assets/rtx5090-host-memory-roofline-experiment0.svg" alt="Prospective RTX 5090 host-memory roofline validation" width="100%">
 </p>

@@ -108,6 +108,51 @@ completion event. CUDA-event and host wall timers are different clock domains,
 so sub-millisecond signed differences must not be interpreted as standalone
 copy latency.
 
+## Why H2D Is 37GB/s Instead of 60GB/s
+
+The PCIe endpoint and root port both negotiate PCIe 5.0 x16. After 128b/130b
+encoding, the link carries at most 63.015GB/s before transaction-layer and
+implementation overhead, so protocol overhead alone cannot explain a stable
+37.3GB/s result.
+
+The host-memory topology does explain it. This two-socket EPYC 9754 system has
+256GiB total DRAM. Linux EDAC reports memory only on channel indices 3 and 9 of
+each socket, with 64GiB on each populated channel. With NPS4 enabled, only NUMA
+nodes 1, 3, 5, and 7 have memory; nodes 0, 2, 4, and 6 have zero local memory.
+GPU3 is attached to node5, so the locked NUMA-local allocation is supplied by
+one populated DDR5 channel.
+
+<p align="center">
+  <img src="assets/rtx5090-pcie-memory-population-diagnostic.svg" alt="H2D bandwidth rises from 37GB/s to 56.76GB/s when pinned pages are interleaved across two populated memory nodes" width="100%">
+</p>
+
+The causal check used idle physical GPU2 and the exact runtime payload: two
+back-to-back 56MiB BF16 copies, 10 warmups, and 50 measured samples.
+
+| Pinned-memory policy | Median GB/s | p10 GB/s | p90 GB/s | Interpretation |
+|---|---:|---:|---:|---|
+| `membind=5` | 36.145 | 35.432 | 36.595 | one populated channel |
+| `membind=7` | 36.923 | 36.399 | 37.236 | one populated channel |
+| `interleave=5,7` | 56.760 | 56.756 | 56.764 | two populated channels |
+
+Interleaving the same pinned allocation across the socket's two populated
+memory nodes raises H2D bandwidth by 53.7% and reaches 90.1% of the encoded
+PCIe 5.0 x16 line rate. This rules out an intrinsic 37GB/s RTX 5090 copy-engine
+ceiling. The original 37.284GB/s calibration is a valid measured input for the
+locked single-node experiment, but its correct name is the current machine's
+effective host-supply roof, not the theoretical PCIe roof.
+
+This distinction matters for portability. Fully populating more memory
+channels, or deliberately interleaving pinned pages across channels, increases
+`B_P`, moves the predicted knee to smaller resident Q, and changes the hardware
+profile without changing the SeqAttn kernel.
+
+One GPU3 recheck performed after an unrelated training process started at
+2026-08-24 06:28:45 UTC fell to 27.50GB/s and was rejected as contaminated.
+The `q=4736` run also completed after that start time and is excluded from
+formal observations. The q-sweep remains paused until an uncontended target GPU
+is available.
+
 ## Current Conclusion
 
 The prospective model has passed its first out-of-sample check. The low-Q
@@ -139,6 +184,12 @@ workspace/benchmarks/results/rtx5090_host_memory_roofline_experiment0_20260824/q
 
 Machine-readable report data:
 docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/observations.json
+
+PCIe/memory-population diagnostic summary:
+docs/experiments/rtx5090_host_memory_roofline_experiment0_20260824/pcie_memory_population_diagnostic.json
+
+Raw PCIe/memory-population runs:
+workspace/benchmarks/results/rtx5090_pcie_memory_population_20260824/
 ```
 
 The plot and observation summary are regenerated with

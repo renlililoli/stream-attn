@@ -72,6 +72,43 @@ median of the two per-compute-load medians:
 B_P = 37.2840346 GB/s
 ```
 
+The apparent gap to PCIe 5.0 x16 has now been isolated to host-memory
+population rather than link negotiation or the GPU copy engine:
+
+```text
+CPU:                     2 x AMD EPYC 9754
+memory capacity:         256 GiB total, 128 GiB per socket
+populated channel IDs:   3 and 9 on each socket
+NPS4 memory nodes:       node1, node3, node5, node7
+NPS4 CPU-only nodes:     node0, node2, node4, node6
+GPU3 local memory node:  node5
+```
+
+On idle physical GPU2, using the exact two-copy 112MiB BF16 payload:
+
+| Pinned-memory policy | Median GB/s | p10 GB/s | p90 GB/s |
+|---|---:|---:|---:|
+| `membind=5` | 36.145 | 35.432 | 36.595 |
+| `membind=7` | 36.923 | 36.399 | 37.236 |
+| `interleave=5,7` | 56.760 | 56.756 | 56.764 |
+
+The interleaved result reaches 90.07% of the 63.015GB/s PCIe 5.0 x16 encoded
+line rate. A single DDR5-4800 channel has a 38.4GB/s theoretical payload rate,
+and the measured 36-37GB/s single-node ceiling is consistent with that supply
+limit. Therefore retain 37.284GB/s as the measured model input for the locked
+single-node experiment, but label it `host-supply-limited` rather than a
+generic PCIe 5.0 ceiling.
+
+Raw diagnostic artifacts are under:
+
+```text
+workspace/benchmarks/results/rtx5090_pcie_memory_population_20260824/
+```
+
+The q-sweep is paused while physical GPU3 is shared by an unrelated training
+process that started at 2026-08-24 06:28:45 UTC. The `q=4736` result completed
+after that time and must not be used as an uncontended formal observation.
+
 NUMA sampling during the live pinned allocation reported about 740MiB on node
 5 out of 815MiB total process memory. The remaining node 1/7 pages were mainly
 shared library mappings; the process heap was on node 5.
@@ -218,6 +255,8 @@ for pinned H2D bandwidth in the roofline model.
 - [x] Run at least 10 warmups and 50 measured samples.
 - [x] Report raw bytes, each duration, median, p10, p90, GB/s, and GiB/s.
 - [ ] Optionally measure 2K and 8K payloads as a fixed-latency diagnostic.
+- [x] Explain the 37GB/s ceiling with a single-node versus two-node interleave
+      experiment; the latter reaches 56.760GB/s on the same PCIe 5.0 x16 GPU.
 
 Primary output:
 
