@@ -8,6 +8,14 @@ from .config import (
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
 )
+from .dit import (
+    H3BlockOps,
+    H3ChunkPlan,
+    H3DiTRunner,
+    H3SequenceMeta,
+    H3TileConfig,
+    load_h3_tile_config,
+)
 from .paged import (
     CallbackOutputSink,
     HostMemoryPlan,
@@ -28,7 +36,7 @@ from .paged import (
 )
 from .planner import AttentionPlan, build_plan
 from .projection import ProjectedAttentionRunner, streaming_projected_self_attention
-from .stats import PagedAttentionStats, ProjectedAttentionStats, StreamingAttentionStats
+from .stats import H3DiTStats, PagedAttentionStats, ProjectedAttentionStats, StreamingAttentionStats
 from .storage import (
     NvmeOutputSink,
     NvmeQKVStore,
@@ -40,6 +48,12 @@ from .storage import (
 __all__ = [
     "AttentionPlan",
     "CallbackOutputSink",
+    "H3BlockOps",
+    "H3ChunkPlan",
+    "H3DiTRunner",
+    "H3DiTStats",
+    "H3SequenceMeta",
+    "H3TileConfig",
     "HostMemoryPlan",
     "HostMemorySnapshot",
     "KVLayout",
@@ -68,6 +82,7 @@ __all__ = [
     "TensorLayout",
     "build_plan",
     "ephemeral_nvme_directory",
+    "load_h3_tile_config",
     "load_nvme_output",
     "streaming_attn_func",
     "streaming_attn_varlen_func",

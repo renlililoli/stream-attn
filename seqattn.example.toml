@@ -2,3 +2,9 @@
 # auto uses an SM-aware preference order and falls back when an optional
 # FlashAttention package is not installed.
 backend = "auto"
+
+[minimax_h3]
+# QKV projection and complete MLP tile sizes are independent of the resident-Q
+# and streamed-K/V chunk sizes exposed by the ComfyUI node.
+qkv_tile_tokens = 2048
+mlp_tile_tokens = 2048

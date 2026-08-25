@@ -71,8 +71,9 @@ The block plan has four independent sequence chunk sizes:
 No equality relationship is imposed between these values. In particular,
 `C_mlp` is not inherited from `C_proj` or `Q_attn`.
 
-`Q_attn` is selected from a calibrated roofline critical point, not from a
-fixed activation-workspace sweep. The current RTX 5090 points are:
+`Q_attn` is an explicit runtime input selected from a calibrated roofline
+critical point. It is not inferred from an activation-workspace budget. The
+current RTX 5090 points are:
 
 | Host-memory policy | Measured effective bandwidth | Aligned critical Q |
 |---|---:|---:|
@@ -83,11 +84,26 @@ The measurement and intersection calculations are recorded in
 [`rtx5090_host_memory_roofline_experiment0_2026-08-24.md`](rtx5090_host_memory_roofline_experiment0_2026-08-24.md).
 
 The interleaved value is valid only when that placement is explicitly enabled
-and the effective bandwidth is reproduced. The block workspace is derived
-from the selected Q and all other live buffers. If the derived plan does not
-fit the available device-memory guard, the planner reports `memory_clamped`
-and chooses the largest lower aligned Q that fits; it does not silently turn a
-workspace budget back into the tuning variable.
+and the effective bandwidth is reproduced. The selected Q is authoritative.
+The runtime reports the estimated device allocation and lets allocation fail
+clearly if the explicit chunks do not fit; it does not silently shrink Q or
+turn device memory back into a tuning variable. The reported estimated
+workspace bytes are diagnostic only; there is no H3 workspace-budget input or
+workspace-driven planner mode.
+
+`C_proj` and `C_mlp` are deployment configuration rather than ComfyUI workflow
+parameters. They are read from the shared SeqAttn TOML file selected by
+`SEQATTN_CONFIG`, or from `~/.config/seqattn/config.toml` by default:
+
+```toml
+[minimax_h3]
+qkv_tile_tokens = 2048
+mlp_tile_tokens = 2048
+```
+
+The ComfyUI node exposes only `Q_attn` and `K_attn`. This keeps hardware
+roofline selection explicit while allowing QKV and MLP tile calibration to be
+deployed without rewriting workflows.
 
 `C_mlp` must be calibrated with the real ComfyUI INT8 ConvRot FC1 and FC2 path.
 The minimum production sweep is `256, 512, 1024, 2048, 4096` tokens. The
@@ -269,7 +285,6 @@ H3ChunkPlan
     kv_chunk_tokens
     mlp_chunk_tokens
     estimated_workspace_bytes
-    memory_clamped
 
 H3SequenceMeta
     position_ids_gpu
@@ -316,10 +331,115 @@ At `N=157249`, `H=5376`, and BF16, one hidden direction is approximately
 logical PCIe traffic per block, or 157.46 GiB across 50 blocks in one denoise
 step.
 
-Q/K/V host storage and repeated K/V scans remain necessary for this exact
-dense-attention design. Retaining one producer-generated Q range on GPU can
-remove one Q D2H/H2D pair, but it complicates producer/Q alignment and output
-ordering. It is a V1.1 optimization and is disabled in the baseline design.
+The V1 baseline deliberately retains Q/K/V host storage and repeated K/V
+scans. Retaining one producer-generated Q range on GPU can remove one Q
+D2H/H2D pair, but it complicates producer/Q alignment and output ordering. It
+is a V1.1 optimization and is disabled in the baseline design.
+
+## Deferred host-memory-minimal QKV recomputation
+
+Exact dense attention does not fundamentally require materialized host Q/K/V.
+A more aggressive capacity mode can retain only CPU-backed block input and
+output hidden states, then recompute Q and K/V from the input hidden state as
+the attention sweep needs them. This is an inference-time recomputation mode,
+not an approximate attention algorithm.
+
+For source and destination pinned hidden tensors, the dataflow would be:
+
+```text
+src_hidden_host [N, H]                    read-only for the complete block
+dst_hidden_host [N, H]                    final block output
+
+for each resident query range [q0, q1):
+    Q = project_Q(src_hidden_host[q0:q1])
+    initialize online-softmax state
+
+    for each K/V range [k0, k1):
+        hidden_tile = H2D(src_hidden_host[k0:k1])
+        K, V = project_KV(hidden_tile)
+        update exact attention state directly from device K/V
+
+    finalize attention
+    run OutProj, attention epilogue, MLP, and MLP epilogue
+    D2H the final range into dst_hidden_host[q0:q1]
+
+swap(src_hidden_host, dst_hidden_host) after the complete block
+```
+
+The source hidden tensor cannot be overwritten as query ranges finish. Every
+later query range still needs the original block input to regenerate K/V for
+all token ranges. Writing an early `X2` range over `X0` would make later K/V
+projections read a mixture of block input and block output. Therefore the
+practical minimum is two hidden tensors, not one in-place hidden tensor. Using
+one physical hidden allocation would require an additional full-output backing
+store such as NVMe and would only move, not remove, that storage requirement.
+
+Let `A = heads * head_dim` be the attention width. Ignoring small metadata and
+bounded device tiles, the V1 materialized path requires approximately:
+
+```text
+M_materialized = N * (H + 3A) * s
+```
+
+The recomputation path requires approximately:
+
+```text
+M_recompute = N * (2H) * s
+```
+
+For MiniMax-H3, `H=5376`, `A=7168`, and BF16. The host-activation comparison
+is:
+
+| Tokens | hidden plus Q/K/V | two hidden tensors | Reduction |
+|---:|---:|---:|---:|
+| `61,312` | 3.07 GiB | 1.23 GiB | 1.84 GiB |
+| `157,249` | 7.87 GiB | 3.15 GiB | 4.72 GiB |
+| `262,720` | 13.15 GiB | 5.26 GiB | 7.89 GiB |
+| `400,000` | 20.03 GiB | 8.01 GiB | 12.02 GiB |
+
+These values exclude model weights, framework state, metadata, and bounded
+projection and attention workspaces. The reduction is nevertheless large
+enough to make recomputation a plausible capacity mode for host-memory-limited
+262K-token and larger workloads.
+
+The cost is repeated projection. If `R = ceil(N / Q_attn)`, each resident-Q
+range scans the complete source hidden state and repeats Norm1, modulation,
+quantized projection, K normalization, and RoPE. With the current fused INT8
+ConvRot QKV operator, collecting Q separately may also compute and discard K/V,
+while each K/V scan computes and discards Q. A future Q-only/KV-only packed
+operator could reduce this redundant arithmetic, but it is not assumed by this
+design.
+
+The recomputation mode would also use a different Q planning objective. The V1
+materialized path selects the smallest Q at or above the measured roofline
+knee, subject to memory constraints. Recomputation cost grows with the number
+of Q ranges, so its planner would instead favor the largest resident Q that
+fits the complete block workspace. A mode requiring dozens of full hidden
+projection scans is not an acceptable default latency path.
+
+Immediate attention-to-MLP consumption additionally requires QKV, OutProj,
+FC1, and FC2 weights to remain available across the query sweep. If those
+weight groups cannot coexist under the device-memory guard, the alternatives
+are repeated weight preparation or a two-phase path that materializes the
+post-attention hidden tensor. Both weaken the latency benefit and must be
+measured explicitly.
+
+This recomputation mode is deferred. The V1 implementation order is:
+
+1. Implement the materialized-QKV block runner specified in the preceding
+   sections.
+2. Join attention finalize, OutProj, both residual epilogues, and the complete
+   SwiGLU MLP so only final `X2` returns to host.
+3. Validate correctness, stream lifetimes, weight leases, the four independent
+   chunk axes, and the `1.20x` latency acceptance target.
+4. Evaluate QKV recomputation as a separate capacity experiment only after the
+   baseline fused block runner is complete and measured.
+
+The initial `H3DiTRunner` therefore materializes pinned Q/K/V and retains the
+single-hidden in-place contract. It must not delay or complicate the baseline
+implementation to support recomputation. A later extension may introduce
+explicit `materialized`, `kv_only`, and `recompute` storage policies after the
+required projection and weight-residency measurements exist.
 
 ## Correctness and fallback rules
 
@@ -331,8 +451,9 @@ ordering. It is a V1.1 optimization and is disabled in the baseline design.
 - Unsupported training state, custom DiT patches, leaf output shapes, dtypes,
   or quantization formats cause a whole-block or whole-stack native fallback;
   the runtime does not execute a partially compatible graph.
-- A memory-clamped Q plan is reported in statistics so performance results do
-  not accidentally compare different roofline policies as if they were equal.
+- Performance records include all four explicit chunk sizes so results do not
+  accidentally compare different roofline or tile policies as if they were
+  equal.
 
 ## Experiment and acceptance plan
 
@@ -364,3 +485,26 @@ The release acceptance target is median streaming DiT time no greater than
 `1.20x` native on a sequence for which native completes. The follow-up target
 is `1.15x`. Large sequences where native OOMs remain capacity tests and are not
 used as the primary latency ratio.
+
+## Initial implementation validation
+
+The first materialized-QKV fused-block validation was run on 2026-08-25 with
+the real MiniMax-H3 INT8 ConvRot checkpoint in
+`diffsynth:cu128-roofline-fa4-20260824`. The process used physical RTX 5090
+GPU 3, CPU node 5, and explicit host-memory interleave across NUMA nodes 5 and
+7. Both paths used `Q_attn=3840`, `K_attn=4096`, `C_proj=2048`, and
+`C_mlp=2048`; the old path was instrumented to reject the run unless its
+effective attention plan also reported `Q_attn=3840`.
+
+For a warmed one-real-block packed input, with two warmups and five measured
+forwards, the old split attention/MLP path had a median latency of `170.48 ms`.
+The fused block runner had a median latency of `165.38 ms`, about 3.0% faster.
+Explicit pinned hidden allocation per forward fell from `167,215,104` bytes to
+`83,607,552` bytes. Materialized Q/K/V host storage remained `334,430,208`
+bytes, as required by the V1 design. Peak PyTorch device allocation increased
+from `1,912,821,248` bytes to `1,956,206,080` bytes because the fused runner
+keeps bounded MLP carry and final-output slots on device.
+
+This focused result validates the no-regression target and the intended hidden
+memory reduction for the fused block itself. It does not replace the release
+requirement for repeated complete 50-block DiT measurements.

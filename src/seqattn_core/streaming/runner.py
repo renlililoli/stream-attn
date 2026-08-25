@@ -83,6 +83,15 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         if self.config.pin_output and not out.is_pinned():
             raise ValueError("asynchronous D2H requires a pinned out tensor")
 
+    def _prepare_triton_inputs(
+        self,
+        q_cpu: torch.Tensor,
+        k_cpu: torch.Tensor,
+        v_cpu: torch.Tensor,
+    ) -> None:
+        if self.config.require_pinned:
+            require_pinned_inputs(q_cpu, k_cpu, v_cpu)
+
     def _prepare_stats(
         self,
         stats: StreamingAttentionStats | None,
@@ -225,6 +234,46 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         )
         stats.wall_seconds += time.perf_counter() - started
         return result
+
+    @torch.inference_mode()
+    def run_with_device_consumer(
+        self,
+        q_cpu: torch.Tensor,
+        k_cpu: torch.Tensor,
+        v_cpu: torch.Tensor,
+        cu_seqlens_q: torch.Tensor,
+        cu_seqlens_k: torch.Tensor,
+        *,
+        output_consumer,
+        softmax_scale: float | None = None,
+        causal: bool = False,
+        stats: StreamingAttentionStats | None = None,
+    ) -> None:
+        """Pass finalized GPU query ranges to a consumer that owns final D2H."""
+
+        if self.backend != "triton":
+            raise ValueError("device output consumers require the Triton backend")
+        q_bounds, k_bounds = self._validate_inputs(
+            q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k
+        )
+        self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
+
+        scale = self.plan.head_dim**-0.5 if softmax_scale is None else float(softmax_scale)
+        stats = self._prepare_stats(stats)
+        started = time.perf_counter()
+        self._run_triton(
+            q_cpu,
+            k_cpu,
+            v_cpu,
+            q_bounds,
+            k_bounds,
+            scale,
+            causal,
+            None,
+            stats,
+            output_consumer=output_consumer,
+        )
+        stats.wall_seconds += time.perf_counter() - started
 
 
 __all__ = ["StreamingAttentionRunner"]

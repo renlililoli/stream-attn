@@ -24,10 +24,15 @@ class TritonExecutorMixin:
         k_bounds: list[int],
         scale: float,
         causal: bool,
-        out_cpu: torch.Tensor,
+        out_cpu: torch.Tensor | None,
         stats: StreamingAttentionStats,
         output_transform: Callable[[torch.Tensor, int, int], torch.Tensor] | None = None,
-    ) -> torch.Tensor:
+        output_consumer=None,
+    ) -> torch.Tensor | None:
+        if output_transform is not None and output_consumer is not None:
+            raise ValueError("output_transform and output_consumer are mutually exclusive")
+        if output_consumer is None and out_cpu is None:
+            raise ValueError("out_cpu is required without an output_consumer")
         workspace = self._workspace
         assert workspace is not None
         plan = self.plan
@@ -48,7 +53,8 @@ class TritonExecutorMixin:
                     q_local_offset = q_tile_start - q_start
                     output_index = q_chunk_index % plan.num_output_buffers
                     reuse_q_for_output = (
-                        output_transform is not None and plan.output_mode == "device_consumer"
+                        (output_transform is not None or output_consumer is not None)
+                        and plan.output_mode == "device_consumer"
                     )
 
                     with self._range("seqattn:q_h2d"), torch.cuda.stream(workspace.h2d_stream):
@@ -127,7 +133,8 @@ class TritonExecutorMixin:
                             workspace.q_free.record(compute_stream)
                             workspace.q_has_pending_compute = True
                         if (
-                            not reuse_q_for_output
+                            output_consumer is None
+                            and not reuse_q_for_output
                             and workspace.output_has_pending_copy[output_index]
                         ):
                             compute_stream.wait_event(workspace.output_free[output_index])
@@ -143,7 +150,17 @@ class TritonExecutorMixin:
                             )
                         output_gpu = finalize_output[:q_tokens]
                         output_aliases_q = reuse_q_for_output
-                        if output_transform is not None:
+                        if output_consumer is not None:
+                            with self._range("seqattn:device_output_consumer"):
+                                output_consumer(
+                                    output_gpu.reshape(q_tokens, -1),
+                                    q_tile_start,
+                                    q_tile_stop,
+                                )
+                            workspace.q_free.record(compute_stream)
+                            workspace.q_has_pending_compute = True
+                        elif output_transform is not None:
+                            assert out_cpu is not None
                             with self._range("seqattn:device_output_transform"):
                                 output_gpu = output_transform(
                                     output_gpu.reshape(q_tokens, -1),
@@ -171,22 +188,33 @@ class TritonExecutorMixin:
                             if reuse_q_for_output and not output_aliases_q:
                                 workspace.q_free.record(compute_stream)
                                 workspace.q_has_pending_compute = True
-                        workspace.output_ready[output_index].record(compute_stream)
-                    with self._range("seqattn:output_d2h"), torch.cuda.stream(workspace.d2h_stream):
-                        workspace.d2h_stream.wait_event(workspace.output_ready[output_index])
-                        out_cpu[q_tile_start:q_tile_stop].copy_(
-                            output_gpu, non_blocking=out_cpu.is_pinned()
-                        )
-                        output_gpu.record_stream(workspace.d2h_stream)
-                        workspace.output_free[output_index].record(workspace.d2h_stream)
-                        if reuse_q_for_output and output_aliases_q:
-                            workspace.q_free.record(workspace.d2h_stream)
-                            workspace.q_has_pending_compute = True
-                    workspace.output_has_pending_copy[output_index] = True
-                    stats.d2h_bytes += output_gpu.numel() * output_gpu.element_size()
+                        if output_consumer is None:
+                            workspace.output_ready[output_index].record(compute_stream)
+                    if output_consumer is None:
+                        assert out_cpu is not None
+                        with self._range("seqattn:output_d2h"), torch.cuda.stream(
+                            workspace.d2h_stream
+                        ):
+                            workspace.d2h_stream.wait_event(workspace.output_ready[output_index])
+                            out_cpu[q_tile_start:q_tile_stop].copy_(
+                                output_gpu, non_blocking=out_cpu.is_pinned()
+                            )
+                            output_gpu.record_stream(workspace.d2h_stream)
+                            workspace.output_free[output_index].record(workspace.d2h_stream)
+                            if reuse_q_for_output and output_aliases_q:
+                                workspace.q_free.record(workspace.d2h_stream)
+                                workspace.q_has_pending_compute = True
+                        workspace.output_has_pending_copy[output_index] = True
+                        stats.d2h_bytes += output_gpu.numel() * output_gpu.element_size()
                     q_chunk_index += 1
+            if output_consumer is not None:
+                with torch.cuda.stream(compute_stream):
+                    output_consumer.finish()
             workspace.pipeline_end.record(compute_stream)
-            workspace.d2h_stream.synchronize()
+            if output_consumer is None:
+                workspace.d2h_stream.synchronize()
+            else:
+                output_consumer.synchronize()
             workspace.pipeline_end.synchronize()
             stats.compute_pipeline_seconds += (
                 workspace.pipeline_start.elapsed_time(workspace.pipeline_end) / 1000.0
