@@ -203,6 +203,12 @@ Q/K normalization, and rotary embedding while the attention core remains
 Triton.  The caller is responsible for keeping projection weights resident for
 the duration of each phase.
 
+The planned MiniMax-H3 ComfyUI block runner extends this producer/consumer
+boundary through output projection and the complete SwiGLU MLP, with independent
+projection, resident-Q, streamed-K/V, and MLP chunk axes. Its ownership model,
+buffer schedule, weight leases, and acceptance protocol are specified in
+[`minimax_h3_comfyui_dit_block_pipeline.md`](minimax_h3_comfyui_dit_block_pipeline.md).
+
 ## Planned follow-ups
 
 - Shape-specific autotuning cache for block sizes, warps, stages, and K/V ring

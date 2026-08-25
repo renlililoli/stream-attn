@@ -546,3 +546,10 @@ GEMM saturation determines the practical chunk. Chunks larger than the
 saturation point should be justified by measured end-to-end improvement,
 because their main effect is to consume activation memory that could otherwise
 increase the attention resident-Q set.
+
+In the complete ComfyUI DiT block pipeline, the selected MLP chunk remains
+independent of the QKV projection, resident-Q, and streamed-K/V chunk sizes.
+The device-side rechunker that joins finalized attention output directly to
+the MLP, including the bounded carry for MLP ranges that cross a Q boundary,
+is specified in
+[`minimax_h3_comfyui_dit_block_pipeline.md`](minimax_h3_comfyui_dit_block_pipeline.md).
