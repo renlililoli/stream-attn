@@ -12,6 +12,12 @@ compatibility facade is not shipped.
 SeqAttn is integrated into ComfyUI through
 [MiniMax H3 SeqAttn for ComfyUI](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
 
+SeqAttn is under active development. Interfaces, performance characteristics,
+and supported integrations may continue to change. If you encounter incorrect
+results, crashes, installation failures, or hardware-specific regressions,
+please open a [GitHub issue](https://github.com/renlililoli/stream-attn/issues)
+with the GPU, software versions, configuration, and a minimal reproduction.
+
 ## Latest validation: 2026-08-24
 
 The figures below are regenerated directly from the final machine-readable
@@ -196,6 +202,19 @@ Passing a reusable pinned output buffer avoids host-allocation jitter in short
 or repeated calls. `workspace_budget_bytes` covers only operator-owned CUDA
 buffers; callers must reserve separate memory for the CUDA context, weights,
 and other activations.
+
+## Choosing chunk sizes
+
+`q_chunk_tokens` should be selected from the measured intersection of the
+concurrent pinned-host H2D roof and the effective resident attention compute
+roof. It should not be copied from another machine or derived from theoretical
+PCIe bandwidth or advertised GPU peak TFLOPS. Keep `kv_chunk_tokens=4096` for
+the initial calibration; projection and MLP tiles are secondary integration
+parameters that should be tuned only after the attention roofline is fixed.
+
+See [the chunk-size calibration guide](docs/q_chunk_calibration.md) for the
+formula, bandwidth and resident-backend commands, Q sweep procedure, NUMA
+considerations, memory checks, and the validated RTX 5090 examples.
 
 ## Core APIs
 
