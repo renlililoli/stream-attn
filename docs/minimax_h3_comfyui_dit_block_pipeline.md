@@ -97,8 +97,8 @@ parameters. They are read from the shared SeqAttn TOML file selected by
 
 ```toml
 [minimax_h3]
-qkv_tile_tokens = 2048
-mlp_tile_tokens = 2048
+qkv_tile_tokens = 4096
+mlp_tile_tokens = 4096
 ```
 
 The ComfyUI node exposes only `Q_attn` and `K_attn`. This keeps hardware

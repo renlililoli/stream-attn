@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seqattn-core"
-version = "0.3.0a2"
+version = "0.3.0a3"
 description = "Core paged exact-attention runtime with bounded HBM and host-memory working sets"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,7 @@ classifiers = [
 
 [project.optional-dependencies]
 cuda = ["triton>=3.1"]
+dit = ["triton>=3.1"]
 dev = ["pytest>=8", "ruff>=0.9"]
 
 [tool.setuptools.packages.find]

@@ -116,6 +116,16 @@ policy and adapter contracts.
 pip install -e '.[cuda]'
 ```
 
+MiniMax-H3 DiT integrations should request the dedicated extra:
+
+```bash
+pip install -e '.[dit]'
+```
+
+Both extras install the Triton runtime. The `dit` name declares that the
+consumer uses the public H3 block API rather than depending only on the generic
+attention surface.
+
 The supported platform is Linux with Python 3.10+, PyTorch 2.5+, CUDA, and
 Triton 3.1+. FlashAttention packages are optional and selected only when the
 requested backend and GPU architecture are compatible.

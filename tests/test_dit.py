@@ -54,6 +54,15 @@ def test_h3_tile_config_from_toml(tmp_path):
         load_h3_tile_config(path)
 
 
+def test_h3_tile_config_defaults_to_tuned_block_tiles(tmp_path, monkeypatch):
+    monkeypatch.delenv("SEQATTN_CONFIG", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert load_h3_tile_config() == H3TileConfig(
+        qkv_tile_tokens=4096,
+        mlp_tile_tokens=4096,
+    )
+
+
 def _segmented_attention(q, k, v, bounds, scale):
     output = torch.empty_like(q)
     for start, stop in pairwise(bounds):

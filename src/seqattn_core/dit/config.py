@@ -12,8 +12,8 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 @dataclass(frozen=True)
 class H3TileConfig:
-    qkv_tile_tokens: int = 2048
-    mlp_tile_tokens: int = 2048
+    qkv_tile_tokens: int = 4096
+    mlp_tile_tokens: int = 4096
 
     def validate(self) -> None:
         for name, value in (
@@ -50,8 +50,8 @@ def load_h3_tile_config(path: str | os.PathLike[str] | None = None) -> H3TileCon
         raise TypeError("seqattn config [minimax_h3] must be a TOML table")
 
     config = H3TileConfig(
-        qkv_tile_tokens=section.get("qkv_tile_tokens", 2048),
-        mlp_tile_tokens=section.get("mlp_tile_tokens", 2048),
+        qkv_tile_tokens=section.get("qkv_tile_tokens", 4096),
+        mlp_tile_tokens=section.get("mlp_tile_tokens", 4096),
     )
     config.validate()
     return config

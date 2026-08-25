@@ -6,5 +6,5 @@ backend = "auto"
 [minimax_h3]
 # QKV projection and complete MLP tile sizes are independent of the resident-Q
 # and streamed-K/V chunk sizes exposed by the ComfyUI node.
-qkv_tile_tokens = 2048
-mlp_tile_tokens = 2048
+qkv_tile_tokens = 4096
+mlp_tile_tokens = 4096
