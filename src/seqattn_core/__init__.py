@@ -14,6 +14,7 @@ from .dit import (
     H3DiTRunner,
     H3SequenceMeta,
     H3TileConfig,
+    MultiGpuH3DiTRunner,
     load_h3_tile_config,
 )
 from .paged import (
@@ -36,7 +37,14 @@ from .paged import (
 )
 from .planner import AttentionPlan, build_plan
 from .projection import ProjectedAttentionRunner, streaming_projected_self_attention
-from .stats import H3DiTStats, PagedAttentionStats, ProjectedAttentionStats, StreamingAttentionStats
+from .stats import (
+    H3DiTStats,
+    MultiGpuAttentionStats,
+    MultiGpuH3DiTStats,
+    PagedAttentionStats,
+    ProjectedAttentionStats,
+    StreamingAttentionStats,
+)
 from .storage import (
     NvmeOutputSink,
     NvmeQKVStore,
@@ -44,10 +52,20 @@ from .storage import (
     ephemeral_nvme_directory,
     load_nvme_output,
 )
+from .streaming import (
+    DeviceQuerySchedule,
+    MultiGpuAttentionPlan,
+    MultiGpuDeviceSpec,
+    MultiGpuStreamingAttentionRunner,
+    QueryTask,
+    build_multi_gpu_plan,
+    build_query_tasks,
+)
 
 __all__ = [
     "AttentionPlan",
     "CallbackOutputSink",
+    "DeviceQuerySchedule",
     "H3BlockOps",
     "H3ChunkPlan",
     "H3DiTRunner",
@@ -59,6 +77,12 @@ __all__ = [
     "KVLayout",
     "MemoryPageSink",
     "MemoryPageSource",
+    "MultiGpuAttentionPlan",
+    "MultiGpuAttentionStats",
+    "MultiGpuDeviceSpec",
+    "MultiGpuH3DiTRunner",
+    "MultiGpuH3DiTStats",
+    "MultiGpuStreamingAttentionRunner",
     "NvmeOutputSink",
     "NvmeQKVStore",
     "NvmeQKVWriter",
@@ -71,6 +95,7 @@ __all__ = [
     "ProjectedAttentionRunner",
     "ProjectedAttentionStats",
     "ProjectionPipelineConfig",
+    "QueryTask",
     "SimulatedIoDelay",
     "SimulatedNvmeConfig",
     "SimulatedNvmeDevice",
@@ -80,7 +105,9 @@ __all__ = [
     "StreamingAttentionRunner",
     "StreamingAttentionStats",
     "TensorLayout",
+    "build_multi_gpu_plan",
     "build_plan",
+    "build_query_tasks",
     "ephemeral_nvme_directory",
     "load_h3_tile_config",
     "load_nvme_output",

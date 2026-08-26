@@ -84,13 +84,30 @@ def estimate_h3_aux_workspace_bytes(
         if value <= 0:
             raise ValueError(f"{name} must be positive")
     element_size = torch.empty((), dtype=dtype).element_size()
-    projection = (
-        num_projection_buffers * projection_chunk_tokens * hidden_features * element_size
+    projection = num_projection_buffers * projection_chunk_tokens * hidden_features * element_size
+    return projection + estimate_h3_consumer_workspace_bytes(
+        hidden_features=hidden_features,
+        dtype=dtype,
+        mlp_chunk_tokens=mlp_chunk_tokens,
+        num_final_output_buffers=num_final_output_buffers,
     )
-    consumer = (
-        (1 + num_final_output_buffers) * mlp_chunk_tokens * hidden_features * element_size
-    )
-    return projection + consumer
+
+
+def estimate_h3_consumer_workspace_bytes(
+    *,
+    hidden_features: int,
+    dtype: torch.dtype,
+    mlp_chunk_tokens: int,
+    num_final_output_buffers: int = 2,
+) -> int:
+    if hidden_features <= 0:
+        raise ValueError("hidden_features must be positive")
+    if mlp_chunk_tokens <= 0:
+        raise ValueError("mlp_chunk_tokens must be positive")
+    if num_final_output_buffers <= 0:
+        raise ValueError("num_final_output_buffers must be positive")
+    element_size = torch.empty((), dtype=dtype).element_size()
+    return (1 + num_final_output_buffers) * mlp_chunk_tokens * hidden_features * element_size
 
 
 __all__ = [
@@ -100,4 +117,5 @@ __all__ = [
     "H3SequenceMeta",
     "LeaseFactory",
     "estimate_h3_aux_workspace_bytes",
+    "estimate_h3_consumer_workspace_bytes",
 ]

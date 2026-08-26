@@ -25,13 +25,18 @@ class H3DeviceOutputConsumer:
         hidden_host: torch.Tensor,
         ops: H3BlockOps,
         stats: H3DiTStats,
+        range_start: int = 0,
+        range_stop: int | None = None,
     ) -> None:
+        range_stop = hidden_host.shape[0] if range_stop is None else range_stop
+        if not 0 <= range_start < range_stop <= hidden_host.shape[0]:
+            raise ValueError("consumer range must be a non-empty hidden_host slice")
         self.hidden_host = hidden_host
         self.ops = ops
         self.stats = stats
-        self.total_tokens = hidden_host.shape[0]
-        self.next_token = 0
-        self.carry_start = 0
+        self.total_tokens = range_stop
+        self.next_token = range_start
+        self.carry_start = range_start
         self.carry_tokens = 0
         self.output_index = 0
 
@@ -78,7 +83,9 @@ class H3DeviceOutputConsumer:
         workspace.output_pending[slot_index] = True
         self.output_index += 1
         self.stats.mlp_chunks += 1
-        self.stats.final_hidden_d2h_bytes += tokens * workspace.hidden_features * tile.element_size()
+        self.stats.final_hidden_d2h_bytes += (
+            tokens * workspace.hidden_features * tile.element_size()
+        )
 
     def __call__(self, attention: torch.Tensor, start: int, stop: int) -> None:
         assert self.ops is not None

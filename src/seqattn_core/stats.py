@@ -22,6 +22,20 @@ class StreamingAttentionStats:
 
 
 @dataclass
+class MultiGpuAttentionStats:
+    wall_seconds: float = 0.0
+    per_device: dict[str, StreamingAttentionStats] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "wall_seconds": self.wall_seconds,
+            "per_device": {
+                device: device_stats.as_dict() for device, device_stats in self.per_device.items()
+            },
+        }
+
+
+@dataclass
 class ProjectedAttentionStats:
     backend: str = ""
     wall_seconds: float = 0.0
@@ -36,12 +50,8 @@ class ProjectedAttentionStats:
 
     def as_dict(self) -> dict[str, object]:
         result = asdict(self)
-        result["total_h2d_bytes"] = (
-            self.projection_hidden_h2d_bytes + self.attention.h2d_bytes
-        )
-        result["total_d2h_bytes"] = (
-            self.projection_qkv_d2h_bytes + self.attention.d2h_bytes
-        )
+        result["total_h2d_bytes"] = self.projection_hidden_h2d_bytes + self.attention.h2d_bytes
+        result["total_d2h_bytes"] = self.projection_qkv_d2h_bytes + self.attention.d2h_bytes
         return result
 
 
@@ -57,6 +67,22 @@ class H3DiTStats:
     qkv_host_bytes_peak: int = 0
     estimated_workspace_bytes: int = 0
     projection: ProjectedAttentionStats = field(default_factory=ProjectedAttentionStats)
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass
+class MultiGpuH3DiTStats:
+    wall_seconds: float = 0.0
+    blocks: int = 0
+    final_hidden_d2h_bytes: int = 0
+    post_attention_roundtrip_bytes_avoided: int = 0
+    qkv_host_bytes_peak: int = 0
+    per_device_estimated_workspace_bytes: dict[str, int] = field(default_factory=dict)
+    projection: ProjectedAttentionStats = field(default_factory=ProjectedAttentionStats)
+    attention: MultiGpuAttentionStats = field(default_factory=MultiGpuAttentionStats)
+    per_device: dict[str, H3DiTStats] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
