@@ -18,8 +18,8 @@ from seqattn_core import (
     SimulatedPageSource,
     StreamingAttentionConfig,
 )
-from seqattn_core.reference import streaming_attention_reference
 from seqattn_core.paged.simulation import _BandwidthTimeline
+from seqattn_core.reference import streaming_attention_reference
 
 
 def test_aggregate_bandwidth_timeline_is_deterministic():

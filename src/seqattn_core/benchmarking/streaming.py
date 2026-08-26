@@ -35,10 +35,7 @@ def output_signature(output: torch.Tensor) -> dict[str, list[float]]:
             output.shape[0] - 1,
         }
     )
-    return {
-        str(index): output[index, 0, :8].float().tolist()
-        for index in indices
-    }
+    return {str(index): output[index, 0, :8].float().tolist() for index in indices}
 
 
 def full_gpu_attention(mode, q_cpu, k_cpu, v_cpu, cu, causal, scale, out_cpu):
@@ -134,9 +131,7 @@ def main() -> None:
         result["memory_policy"] = configure_allocator(args.target_vram_mib, args.safety_mib)
         dtype = getattr(torch, args.dtype)
         preparation_started = time.perf_counter()
-        with ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="seqattn-prepare"
-        ) as pool:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="seqattn-prepare") as pool:
             inputs = pool.submit(
                 make_host_tensors_parallel,
                 (
@@ -191,8 +186,7 @@ def main() -> None:
                 "q_chunk_tokens": plan.q_chunk_tokens,
                 "q_chunk_requested_tokens": args.q_chunk,
                 "q_passes": math.ceil(args.tokens / plan.q_chunk_tokens),
-                "q_effective_tokens": args.tokens
-                / math.ceil(args.tokens / plan.q_chunk_tokens),
+                "q_effective_tokens": args.tokens / math.ceil(args.tokens / plan.q_chunk_tokens),
                 "kv_chunk_tokens": plan.kv_chunk_tokens,
                 "block_m": plan.block_m,
                 "block_n": plan.block_n,

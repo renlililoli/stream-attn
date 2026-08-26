@@ -39,9 +39,7 @@ def main() -> None:
 
     prediction = json.loads(args.prediction.read_text(encoding="ascii"))
     p_fa4 = prediction["calibration_inputs"]["fa4"]["p_fa4_tflops"]
-    b_gbps = prediction["calibration_inputs"]["concurrent_h2d"][
-        "b_concurrent_gbps"
-    ]
+    b_gbps = prediction["calibration_inputs"]["concurrent_h2d"]["b_concurrent_gbps"]
     q_star = prediction["prediction"]["q_star_predicted"]
     q_95 = prediction["prediction"]["q_95_predicted"]
 
@@ -72,8 +70,7 @@ def main() -> None:
                 "pipeline_tflops_p90": percentile(pipeline_tflops, 0.90),
                 "wall_tflops_median": statistics.median(wall_tflops),
                 "predicted_tflops": predicted_tflops,
-                "observed_over_predicted": statistics.median(pipeline_tflops)
-                / predicted_tflops,
+                "observed_over_predicted": statistics.median(pipeline_tflops) / predicted_tflops,
                 "observed_over_fa4": statistics.median(pipeline_tflops) / p_fa4,
                 "normalized_q": q_effective / q_star,
                 "source_paths": [str(item["_path"]) for item in payloads],
@@ -108,9 +105,13 @@ def main() -> None:
     q_curve = list(range(1, q_max + 256, 128))
     roof_curve = [min(b_gbps * q / 1000.0, p_fa4) for q in q_curve]
     absolute.plot(q_curve, roof_curve, color="#1f6f5f", linewidth=2.2, label="Predicted roofline")
-    absolute.axhline(p_fa4, color="#b54708", linestyle="--", linewidth=1.6, label="Resident FA4 roof")
+    absolute.axhline(
+        p_fa4, color="#b54708", linestyle="--", linewidth=1.6, label="Resident FA4 roof"
+    )
     absolute.axvline(q_star, color="#6b7280", linestyle=":", linewidth=1.4, label="Predicted q*")
-    absolute.axvline(q_95, color="#6b7280", linestyle="--", linewidth=1.0, alpha=0.75, label="Predicted 95% q")
+    absolute.axvline(
+        q_95, color="#6b7280", linestyle="--", linewidth=1.0, alpha=0.75, label="Predicted 95% q"
+    )
     absolute.scatter(
         [row["q_effective_tokens"] for row in rows],
         [row["pipeline_tflops_median"] for row in rows],
@@ -152,7 +153,7 @@ def main() -> None:
     absolute.grid(True, color="#d1d5db", linewidth=0.6, alpha=0.7)
     absolute.legend(loc="lower right")
 
-    x_curve = [index / 200 for index in range(0, 401)]
+    x_curve = [index / 200 for index in range(401)]
     normalized.plot(
         x_curve,
         [min(x, 1.0) for x in x_curve],

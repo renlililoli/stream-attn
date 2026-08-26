@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from itertools import pairwise
+
 import torch
 
 
@@ -31,7 +33,7 @@ def validate_host_qkv(
         result = cu.to(dtype=torch.int64).tolist()
         if result[0] != 0 or result[-1] != total:
             raise ValueError(f"{name} must span [0, {total}], got {result}")
-        if any(stop < start for start, stop in zip(result[:-1], result[1:])):
+        if any(stop < start for start, stop in pairwise(result)):
             raise ValueError(f"{name} must be non-decreasing")
         return result
 
@@ -39,9 +41,7 @@ def validate_host_qkv(
     k_bounds = bounds("cu_seqlens_k", cu_seqlens_k, k.shape[0])
     if len(q_bounds) != len(k_bounds):
         raise ValueError("cu_seqlens_q and cu_seqlens_k must describe the same batch size")
-    for index, ((qs, qe), (ks, ke)) in enumerate(
-        zip(zip(q_bounds[:-1], q_bounds[1:]), zip(k_bounds[:-1], k_bounds[1:]))
-    ):
+    for index, ((qs, qe), (ks, ke)) in enumerate(zip(pairwise(q_bounds), pairwise(k_bounds))):
         if qe > qs and ke == ks:
             raise ValueError(f"sequence {index} has queries but no keys")
     return q_bounds, k_bounds

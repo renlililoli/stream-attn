@@ -2,8 +2,8 @@ import pytest
 import torch
 
 from seqattn_core import StreamingAttentionConfig, build_plan
-from seqattn_core.planner import estimate_workspace_bytes
 from seqattn_core.kernels import profiles as kernel_profiles
+from seqattn_core.planner import estimate_workspace_bytes
 
 
 def test_planner_uses_largest_query_chunk_that_fits_budget():

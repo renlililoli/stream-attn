@@ -67,10 +67,7 @@ def _signature(output: torch.Tensor) -> dict[str, list[float]]:
             output.shape[1] - 1,
         }
     )
-    return {
-        str(index): output[0, index, 0, :8].float().cpu().tolist()
-        for index in indices
-    }
+    return {str(index): output[0, index, 0, :8].float().cpu().tolist() for index in indices}
 
 
 def main() -> None:
@@ -199,7 +196,9 @@ def main() -> None:
         if output is None:
             raise RuntimeError("attention backend did not return an output tensor")
         output_signature = _signature(output)
-        if not all(math.isfinite(value) for values in output_signature.values() for value in values):
+        if not all(
+            math.isfinite(value) for values in output_signature.values() for value in values
+        ):
             raise FloatingPointError("attention output contains NaN or Inf")
         mean_seconds = sum(durations) / len(durations)
         flop = 4 * args.q_heads * args.head_dim * args.tokens * args.tokens

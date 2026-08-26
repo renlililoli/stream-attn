@@ -31,7 +31,7 @@ def _normalize_result(
         raise RuntimeError(f"{backend} did not return output and FP32 LSE")
     returned_output, lse = result[:2]
     if not isinstance(returned_output, torch.Tensor) or not isinstance(lse, torch.Tensor):
-        raise RuntimeError(f"{backend} returned an invalid output/LSE pair")
+        raise RuntimeError(f"{backend} returned an invalid output/LSE pair")  # noqa: TRY004
     if returned_output.shape != output_buffer.shape:
         raise RuntimeError(
             f"{backend} returned output shape {tuple(returned_output.shape)}, "
@@ -47,8 +47,7 @@ def _normalize_result(
         normalized_lse = lse.transpose(1, 2)
     else:
         raise RuntimeError(
-            f"{backend} returned LSE shape {tuple(lse.shape)}, "
-            f"expected {(batch, heads, tokens)}"
+            f"{backend} returned LSE shape {tuple(lse.shape)}, expected {(batch, heads, tokens)}"
         )
     return output_buffer, normalized_lse.contiguous().float()
 

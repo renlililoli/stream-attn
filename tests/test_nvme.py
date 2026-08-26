@@ -255,7 +255,7 @@ def test_disk_full_error_cleans_unpublished_store(monkeypatch, tmp_path):
 
 
 def test_interrupted_writer_removes_unpublished_files(tmp_path):
-    q, k, v, cu_q, cu_k = make_data()
+    q, k, _v, cu_q, cu_k = make_data()
     from seqattn_core import KVLayout, TensorLayout
 
     writer = NvmeQKVWriter(

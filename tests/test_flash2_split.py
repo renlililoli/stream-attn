@@ -5,7 +5,7 @@ from seqattn_core import StreamingAttentionConfig, StreamingAttentionRunner, bui
 from seqattn_core.reference import streaming_attention_reference
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_gpu  # noqa: F401
+    from flash_attn.flash_attn_interface import flash_attn_gpu
 except ImportError:
     flash_attn_gpu = None
 

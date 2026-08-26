@@ -28,9 +28,7 @@ def streaming_attention_reference(
     not speed.  It is the correctness oracle for the Triton backend.
     """
 
-    q_bounds, k_bounds = validate_host_qkv(
-        q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k
-    )
+    q_bounds, k_bounds = validate_host_qkv(q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k)
     if q_chunk_tokens <= 0 or kv_chunk_tokens <= 0:
         raise ValueError("q_chunk_tokens and kv_chunk_tokens must be positive")
     device = torch.device(device)
@@ -82,9 +80,7 @@ def streaming_attention_reference(
                         kv_local_start + k.shape[1],
                         device=device,
                     )
-                    valid = k_positions.unsqueeze(0) <= (
-                        q_positions.unsqueeze(1) + causal_shift
-                    )
+                    valid = k_positions.unsqueeze(0) <= (q_positions.unsqueeze(1) + causal_shift)
                     scores.masked_fill_(~valid.unsqueeze(0), -math.inf)
 
                 tile_max = scores.amax(dim=-1)
@@ -101,9 +97,7 @@ def streaming_attention_reference(
                     torch.zeros_like(scores),
                 )
                 running_sum.mul_(old_scale).add_(probabilities.sum(dim=-1))
-                running_out.mul_(old_scale.unsqueeze(-1)).add_(
-                    torch.matmul(probabilities, v)
-                )
+                running_out.mul_(old_scale.unsqueeze(-1)).add_(torch.matmul(probabilities, v))
                 running_max = torch.where(valid_rows, merged_max, running_max)
 
             normalized = torch.where(

@@ -91,9 +91,7 @@ def summarize_results(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Compare two host-memory roofline Q sweeps"
-    )
+    parser = argparse.ArgumentParser(description="Compare two host-memory roofline Q sweeps")
     parser.add_argument("--baseline-prediction", type=Path, required=True)
     parser.add_argument("--baseline-results", type=Path, nargs="+", required=True)
     parser.add_argument("--interleaved-prediction", type=Path, required=True)
@@ -224,7 +222,7 @@ def main() -> None:
     absolute.grid(True, color="#d1d5db", linewidth=0.6, alpha=0.7)
     absolute.legend(loc="lower right")
 
-    x_curve = [index / 200 for index in range(0, 361)]
+    x_curve = [index / 200 for index in range(361)]
     normalized.plot(
         x_curve,
         [min(x, 1.0) for x in x_curve],

@@ -47,4 +47,3 @@ def dequantize_int8_per_token_group(
         raise ValueError("scale shape does not match quantized data")
     token_scales = scales.repeat_interleave(group_tokens, dim=0)[: quantized.shape[0]]
     return (quantized.float() * token_scales[:, :, None].float()).to(dtype)
-

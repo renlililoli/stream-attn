@@ -12,7 +12,6 @@ from seqattn_core import (
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
 
-
 pytestmark = pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
 
 

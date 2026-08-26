@@ -47,12 +47,12 @@ def _backend_from_config_file() -> str | None:
         document = tomllib.load(handle)
     section = document.get("attention", {})
     if not isinstance(section, dict):
-        raise ValueError("seqattn config [attention] must be a TOML table")
+        raise ValueError("seqattn config [attention] must be a TOML table")  # noqa: TRY004
     backend = section.get("backend")
     if backend is None:
         return None
     if not isinstance(backend, str):
-        raise ValueError("seqattn config attention.backend must be a string")
+        raise ValueError("seqattn config attention.backend must be a string")  # noqa: TRY004
     return canonical_backend_name(backend)
 
 
@@ -107,9 +107,7 @@ def _validate_backend_capability(
                 "the builtin backend requires head_dim >= 16 (tl.dot needs BLOCK_D >= 16)"
             )
         if backend in _FLASH_BACKENDS and (head_dim % 8 or head_dim > 256):
-            raise ValueError(
-                f"the {backend} backend requires head_dim divisible by 8 and <= 256"
-            )
+            raise ValueError(f"the {backend} backend requires head_dim divisible by 8 and <= 256")
     if backend in {"fa3", "fa4"} and torch.cuda.is_available():
         major, _ = torch.cuda.get_device_capability(device)
         if backend == "fa3" and major != 9:

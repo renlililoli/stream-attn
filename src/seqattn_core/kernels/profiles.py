@@ -58,8 +58,8 @@ def resolve_builtin_kernel_profile(
 __all__ = [
     "A30_TRITON37_D128_KERNEL",
     "BLACKWELL_D128_KERNEL",
-    "KernelLaunchProfile",
     "PORTABLE_KERNEL",
+    "KernelLaunchProfile",
     "resolve_builtin_kernel_profile",
     "triton_major_minor",
 ]

@@ -22,13 +22,16 @@ from seqattn_core.kernels import triton_is_available
 
 def test_h3_aux_workspace_estimate_and_sequence_validation():
     expected = (2 * 31 * 48 + 3 * 43 * 48) * 2
-    assert estimate_h3_aux_workspace_bytes(
-        hidden_features=48,
-        dtype=torch.bfloat16,
-        projection_chunk_tokens=31,
-        num_projection_buffers=2,
-        mlp_chunk_tokens=43,
-    ) == expected
+    assert (
+        estimate_h3_aux_workspace_bytes(
+            hidden_features=48,
+            dtype=torch.bfloat16,
+            projection_chunk_tokens=31,
+            num_projection_buffers=2,
+            mlp_chunk_tokens=43,
+        )
+        == expected
+    )
 
     meta = H3SequenceMeta(torch.tensor([0, 3, 7], dtype=torch.int32))
     meta.validate(7)
@@ -98,15 +101,11 @@ def test_h3_fused_block_reblocks_across_q_ranges_and_matches_full_gpu():
     qkv_linear = torch.nn.Linear(hidden_features, inner * 3, bias=False).to(
         device=device, dtype=dtype
     )
-    out_linear = torch.nn.Linear(inner, hidden_features, bias=False).to(
-        device=device, dtype=dtype
-    )
+    out_linear = torch.nn.Linear(inner, hidden_features, bias=False).to(device=device, dtype=dtype)
     fc1 = torch.nn.Linear(hidden_features, mlp_features * 2, bias=False).to(
         device=device, dtype=dtype
     )
-    fc2 = torch.nn.Linear(mlp_features, hidden_features, bias=False).to(
-        device=device, dtype=dtype
-    )
+    fc2 = torch.nn.Linear(mlp_features, hidden_features, bias=False).to(device=device, dtype=dtype)
 
     attention_config = StreamingAttentionConfig(
         backend="triton",

@@ -1,4 +1,5 @@
 import math
+from itertools import pairwise
 
 import pytest
 import torch
@@ -89,7 +90,7 @@ def test_projected_pipeline_matches_full_gpu(dtype):
     v = qkv[:, :, 2, :]
     expected_attention = torch.empty_like(q)
     bounds = cu.tolist()
-    for start, stop in zip(bounds[:-1], bounds[1:]):
+    for start, stop in pairwise(bounds):
         if start == stop:
             continue
         tile = torch.nn.functional.scaled_dot_product_attention(

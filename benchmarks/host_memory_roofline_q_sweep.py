@@ -12,7 +12,6 @@ from pathlib import Path
 
 from seqattn_core.benchmarking.common import atomic_json
 
-
 COARSE_Q = (2048, 4096, 6144, 8192, 10240, 12288, 16384, 24576, 32768)
 FINE_Q = (4224, 4736, 5248, 5504, 5760, 6272, 6784, 7296)
 

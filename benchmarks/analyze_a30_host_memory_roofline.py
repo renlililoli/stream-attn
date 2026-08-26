@@ -30,9 +30,7 @@ def main() -> None:
     prediction = json.loads(args.prediction.read_text(encoding="ascii"))
     sweep = json.loads(args.sweep.read_text(encoding="ascii"))
     p_fa2 = prediction["calibration_inputs"]["resident_fa2"]["p_fa2_tflops"]
-    b_gbps = prediction["calibration_inputs"]["concurrent_h2d"][
-        "b_concurrent_gbps"
-    ]
+    b_gbps = prediction["calibration_inputs"]["concurrent_h2d"]["b_concurrent_gbps"]
     q_star = prediction["prediction"]["q_star_predicted"]
     q_95 = prediction["prediction"]["q_95_predicted"]
 
@@ -63,13 +61,9 @@ def main() -> None:
         )
     rows.sort(key=lambda row: int(row["q_tokens"]))
 
-    plateau_rows = [
-        row for row in rows if float(row["q_effective_tokens"]) >= q_star
-    ]
+    plateau_rows = [row for row in rows if float(row["q_effective_tokens"]) >= q_star]
     plateau_tflops = (
-        statistics.median(
-            float(row["pipeline_tflops_median"]) for row in plateau_rows
-        )
+        statistics.median(float(row["pipeline_tflops_median"]) for row in plateau_rows)
         if plateau_rows
         else None
     )
@@ -111,9 +105,7 @@ def main() -> None:
                 observed_95_row["q_effective_tokens"] if observed_95_row else None
             ),
             "intersection_estimate": (
-                float(observed_95_row["q_effective_tokens"]) / 0.95
-                if observed_95_row
-                else None
+                float(observed_95_row["q_effective_tokens"]) / 0.95 if observed_95_row else None
             ),
         },
         "rows": rows,
@@ -208,7 +200,7 @@ def main() -> None:
     absolute.grid(True, color="#d1d5db", linewidth=0.6, alpha=0.7)
     absolute.legend(loc="lower right")
 
-    x_curve = [index / 200 for index in range(0, 401)]
+    x_curve = [index / 200 for index in range(401)]
     normalized.plot(
         x_curve,
         [min(x, 1.0) for x in x_curve],

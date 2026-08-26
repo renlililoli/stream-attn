@@ -365,14 +365,8 @@ if compute_slope <= h2d_slope:
 if compute_slope <= d2h_slope:
     raise ValueError("D2H cannot be fully hidden at the supplied throughput")
 
-C_pcie_in = ceil(
-    max(0.0, alpha_in - alpha_gpu) /
-    (compute_slope - h2d_slope)
-)
-C_pcie_out = ceil(
-    max(0.0, alpha_out - alpha_gpu) /
-    (compute_slope - d2h_slope)
-)
+C_pcie_in = ceil(max(0.0, alpha_in - alpha_gpu) / (compute_slope - h2d_slope))
+C_pcie_out = ceil(max(0.0, alpha_out - alpha_gpu) / (compute_slope - d2h_slope))
 C_pcie = max(C_pcie_in, C_pcie_out)
 
 W = 3 * H * F * s_w

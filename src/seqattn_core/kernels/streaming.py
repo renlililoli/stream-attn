@@ -73,9 +73,7 @@ if triton is not None:
         d_mask = offsets_d < HEAD_DIM
 
         q_offsets = (
-            offsets_m[:, None] * stride_qt
-            + query_head * stride_qh
-            + offsets_d[None, :] * stride_qd
+            offsets_m[:, None] * stride_qt + query_head * stride_qh + offsets_d[None, :] * stride_qd
         )
         if EVEN_M and EVEN_D:
             q = tl.load(q_ptr + q_offsets)
@@ -84,9 +82,7 @@ if triton is not None:
 
         state_offsets = offsets_m * stride_st + query_head * stride_sh
         acc_offsets = (
-            offsets_m[:, None] * stride_at
-            + query_head * stride_ah
-            + offsets_d[None, :] * stride_ad
+            offsets_m[:, None] * stride_at + query_head * stride_ah + offsets_d[None, :] * stride_ad
         )
         if INITIALIZE:
             running_max = tl.full((BLOCK_M,), -float("inf"), tl.float32)

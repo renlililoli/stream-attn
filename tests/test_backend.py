@@ -28,10 +28,7 @@ def test_sm80_auto_prefers_fa2(monkeypatch):
 def test_sm80_auto_falls_back_to_builtin(monkeypatch):
     _mock_cuda(monkeypatch, (8, 6))
     _mock_available(monkeypatch, {"triton", "reference"})
-    assert (
-        resolve_backend("auto", torch.float16, torch.device("cuda:0"), head_dim=128)
-        == "triton"
-    )
+    assert resolve_backend("auto", torch.float16, torch.device("cuda:0"), head_dim=128) == "triton"
 
 
 def test_sm90_uses_fa3_and_sm120_preserves_builtin_default(monkeypatch):
