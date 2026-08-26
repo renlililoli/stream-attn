@@ -364,11 +364,15 @@ preallocated range without a steady-state allocation. Segment or global-tail
 clamps can still produce a smaller final task.
 
 Each GPU scans the complete K/V segment for its assigned Q rows. There is no
-cross-device softmax reduction or NCCL dependency. `MultiGpuH3DiTRunner`
-extends both schedules through the fused OutProj/MLP consumer path; the
-integration supplies one device-local `H3BlockOps` instance per GPU. Dynamic
-H3 uses the current Q task as the OutProj, FFN, and final D2H unit, with no
-independent MLP tile or carry across tasks.
+cross-device softmax reduction or NCCL dependency. `MultiGpuH3DiTRunner` uses
+only completion-driven dynamic scheduling: every GPU first claims uniform
+4,096-token hidden blocks, runs its device-local QKV projection, and writes the
+disjoint Q/K/V range into shared pinned host buffers. Exact attention starts
+after the complete K/V projection barrier. GPUs then dynamically claim Q tasks
+for attention, OutProj, FFN, and final hidden D2H. The current Q task is the FFN
+unit, with no independent MLP tile or carry across tasks. The integration
+supplies one device-local `H3BlockOps` instance per GPU so each stage uses the
+weights resident or leased on that device.
 
 ## Core APIs
 
@@ -379,8 +383,8 @@ independent MLP tile or carry across tasks.
   or completion-driven dynamic Q tasks across device-local runners.
 - `ProjectedAttentionRunner` connects model-owned QKV and output-projection
   callbacks without materializing raw attention output on the CPU.
-- `MultiGpuH3DiTRunner` applies static or dynamic Q scheduling to the fused H3
-  attention, output-projection, and MLP consumer path.
+- `MultiGpuH3DiTRunner` dynamically distributes QKV projection, attention,
+  output projection, and MLP work across device-local H3 block operators.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.
 - `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` provide aligned,
@@ -477,9 +481,10 @@ memory-budget enforcement, and runner reuse.
 
 Current scope:
 
-- Linux, inference-only dense attention. Contiguous DRAM streaming and the H3
-  fused consumer support static and dynamic multi-GPU Q scheduling;
-  paged/NVMe execution remains single-GPU.
+- Linux, inference-only dense attention. Contiguous DRAM streaming supports
+  static and dynamic multi-GPU Q scheduling; the H3 fused path uses dynamic
+  multi-GPU QKV projection and dynamic attention/consumer scheduling.
+  Paged/NVMe execution remains single-GPU.
 - No backward pass, dropout, arbitrary sparse masks, model-weight paging,
   cross-request HBM residency, io_uring, or GPUDirect Storage.
 - Caller-owned complete tensors used through memory adapters are outside the

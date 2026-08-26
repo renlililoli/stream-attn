@@ -178,6 +178,7 @@ class ProjectedAttentionRunner:
             workspace.keepalive[slot] = (q, k, v)
             workspace.busy[slot] = True
             stats.projection_chunks += 1
+            stats.projection_tokens += tile_tokens
             stats.projection_hidden_h2d_bytes += (
                 tile_tokens * hidden_features * hidden_cpu.element_size()
             )

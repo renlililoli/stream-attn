@@ -21,6 +21,7 @@ from seqattn_core import (
     build_plan,
 )
 from seqattn_core.dit.consumer import H3DeviceOutputConsumer
+from seqattn_core.dit.projection import DynamicQKVProjectionCursor
 from seqattn_core.dit.workspace import H3BlockWorkspace
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
@@ -50,6 +51,53 @@ def _dynamic_spec(
         h2d_gbps=h2d_gbps,
         q_capacity_tokens=capacity_q,
     )
+
+
+def test_dynamic_qkv_projection_cursor_uses_fixed_chunks_and_tail():
+    cursor = DynamicQKVProjectionCursor(10_000)
+    tasks = []
+    while task := cursor.claim():
+        tasks.append(task)
+
+    assert [(task.start, task.stop) for task in tasks] == [
+        (0, 4096),
+        (4096, 8192),
+        (8192, 10_000),
+    ]
+    assert [task.claim_order for task in tasks] == [0, 1, 2]
+
+
+def test_dynamic_qkv_projection_cursor_stops_after_cancel():
+    cursor = DynamicQKVProjectionCursor(8192)
+    assert cursor.claim() is not None
+    cursor.cancel()
+    assert cursor.claim() is None
+
+
+def test_dynamic_qkv_projection_cursor_concurrent_claims_cover_once():
+    cursor = DynamicQKVProjectionCursor(65_537)
+    claimed = []
+    claimed_lock = threading.Lock()
+
+    def worker():
+        local = []
+        while task := cursor.claim():
+            local.append(task)
+        with claimed_lock:
+            claimed.extend(local)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    ordered = sorted(claimed, key=lambda task: task.start)
+    assert ordered[0].start == 0
+    assert ordered[-1].stop == 65_537
+    assert all(left.stop == right.start for left, right in pairwise(ordered))
+    assert all(task.tokens == 4096 for task in ordered[:-1])
+    assert len({task.claim_order for task in ordered}) == len(ordered)
 
 
 def test_dynamic_cursor_covers_packed_queries_once_with_causal_metadata():

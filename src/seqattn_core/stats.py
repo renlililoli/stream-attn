@@ -97,6 +97,7 @@ class ProjectedAttentionStats:
     projection_seconds: float = 0.0
     attention_output_seconds: float = 0.0
     projection_chunks: int = 0
+    projection_tokens: int = 0
     projection_hidden_h2d_bytes: int = 0
     projection_qkv_d2h_bytes: int = 0
     raw_attention_roundtrip_bytes_avoided: int = 0

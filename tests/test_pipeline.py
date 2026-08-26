@@ -104,6 +104,7 @@ def test_projected_pipeline_matches_full_gpu(dtype):
 
     torch.testing.assert_close(actual, expected, atol=7e-2, rtol=1e-2)
     assert stats.projection_chunks == math.ceil(tokens / 31)
+    assert stats.projection_tokens == tokens
     assert stats.attention.d2h_bytes == tokens * hidden_features * actual.element_size()
     assert stats.raw_attention_roundtrip_bytes_avoided == (
         2 * tokens * inner * actual.element_size()

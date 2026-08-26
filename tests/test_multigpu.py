@@ -1,4 +1,5 @@
 import copy
+import math
 from itertools import pairwise
 
 import pytest
@@ -14,12 +15,14 @@ from seqattn_core import (
     MultiGpuH3DiTStats,
     MultiGpuStreamingAttentionRunner,
     ProjectedAttentionRunner,
+    ProjectedAttentionStats,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
     build_multi_gpu_plan,
     build_plan,
     build_query_tasks,
 )
+from seqattn_core.dit.projection import MultiGpuQKVProjectionRunner
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
 
@@ -363,8 +366,115 @@ def test_two_gpu_static_device_consumers_match_reference():
     torch.cuda.device_count() < 2 or not triton_is_available(),
     reason="requires two CUDA devices and Triton",
 )
-@pytest.mark.parametrize("schedule_mode", ["static", "dynamic"])
-def test_two_gpu_h3_runner_matches_full_gpu_block(schedule_mode):
+def test_two_gpu_qkv_projection_uses_default_4096_token_blocks():
+    torch.manual_seed(225)
+    dtype = torch.bfloat16
+    tokens = 8201
+    hidden_features = 16
+    heads = 2
+    head_dim = 16
+    hidden = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
+    cu = torch.tensor([0, tokens], dtype=torch.int32)
+    base_qkv = torch.nn.Linear(hidden_features, heads * head_dim * 3, bias=False)
+    qkv_by_device = {
+        device: copy.deepcopy(base_qkv).to(device=device, dtype=dtype)
+        for device in (torch.device("cuda:0"), torch.device("cuda:1"))
+    }
+    primary_config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=64,
+        kv_chunk_tokens=64,
+        block_m=16,
+        block_n=16,
+        output_mode="device_consumer",
+    )
+    primary_plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda:0",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=primary_config,
+    )
+    projected = ProjectedAttentionRunner(primary_plan, primary_config)
+    multi_plan = build_multi_gpu_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        cu_seqlens_q=cu,
+        cu_seqlens_k=cu,
+        devices=[
+            MultiGpuDeviceSpec(
+                device="cuda:0",
+                config=primary_config,
+                compute_tflops=180,
+                h2d_gbps=45,
+            ),
+            device_spec(
+                "cuda:1",
+                q_chunk=64,
+                kv_chunk=64,
+                compute_tflops=160,
+                h2d_gbps=40,
+                output_mode="device_consumer",
+            ),
+        ],
+    )
+    runner = MultiGpuQKVProjectionRunner(
+        projected,
+        multi_plan,
+        hidden_features=hidden_features,
+    )
+    ranges = {str(device): [] for device in qkv_by_device}
+
+    def make_ops(device):
+        def project_qkv(tile, start, stop):
+            ranges[str(device)].append((start, stop))
+            qkv = qkv_by_device[device](tile).view(-1, 3, heads, head_dim)
+            return tuple(qkv[:, index].contiguous() for index in range(3))
+
+        return H3BlockOps(project_qkv, lambda *args: args[0], lambda *args: args[0])
+
+    stats = ProjectedAttentionStats()
+    per_device_stats = {device: ProjectedAttentionStats() for device in ranges}
+    try:
+        q_cpu, k_cpu, v_cpu = runner.run(
+            hidden,
+            {str(device): make_ops(device) for device in qkv_by_device},
+            stats=stats,
+            per_device_stats=per_device_stats,
+        )
+    finally:
+        runner.close()
+
+    expected_qkv = qkv_by_device[torch.device("cuda:0")](hidden.to("cuda:0")).view(
+        tokens, 3, heads, head_dim
+    )
+    torch.testing.assert_close(q_cpu, expected_qkv[:, 0].cpu(), atol=0, rtol=0)
+    torch.testing.assert_close(k_cpu, expected_qkv[:, 1].cpu(), atol=0, rtol=0)
+    torch.testing.assert_close(v_cpu, expected_qkv[:, 2].cpu(), atol=0, rtol=0)
+    assert stats.projection_chunks == 3
+    assert stats.projection_tokens == tokens
+    assert sorted(
+        stop - start for device_ranges in ranges.values() for start, stop in device_ranges
+    ) == [
+        9,
+        4096,
+        4096,
+    ]
+    assert all(item.projection_tokens > 0 for item in per_device_stats.values())
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2 or not triton_is_available(),
+    reason="requires two CUDA devices and Triton",
+)
+def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
     torch.manual_seed(227)
     dtype = torch.bfloat16
     tokens = 97
@@ -438,20 +548,21 @@ def test_two_gpu_h3_runner_matches_full_gpu_block(schedule_mode):
                 output_mode="device_consumer",
             ),
         ],
-        schedule_mode=schedule_mode,
     )
     runner = MultiGpuH3DiTRunner(
         projected,
         multi_plan,
         hidden_features=hidden_features,
-        mlp_chunk_tokens=({"cuda:0": 43, "cuda:1": 31} if schedule_mode == "static" else None),
+        projection_chunk_tokens=31,
     )
+
+    projection_ranges = {device: [] for device in modules}
 
     def make_ops(device):
         qkv_linear, out_linear, fc1, fc2 = modules[device]
 
         def project_qkv(tile, start, stop):
-            del start, stop
+            projection_ranges[device].append((start, stop))
             qkv = qkv_linear(tile).view(-1, 3, heads, head_dim)
             return tuple(qkv[:, index].contiguous() for index in range(3))
 
@@ -504,3 +615,100 @@ def test_two_gpu_h3_runner_matches_full_gpu_block(schedule_mode):
         device_stats.final_hidden_d2h_bytes > 0 for device_stats in stats.per_device.values()
     )
     assert all(device_stats.d2h_bytes == 0 for device_stats in stats.attention.per_device.values())
+    assert multi_plan.schedule_mode == "static"
+    assert runner.attention.schedule_mode == "dynamic"
+    assert stats.projection.projection_chunks == math.ceil(tokens / 31)
+    assert stats.projection.projection_tokens == tokens
+    assert all(projection_ranges[device] for device in modules)
+    assert (
+        sum(device_stats.projection.projection_tokens for device_stats in stats.per_device.values())
+        == tokens
+    )
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2 or not triton_is_available(),
+    reason="requires two CUDA devices and Triton",
+)
+def test_two_gpu_h3_projection_failure_stops_before_attention():
+    dtype = torch.bfloat16
+    tokens = 65
+    hidden_features = 16
+    heads = 2
+    head_dim = 16
+    cu = torch.tensor([0, tokens], dtype=torch.int32)
+    hidden = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
+    original = hidden.clone()
+    primary_config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=32,
+        kv_chunk_tokens=32,
+        block_m=16,
+        block_n=16,
+        output_mode="device_consumer",
+    )
+    primary_plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda:0",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=primary_config,
+    )
+    projected = ProjectedAttentionRunner(primary_plan, primary_config)
+    multi_plan = build_multi_gpu_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        cu_seqlens_q=cu,
+        cu_seqlens_k=cu,
+        devices=[
+            MultiGpuDeviceSpec(
+                device="cuda:0",
+                config=primary_config,
+                compute_tflops=180,
+                h2d_gbps=45,
+            ),
+            device_spec(
+                "cuda:1",
+                q_chunk=32,
+                kv_chunk=32,
+                compute_tflops=160,
+                h2d_gbps=40,
+                output_mode="device_consumer",
+            ),
+        ],
+    )
+    runner = MultiGpuH3DiTRunner(
+        projected,
+        multi_plan,
+        hidden_features=hidden_features,
+        projection_chunk_tokens=16,
+    )
+
+    def fail_projection(*_args):
+        raise RuntimeError("injected QKV projection failure")
+
+    def unexpected_consumer(*_args):
+        raise AssertionError("attention consumer must not run after projection failure")
+
+    ops = H3BlockOps(fail_projection, unexpected_consumer, unexpected_consumer)
+    stats = MultiGpuH3DiTStats()
+    try:
+        with pytest.raises(RuntimeError, match="injected QKV projection failure"):
+            runner.run_block_(
+                hidden,
+                H3SequenceMeta(cu),
+                {"cuda:0": ops, "cuda:1": ops},
+                stats=stats,
+            )
+    finally:
+        runner.close()
+
+    torch.testing.assert_close(hidden, original)
+    assert stats.attention.wall_seconds == 0

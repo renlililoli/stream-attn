@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable, Mapping
-from typing import Literal
 
 import torch
 
@@ -14,6 +13,7 @@ from ..streaming import (
     MultiGpuStreamingAttentionRunner,
 )
 from .consumer import H3DeviceOutputConsumer
+from .projection import MultiGpuQKVProjectionRunner
 from .types import H3BlockOps, H3SequenceMeta, estimate_h3_consumer_workspace_bytes
 from .workspace import H3BlockWorkspace
 
@@ -37,7 +37,7 @@ def _normalize_device_values(
 
 
 class MultiGpuH3DiTRunner:
-    """Static or dynamic heterogeneous Q scheduling for the fused H3 block path."""
+    """Dynamic multi-GPU QKV, attention, and fused H3 consumer pipeline."""
 
     def __init__(
         self,
@@ -45,13 +45,14 @@ class MultiGpuH3DiTRunner:
         attention_plan: MultiGpuAttentionPlan,
         *,
         hidden_features: int,
-        mlp_chunk_tokens: int | Mapping[torch.device | str, int] | None = None,
+        projection_chunk_tokens: int = 4096,
         num_final_output_buffers: int | Mapping[torch.device | str, int] = 2,
-        schedule_mode: Literal["static", "dynamic"] | None = None,
         dynamic_config: DynamicScheduleConfig | None = None,
     ) -> None:
         if hidden_features <= 0:
             raise ValueError("hidden_features must be positive")
+        if projection_chunk_tokens <= 0:
+            raise ValueError("projection_chunk_tokens must be positive")
         if attention_plan.output_mode != "device_consumer":
             raise ValueError("the multi-GPU H3 runner requires device_consumer plans")
         if projected_attention.attention.backend != "triton":
@@ -82,19 +83,6 @@ class MultiGpuH3DiTRunner:
             raise ValueError("the primary multi-GPU plan must match the projected attention plan")
 
         devices = attention_plan.devices
-        resolved_schedule_mode = (
-            attention_plan.schedule_mode if schedule_mode is None else schedule_mode
-        )
-        if resolved_schedule_mode == "dynamic":
-            mlp_chunks = {str(device): 1 for device in devices}
-        else:
-            if mlp_chunk_tokens is None:
-                raise ValueError("mlp_chunk_tokens is required for static H3 scheduling")
-            mlp_chunks = _normalize_device_values(
-                mlp_chunk_tokens,
-                devices=devices,
-                name="mlp_chunk_tokens",
-            )
         output_buffers = _normalize_device_values(
             num_final_output_buffers,
             devices=devices,
@@ -107,52 +95,52 @@ class MultiGpuH3DiTRunner:
         self.attention_plan = attention_plan
         self.hidden_features = hidden_features
         self.primary_device = primary_device
-        self.attention = MultiGpuStreamingAttentionRunner(
+        self.projection = MultiGpuQKVProjectionRunner(
+            projected_attention,
             attention_plan,
-            runner_overrides={primary_device: projected_attention.attention},
-            schedule_mode=schedule_mode,
-            dynamic_config=dynamic_config,
+            hidden_features=hidden_features,
+            chunk_tokens=projection_chunk_tokens,
         )
-        self.schedule_mode = self.attention.schedule_mode
+        try:
+            self.attention = MultiGpuStreamingAttentionRunner(
+                attention_plan,
+                runner_overrides={primary_device: projected_attention.attention},
+                schedule_mode="dynamic",
+                dynamic_config=dynamic_config,
+            )
+        except Exception:
+            self.projection.close()
+            raise
         self.workspaces = {}
         self.consumers = {}
         self.per_device_estimated_workspace_bytes = {}
-        element_size = torch.empty((), dtype=attention_plan.dtype).element_size()
-        projection_bytes = (
-            projected_attention.pipeline_config.num_projection_buffers
-            * projected_attention.pipeline_config.projection_chunk_tokens
-            * hidden_features
-            * element_size
-        )
         for schedule in attention_plan.schedules:
             device = str(schedule.device)
-            final_output_chunk_tokens = (
-                mlp_chunks[device] if self.schedule_mode == "static" else schedule.q_capacity_tokens
-            )
             workspace = H3BlockWorkspace(
                 hidden_features=hidden_features,
-                mlp_chunk_tokens=mlp_chunks[device],
+                mlp_chunk_tokens=1,
                 dtype=attention_plan.dtype,
                 device=schedule.device,
                 num_final_output_buffers=output_buffers[device],
-                final_output_chunk_tokens=final_output_chunk_tokens,
+                final_output_chunk_tokens=schedule.q_capacity_tokens,
             )
             self.workspaces[device] = workspace
             self.consumers[device] = H3DeviceOutputConsumer(workspace)
             consumer_bytes = estimate_h3_consumer_workspace_bytes(
                 hidden_features=hidden_features,
                 dtype=attention_plan.dtype,
-                mlp_chunk_tokens=mlp_chunks[device],
+                mlp_chunk_tokens=1,
                 num_final_output_buffers=output_buffers[device],
-                final_output_chunk_tokens=final_output_chunk_tokens,
+                final_output_chunk_tokens=schedule.q_capacity_tokens,
             )
             self.per_device_estimated_workspace_bytes[device] = (
                 schedule.attention_plan.estimated_workspace_bytes
                 + consumer_bytes
-                + (projection_bytes if schedule.device == primary_device else 0)
+                + self.projection.estimated_workspace_bytes[device]
             )
 
     def close(self) -> None:
+        self.projection.close()
         self.attention.close()
 
     def _normalize_ops(
@@ -197,13 +185,23 @@ class MultiGpuH3DiTRunner:
         stats.per_device_estimated_workspace_bytes = dict(self.per_device_estimated_workspace_bytes)
         started = time.perf_counter()
 
-        producer_ops = ops[str(self.primary_device)]
-        with producer_ops.qkv_context():
-            q_cpu, k_cpu, v_cpu = self.projected_attention.project_qkv_to_host(
-                hidden_host,
-                producer_ops.project_qkv,
-                stats=stats.projection,
-            )
+        for schedule in self.attention_plan.schedules:
+            device = str(schedule.device)
+            device_stats = stats.per_device.setdefault(device, H3DiTStats())
+            device_stats.backend = "triton"
+            device_stats.estimated_workspace_bytes = self.per_device_estimated_workspace_bytes[
+                device
+            ]
+
+        q_cpu, k_cpu, v_cpu = self.projection.run(
+            hidden_host,
+            ops,
+            stats=stats.projection,
+            per_device_stats={
+                str(schedule.device): stats.per_device[str(schedule.device)].projection
+                for schedule in self.attention_plan.schedules
+            },
+        )
         qkv_host_bytes = sum(
             tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
         )
@@ -213,22 +211,10 @@ class MultiGpuH3DiTRunner:
 
         for schedule in self.attention_plan.schedules:
             device = str(schedule.device)
-            device_stats = stats.per_device.setdefault(device, H3DiTStats())
-            device_stats.backend = "triton"
-            device_stats.estimated_workspace_bytes = self.per_device_estimated_workspace_bytes[
-                device
-            ]
-            reset_kwargs = {}
-            if self.schedule_mode == "static":
-                reset_kwargs = {
-                    "range_start": schedule.q_range_start,
-                    "range_stop": schedule.q_range_stop,
-                }
             self.consumers[device].reset(
                 hidden_host=hidden_host,
                 ops=ops[device],
-                stats=device_stats,
-                **reset_kwargs,
+                stats=stats.per_device[device],
             )
 
         attention_started = time.perf_counter()
@@ -250,11 +236,7 @@ class MultiGpuH3DiTRunner:
         for schedule in self.attention_plan.schedules:
             device = str(schedule.device)
             device_stats = stats.per_device[device]
-            q_tokens = (
-                schedule.q_tokens
-                if self.schedule_mode == "static"
-                else stats.attention.dynamic_per_device[device].q_tokens
-            )
+            q_tokens = stats.attention.dynamic_per_device[device].q_tokens
             shard_bytes = q_tokens * self.hidden_features * element_size
             device_stats.post_attention_roundtrip_bytes_avoided += 2 * shard_bytes
             device_stats.blocks += 1
