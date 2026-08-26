@@ -1,0 +1,319 @@
+{
+  "all_finite": true,
+  "calls": [
+    {
+      "call": 1,
+      "effective_tflops": 635.4299342971501,
+      "seconds": 12.403097371570766,
+      "stats": {
+        "dynamic_per_device": {},
+        "per_device": {
+          "cuda:0": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 12.3994423828125,
+            "d2h_bytes": 2539651072,
+            "estimated_workspace_bytes": 1250451456,
+            "h2d_bytes": 212993048576,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 896,
+            "max_resident_q_tokens": 12928,
+            "q_chunk_tokens": 12928,
+            "q_chunks": 14,
+            "wall_seconds": 12.401993068866432
+          },
+          "cuda:1": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 12.385546875,
+            "d2h_bytes": 2543321088,
+            "estimated_workspace_bytes": 1250451456,
+            "h2d_bytes": 212996718592,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 896,
+            "max_resident_q_tokens": 12928,
+            "q_chunk_tokens": 12928,
+            "q_chunks": 14,
+            "wall_seconds": 12.388290003873408
+          },
+          "cuda:2": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 11.8875927734375,
+            "d2h_bytes": 2433220608,
+            "estimated_workspace_bytes": 1257848832,
+            "h2d_bytes": 197854232576,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 832,
+            "max_resident_q_tokens": 13056,
+            "q_chunk_tokens": 13056,
+            "q_chunks": 13,
+            "wall_seconds": 11.89556592097506
+          }
+        },
+        "task_trace": [],
+        "wall_seconds": 12.402694739867002
+      }
+    },
+    {
+      "call": 2,
+      "effective_tflops": 633.9781511494746,
+      "seconds": 12.43149993987754,
+      "stats": {
+        "dynamic_per_device": {},
+        "per_device": {
+          "cuda:0": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 12.4276123046875,
+            "d2h_bytes": 2539651072,
+            "estimated_workspace_bytes": 1250451456,
+            "h2d_bytes": 212993048576,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 896,
+            "max_resident_q_tokens": 12928,
+            "q_chunk_tokens": 12928,
+            "q_chunks": 14,
+            "wall_seconds": 12.430152690038085
+          },
+          "cuda:1": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 12.4148291015625,
+            "d2h_bytes": 2543321088,
+            "estimated_workspace_bytes": 1250451456,
+            "h2d_bytes": 212996718592,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 896,
+            "max_resident_q_tokens": 12928,
+            "q_chunk_tokens": 12928,
+            "q_chunks": 14,
+            "wall_seconds": 12.41751279681921
+          },
+          "cuda:2": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 11.9183720703125,
+            "d2h_bytes": 2433220608,
+            "estimated_workspace_bytes": 1257848832,
+            "h2d_bytes": 197854232576,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 832,
+            "max_resident_q_tokens": 13056,
+            "q_chunk_tokens": 13056,
+            "q_chunks": 13,
+            "wall_seconds": 11.924819727893919
+          }
+        },
+        "task_trace": [],
+        "wall_seconds": 12.431116738822311
+      }
+    },
+    {
+      "call": 3,
+      "effective_tflops": 632.8843917977291,
+      "seconds": 12.452984225936234,
+      "stats": {
+        "dynamic_per_device": {},
+        "per_device": {
+          "cuda:0": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 12.4491953125,
+            "d2h_bytes": 2539651072,
+            "estimated_workspace_bytes": 1250451456,
+            "h2d_bytes": 212993048576,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 896,
+            "max_resident_q_tokens": 12928,
+            "q_chunk_tokens": 12928,
+            "q_chunks": 14,
+            "wall_seconds": 12.451742629054934
+          },
+          "cuda:1": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 12.4295126953125,
+            "d2h_bytes": 2543321088,
+            "estimated_workspace_bytes": 1250451456,
+            "h2d_bytes": 212996718592,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 896,
+            "max_resident_q_tokens": 12928,
+            "q_chunk_tokens": 12928,
+            "q_chunks": 14,
+            "wall_seconds": 12.434056184720248
+          },
+          "cuda:2": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 11.945017578125,
+            "d2h_bytes": 2433220608,
+            "estimated_workspace_bytes": 1257848832,
+            "h2d_bytes": 197854232576,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 832,
+            "max_resident_q_tokens": 13056,
+            "q_chunk_tokens": 13056,
+            "q_chunks": 13,
+            "wall_seconds": 11.949948066379875
+          }
+        },
+        "task_trace": [],
+        "wall_seconds": 12.452548773027956
+      }
+    }
+  ],
+  "configuration": {
+    "calls": 3,
+    "compute_tflops": "216.416,216.753,216.089",
+    "cpu_chunk_tokens": 4096,
+    "cpu_workers": 32,
+    "d2h_gbps": null,
+    "devices": "cuda:0,cuda:1,cuda:2",
+    "dynamic_capacity_default": 23040,
+    "h2d_gbps": "17.818,17.451,17.061",
+    "kv_chunk": 8192,
+    "mode": "static",
+    "output": "docs/experiments/rtx5090_dynamic_multigpu_524k_20260826/three_gpu_static_tuned.json",
+    "q_capacities": "12928,12928,13056",
+    "q_chunks": "12928,12928,13056",
+    "q_min": "2048",
+    "task_trace": false,
+    "tokens": 524288,
+    "warmup": 1
+  },
+  "data_preparation_seconds": 27.98913248628378,
+  "environment": {
+    "cuda": "12.8",
+    "cuda_visible_devices": null,
+    "hostname": "ce757b246863",
+    "numa_policy": [
+      "policy: interleave",
+      "preferred node: 7 (interleave next)",
+      "interleavemask: 5 7 ",
+      "interleavenode: 7",
+      "physcpubind: 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 416 417 418 419 420 421 422 423 424 425 426 427 428 429 430 431 432 433 434 435 436 437 438 439 440 441 442 443 444 445 446 447 448 449 450 451 452 453 454 455 456 457 458 459 460 461 462 463 464 465 466 467 468 469 470 471 472 473 474 475 476 477 478 479 480 481 482 483 484 485 486 487 488 489 490 491 492 493 494 495 496 497 498 499 500 501 502 503 504 505 506 507 508 509 510 511 ",
+      "cpubind: 5 7 ",
+      "nodebind: 5 7 ",
+      "membind: 5 7 ",
+      "preferred: 5 7"
+    ],
+    "nvidia_smi": [
+      "0, GPU-28e1c1eb-f738-21b5-909c-b025a2281165, 00000000:81:00.0, NVIDIA GeForce RTX 5090, 32607 MiB",
+      "1, GPU-a9f0c52d-3d52-fd1a-71b9-44f2a59366f7, 00000000:A1:00.0, NVIDIA GeForce RTX 5090, 32607 MiB",
+      "2, GPU-35d69b8c-779a-bb45-263c-27587354c413, 00000000:E1:00.0, NVIDIA GeForce RTX 5090, 32607 MiB"
+    ],
+    "nvidia_visible_devices": "void",
+    "python": "3.12.3",
+    "torch": "2.10.0+cu128"
+  },
+  "median_effective_tflops": 633.9781511494746,
+  "median_seconds": 12.43149993987754,
+  "output_signature": {
+    "-1": [
+      -0.000911712646484375,
+      0.00054931640625,
+      -0.001068115234375,
+      -0.00286865234375,
+      0.004119873046875,
+      0.000865936279296875,
+      0.00390625,
+      0.0030059814453125
+    ],
+    "0": [
+      -0.0014190673828125,
+      -0.001434326171875,
+      0.00193023681640625,
+      -0.0001468658447265625,
+      0.0025177001953125,
+      -0.00341796875,
+      0.003570556640625,
+      0.00213623046875
+    ],
+    "131072": [
+      -0.004791259765625,
+      -0.0036773681640625,
+      0.003692626953125,
+      -0.005523681640625,
+      0.002044677734375,
+      -0.004608154296875,
+      0.0003986358642578125,
+      -0.001007080078125
+    ],
+    "262144": [
+      -0.00135040283203125,
+      -0.0017242431640625,
+      0.0004711151123046875,
+      -0.002197265625,
+      -8.165836334228516e-06,
+      -0.000530242919921875,
+      0.005859375,
+      -0.00164031982421875
+    ],
+    "393216": [
+      -0.004119873046875,
+      0.001495361328125,
+      -0.0002765655517578125,
+      -0.001800537109375,
+      0.00156402587890625,
+      -0.001190185546875,
+      0.0026092529296875,
+      -0.003936767578125
+    ]
+  },
+  "plan": {
+    "estimated_makespan_seconds": 12.524801450721315,
+    "schedule_mode": "static",
+    "schedules": [
+      {
+        "device": "cuda:0",
+        "estimated_seconds": 12.524801450721315,
+        "kv_chunk_tokens": 8192,
+        "q_capacity_tokens": 12928,
+        "q_chunk_tokens": 12928,
+        "q_min_tokens": 2048,
+        "q_range": [
+          0,
+          177152
+        ],
+        "q_tokens": 177152,
+        "task_count": 14,
+        "workspace_bytes": 1250451456
+      },
+      {
+        "device": "cuda:1",
+        "estimated_seconds": 12.524757965963024,
+        "kv_chunk_tokens": 8192,
+        "q_capacity_tokens": 12928,
+        "q_chunk_tokens": 12928,
+        "q_min_tokens": 2048,
+        "q_range": [
+          177152,
+          354560
+        ],
+        "q_tokens": 177408,
+        "task_count": 14,
+        "workspace_bytes": 1250451456
+      },
+      {
+        "device": "cuda:2",
+        "estimated_seconds": 11.807249477086794,
+        "kv_chunk_tokens": 8192,
+        "q_capacity_tokens": 13056,
+        "q_chunk_tokens": 13056,
+        "q_min_tokens": 2048,
+        "q_range": [
+          354560,
+          524288
+        ],
+        "q_tokens": 169728,
+        "task_count": 13,
+        "workspace_bytes": 1257848832
+      }
+    ]
+  },
+  "status": "success",
+  "tokens_per_second": 42174.154569892125,
+  "torch_peak_allocated_bytes": {
+    "cuda:0": 1217421312,
+    "cuda:1": 1217421312,
+    "cuda:2": 1225342976
+  },
+  "torch_peak_reserved_bytes": {
+    "cuda:0": 1235222528,
+    "cuda:1": 1235222528,
+    "cuda:2": 1243611136
+  }
+}

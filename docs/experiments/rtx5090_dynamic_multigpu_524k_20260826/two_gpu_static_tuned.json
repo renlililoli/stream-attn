@@ -1,0 +1,262 @@
+{
+  "all_finite": true,
+  "calls": [
+    {
+      "call": 1,
+      "effective_tflops": 429.2326263914606,
+      "seconds": 18.361370649188757,
+      "stats": {
+        "dynamic_per_device": {},
+        "per_device": {
+          "cuda:0": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 18.356654296875,
+            "d2h_bytes": 3750756352,
+            "estimated_workspace_bytes": 1043324928,
+            "h2d_bytes": 424657551360,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 1792,
+            "max_resident_q_tokens": 9344,
+            "q_chunk_tokens": 9344,
+            "q_chunks": 28,
+            "wall_seconds": 18.359330572653562
+          },
+          "cuda:1": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 18.359416015625,
+            "d2h_bytes": 3765436416,
+            "estimated_workspace_bytes": 1102503936,
+            "h2d_bytes": 394607460352,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 1664,
+            "max_resident_q_tokens": 10368,
+            "q_chunk_tokens": 10368,
+            "q_chunks": 26,
+            "wall_seconds": 18.360615593846887
+          }
+        },
+        "task_trace": [],
+        "wall_seconds": 18.361060618888587
+      }
+    },
+    {
+      "call": 2,
+      "effective_tflops": 425.95717142467345,
+      "seconds": 18.502562878653407,
+      "stats": {
+        "dynamic_per_device": {},
+        "per_device": {
+          "cuda:0": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 18.499013671875,
+            "d2h_bytes": 3750756352,
+            "estimated_workspace_bytes": 1043324928,
+            "h2d_bytes": 424657551360,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 1792,
+            "max_resident_q_tokens": 9344,
+            "q_chunk_tokens": 9344,
+            "q_chunks": 28,
+            "wall_seconds": 18.501698521897197
+          },
+          "cuda:1": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 18.487787109375,
+            "d2h_bytes": 3765436416,
+            "estimated_workspace_bytes": 1102503936,
+            "h2d_bytes": 394607460352,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 1664,
+            "max_resident_q_tokens": 10368,
+            "q_chunk_tokens": 10368,
+            "q_chunks": 26,
+            "wall_seconds": 18.489001276902854
+          }
+        },
+        "task_trace": [],
+        "wall_seconds": 18.502219728194177
+      }
+    },
+    {
+      "call": 3,
+      "effective_tflops": 424.55586754478514,
+      "seconds": 18.563633081968874,
+      "stats": {
+        "dynamic_per_device": {},
+        "per_device": {
+          "cuda:0": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 18.559017578125,
+            "d2h_bytes": 3750756352,
+            "estimated_workspace_bytes": 1043324928,
+            "h2d_bytes": 424657551360,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 1792,
+            "max_resident_q_tokens": 9344,
+            "q_chunk_tokens": 9344,
+            "q_chunks": 28,
+            "wall_seconds": 18.562693011946976
+          },
+          "cuda:1": {
+            "backend": "triton",
+            "compute_pipeline_seconds": 18.56056640625,
+            "d2h_bytes": 3765436416,
+            "estimated_workspace_bytes": 1102503936,
+            "h2d_bytes": 394607460352,
+            "kv_chunk_tokens": 8192,
+            "kv_tiles": 1664,
+            "max_resident_q_tokens": 10368,
+            "q_chunk_tokens": 10368,
+            "q_chunks": 26,
+            "wall_seconds": 18.56267817178741
+          }
+        },
+        "task_trace": [],
+        "wall_seconds": 18.56323216902092
+      }
+    }
+  ],
+  "configuration": {
+    "calls": 3,
+    "compute_tflops": "221.34,223.91",
+    "cpu_chunk_tokens": 4096,
+    "cpu_workers": 32,
+    "d2h_gbps": null,
+    "devices": "cuda:0,cuda:1",
+    "dynamic_capacity_default": 23040,
+    "h2d_gbps": "24.47,22.63",
+    "kv_chunk": 8192,
+    "mode": "static",
+    "output": "docs/experiments/rtx5090_dynamic_multigpu_524k_20260826/two_gpu_static_tuned.json",
+    "q_capacities": "9344,10368",
+    "q_chunks": "9344,10368",
+    "q_min": "2048",
+    "task_trace": false,
+    "tokens": 524288,
+    "warmup": 1
+  },
+  "data_preparation_seconds": 27.108886537142098,
+  "environment": {
+    "cuda": "12.8",
+    "cuda_visible_devices": null,
+    "hostname": "7b98f1b0f529",
+    "numa_policy": [
+      "policy: interleave",
+      "preferred node: 7 (interleave next)",
+      "interleavemask: 5 7 ",
+      "interleavenode: 7",
+      "physcpubind: 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 416 417 418 419 420 421 422 423 424 425 426 427 428 429 430 431 432 433 434 435 436 437 438 439 440 441 442 443 444 445 446 447 480 481 482 483 484 485 486 487 488 489 490 491 492 493 494 495 496 497 498 499 500 501 502 503 504 505 506 507 508 509 510 511 ",
+      "cpubind: 5 7 ",
+      "nodebind: 5 7 ",
+      "membind: 5 7 ",
+      "preferred: 5 7"
+    ],
+    "nvidia_smi": [
+      "0, GPU-28e1c1eb-f738-21b5-909c-b025a2281165, 00000000:81:00.0, NVIDIA GeForce RTX 5090, 32607 MiB",
+      "1, GPU-35d69b8c-779a-bb45-263c-27587354c413, 00000000:E1:00.0, NVIDIA GeForce RTX 5090, 32607 MiB"
+    ],
+    "nvidia_visible_devices": "void",
+    "python": "3.12.3",
+    "torch": "2.10.0+cu128"
+  },
+  "median_effective_tflops": 425.95717142467345,
+  "median_seconds": 18.502562878653407,
+  "output_signature": {
+    "-1": [
+      -0.000911712646484375,
+      0.00054931640625,
+      -0.001068115234375,
+      -0.00286865234375,
+      0.004119873046875,
+      0.000865936279296875,
+      0.00390625,
+      0.0030059814453125
+    ],
+    "0": [
+      -0.0014190673828125,
+      -0.001434326171875,
+      0.00193023681640625,
+      -0.0001468658447265625,
+      0.0025177001953125,
+      -0.00341796875,
+      0.003570556640625,
+      0.00213623046875
+    ],
+    "131072": [
+      -0.004791259765625,
+      -0.0036773681640625,
+      0.003692626953125,
+      -0.005523681640625,
+      0.002044677734375,
+      -0.004608154296875,
+      0.0003986358642578125,
+      -0.001007080078125
+    ],
+    "262144": [
+      -0.00135040283203125,
+      -0.0017242431640625,
+      0.0004711151123046875,
+      -0.002197265625,
+      -8.165836334228516e-06,
+      -0.000530242919921875,
+      0.005859375,
+      -0.00164031982421875
+    ],
+    "393216": [
+      -0.004119873046875,
+      0.001495361328125,
+      -0.0002765655517578125,
+      -0.001800537109375,
+      0.00156402587890625,
+      -0.001190185546875,
+      0.0026092529296875,
+      -0.003936767578125
+    ]
+  },
+  "plan": {
+    "estimated_makespan_seconds": 18.06806665752927,
+    "schedule_mode": "static",
+    "schedules": [
+      {
+        "device": "cuda:0",
+        "estimated_seconds": 17.76883117626616,
+        "kv_chunk_tokens": 8192,
+        "q_capacity_tokens": 9344,
+        "q_chunk_tokens": 9344,
+        "q_min_tokens": 2048,
+        "q_range": [
+          0,
+          261632
+        ],
+        "q_tokens": 261632,
+        "task_count": 28,
+        "workspace_bytes": 1043324928
+      },
+      {
+        "device": "cuda:1",
+        "estimated_seconds": 18.06806665752927,
+        "kv_chunk_tokens": 8192,
+        "q_capacity_tokens": 10368,
+        "q_chunk_tokens": 10368,
+        "q_min_tokens": 2048,
+        "q_range": [
+          261632,
+          524288
+        ],
+        "q_tokens": 262656,
+        "task_count": 26,
+        "workspace_bytes": 1102503936
+      }
+    ]
+  },
+  "status": "success",
+  "tokens_per_second": 28335.966397653825,
+  "torch_peak_allocated_bytes": {
+    "cuda:0": 1010819072,
+    "cuda:1": 1069998080
+  },
+  "torch_peak_reserved_bytes": {
+    "cuda:0": 1027604480,
+    "cuda:1": 1086324736
+  }
+}
