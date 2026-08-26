@@ -136,6 +136,13 @@ The supported platform is Linux with Python 3.10+, PyTorch 2.5+, CUDA, and
 Triton 3.1+. FlashAttention packages are optional and selected only when the
 requested backend and GPU architecture are compatible.
 
+Windows users should run SeqAttn inside WSL2. For ComfyUI, the recommended
+deployment is a Linux CUDA container through Docker Desktop's WSL2 backend;
+for core development and hardware calibration, use a Python environment
+directly inside WSL2. Native Windows is not currently a supported runtime.
+See the [Windows and WSL2 guide](docs/windows_wsl2.md) for setup, storage,
+validation, and performance constraints.
+
 The release wheel contains the runtime only. Benchmark modules, command-line
 entry points, plotting dependencies, experiment data, and reports remain in
 the source repository and are not installed with the package.

@@ -78,6 +78,19 @@ and weight lifecycle behavior.
 The community package does not expose a user-facing attention workspace knob,
 but this generic core API remains valid for standalone and paged execution.
 
+## Windows and WSL2
+
+Windows users run the unchanged Linux package through WSL2. Recommend Docker
+Desktop's WSL2-backed Linux containers for ComfyUI deployments and a direct
+WSL2 Python environment for core development and calibration. Native Windows,
+Windows containers, and WSL1 are not supported.
+
+Follow `docs/windows_wsl2.md` when changing platform guidance. Do not disable
+`O_DIRECT`, replace POSIX storage semantics, or weaken CUDA/Triton validation
+to make native Windows imports pass. Do not call WSL2 validated until its
+acceptance checklist has been completed on a physical Windows/NVIDIA system;
+keep WSL2 and bare-metal Linux benchmark evidence labeled separately.
+
 ## Configuration
 
 Backend selection follows the documented explicit argument/environment/TOML
