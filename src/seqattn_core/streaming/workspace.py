@@ -5,6 +5,20 @@ import torch
 from ..planner import AttentionPlan
 
 
+class TaskTimingEvents:
+    def __init__(self) -> None:
+        self.task_start = torch.cuda.Event(enable_timing=True)
+        self.h2d_start = torch.cuda.Event(enable_timing=True)
+        self.h2d_end = torch.cuda.Event(enable_timing=True)
+        self.attention_start = torch.cuda.Event(enable_timing=True)
+        self.attention_end = torch.cuda.Event(enable_timing=True)
+        self.consumer_start = torch.cuda.Event(enable_timing=True)
+        self.consumer_end = torch.cuda.Event(enable_timing=True)
+        self.d2h_start = torch.cuda.Event(enable_timing=True)
+        self.d2h_end = torch.cuda.Event(enable_timing=True)
+        self.task_done = torch.cuda.Event(enable_timing=True)
+
+
 class CudaWorkspace:
     def __init__(self, plan: AttentionPlan) -> None:
         device = plan.device
@@ -50,6 +64,12 @@ class CudaWorkspace:
         self.output_has_pending_copy = [False for _ in range(plan.num_output_buffers)]
         self.pipeline_start = torch.cuda.Event(enable_timing=True)
         self.pipeline_end = torch.cuda.Event(enable_timing=True)
+        self.task_timing: TaskTimingEvents | None = None
+
+    def get_task_timing(self) -> TaskTimingEvents:
+        if self.task_timing is None:
+            self.task_timing = TaskTimingEvents()
+        return self.task_timing
 
 
-__all__ = ["CudaWorkspace"]
+__all__ = ["CudaWorkspace", "TaskTimingEvents"]

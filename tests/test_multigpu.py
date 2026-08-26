@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from seqattn_core import (
+    DynamicScheduleConfig,
     H3BlockOps,
     H3SequenceMeta,
     MultiGpuAttentionStats,
@@ -196,7 +197,8 @@ def test_static_plan_tasks_cover_packed_queries_exactly_once():
     reason="requires two CUDA devices and Triton",
 )
 @pytest.mark.parametrize("causal", [False, True])
-def test_two_gpu_static_runner_matches_reference(causal):
+@pytest.mark.parametrize("schedule_mode", ["static", "dynamic"])
+def test_two_gpu_runner_matches_reference(causal, schedule_mode):
     torch.manual_seed(211)
     dtype = torch.bfloat16
     q = torch.randn(257, 4, 32, dtype=dtype, pin_memory=True)
@@ -229,6 +231,8 @@ def test_two_gpu_static_runner_matches_reference(causal):
                 h2d_gbps=35,
             ),
         ],
+        schedule_mode=schedule_mode,
+        dynamic_config=DynamicScheduleConfig(enable_task_trace=True),
     )
     runner = MultiGpuStreamingAttentionRunner(plan)
     stats = MultiGpuAttentionStats()
@@ -250,9 +254,15 @@ def test_two_gpu_static_runner_matches_reference(causal):
 
     torch.testing.assert_close(actual, expected, atol=6e-2, rtol=8e-3)
     assert set(stats.per_device) == {"cuda:0", "cuda:1"}
-    assert sum(device_stats.q_chunks for device_stats in stats.per_device.values()) == sum(
-        len(schedule.query_tasks) for schedule in plan.schedules
-    )
+    if schedule_mode == "static":
+        assert sum(device_stats.q_chunks for device_stats in stats.per_device.values()) == sum(
+            len(schedule.query_tasks) for schedule in plan.schedules
+        )
+    else:
+        assert sum(item.q_tokens for item in stats.dynamic_per_device.values()) == q.shape[0]
+        assert sum(item.task_count for item in stats.dynamic_per_device.values()) == len(
+            stats.task_trace
+        )
 
 
 @pytest.mark.skipif(
@@ -353,7 +363,8 @@ def test_two_gpu_static_device_consumers_match_reference():
     torch.cuda.device_count() < 2 or not triton_is_available(),
     reason="requires two CUDA devices and Triton",
 )
-def test_two_gpu_h3_runner_matches_full_gpu_block():
+@pytest.mark.parametrize("schedule_mode", ["static", "dynamic"])
+def test_two_gpu_h3_runner_matches_full_gpu_block(schedule_mode):
     torch.manual_seed(227)
     dtype = torch.bfloat16
     tokens = 97
@@ -427,12 +438,13 @@ def test_two_gpu_h3_runner_matches_full_gpu_block():
                 output_mode="device_consumer",
             ),
         ],
+        schedule_mode=schedule_mode,
     )
     runner = MultiGpuH3DiTRunner(
         projected,
         multi_plan,
         hidden_features=hidden_features,
-        mlp_chunk_tokens={"cuda:0": 43, "cuda:1": 31},
+        mlp_chunk_tokens=({"cuda:0": 43, "cuda:1": 31} if schedule_mode == "static" else None),
     )
 
     def make_ops(device):

@@ -5,15 +5,28 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
+from typing import Literal
 
 import torch
 
 from ..config import StreamingAttentionConfig
 from ..planner import AttentionPlan, build_plan
-from ..stats import MultiGpuAttentionStats, StreamingAttentionStats
+from ..stats import (
+    DynamicDeviceStats,
+    DynamicTaskTrace,
+    MultiGpuAttentionStats,
+    StreamingAttentionStats,
+)
 from ..validation import validate_host_qkv
+from .dynamic import (
+    DynamicQController,
+    DynamicQueryCursor,
+    DynamicScheduleConfig,
+    DynamicWorkloadSignature,
+    QueryTaskMeasurement,
+)
 from .runner import StreamingAttentionRunner
 from .tasks import QueryTask, build_query_tasks
 
@@ -28,6 +41,9 @@ class MultiGpuDeviceSpec:
     h2d_gbps: float
     d2h_gbps: float | None = None
     fixed_q_block_overhead_us: float = 0.0
+    q_chunk_tokens: int | None = None
+    q_min_tokens: int | None = None
+    q_capacity_tokens: int | None = None
 
     def validate(self) -> None:
         device = torch.device(self.device)
@@ -44,6 +60,13 @@ class MultiGpuDeviceSpec:
             raise ValueError("d2h_gbps must be positive when provided")
         if self.fixed_q_block_overhead_us < 0:
             raise ValueError("fixed_q_block_overhead_us must be non-negative")
+        for name, value in (
+            ("q_chunk_tokens", self.q_chunk_tokens),
+            ("q_min_tokens", self.q_min_tokens),
+            ("q_capacity_tokens", self.q_capacity_tokens),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive when provided")
 
 
 @dataclass(frozen=True)
@@ -55,6 +78,10 @@ class DeviceQuerySchedule:
     q_range_stop: int
     query_tasks: tuple[QueryTask, ...]
     estimated_seconds: float
+    device_spec: MultiGpuDeviceSpec
+    initial_q_tokens: int
+    q_min_tokens: int
+    q_capacity_tokens: int
 
     @property
     def q_tokens(self) -> int:
@@ -74,6 +101,8 @@ class MultiGpuAttentionPlan:
     k_bounds: tuple[int, ...]
     schedules: tuple[DeviceQuerySchedule, ...]
     estimated_makespan_seconds: float
+    schedule_mode: Literal["static", "dynamic"] = "static"
+    dynamic_config: DynamicScheduleConfig | None = None
 
     @property
     def devices(self) -> tuple[torch.device, ...]:
@@ -120,7 +149,9 @@ def _range_seconds(
     tasks = build_query_tasks(
         q_bounds,
         k_bounds,
-        q_chunk_tokens=plan.q_chunk_tokens,
+        q_chunk_tokens=(
+            plan.q_chunk_tokens if spec.q_chunk_tokens is None else spec.q_chunk_tokens
+        ),
         range_start=range_start,
         range_stop=range_stop,
     )
@@ -267,11 +298,19 @@ def build_multi_gpu_plan(
     cu_seqlens_q: torch.Tensor,
     cu_seqlens_k: torch.Tensor,
     devices: Sequence[MultiGpuDeviceSpec],
+    schedule_mode: Literal["static", "dynamic"] = "static",
+    dynamic_config: DynamicScheduleConfig | None = None,
 ) -> MultiGpuAttentionPlan:
-    """Build one immutable heterogeneous Q-sharding schedule before execution."""
+    """Build immutable per-device workspaces and a static or dynamic Q schedule."""
 
     if len(devices) < 2:
         raise ValueError("multi-GPU planning requires at least two devices")
+    if schedule_mode not in {"static", "dynamic"}:
+        raise ValueError("schedule_mode must be 'static' or 'dynamic'")
+    if dynamic_config is not None:
+        dynamic_config.validate()
+    if schedule_mode == "dynamic" and dynamic_config is None:
+        dynamic_config = DynamicScheduleConfig()
     q_bounds = _bounds_from_cu("cu_seqlens_q", cu_seqlens_q, max_q_tokens)
     k_bounds = _bounds_from_cu("cu_seqlens_k", cu_seqlens_k, max_kv_tokens)
     if len(q_bounds) != len(k_bounds):
@@ -291,17 +330,44 @@ def build_multi_gpu_plan(
         if device in seen_devices:
             raise ValueError(f"duplicate multi-GPU device: {device}")
         seen_devices.add(device)
-        normalized = MultiGpuDeviceSpec(
-            device=device,
-            config=spec.config,
-            compute_tflops=spec.compute_tflops,
-            h2d_gbps=spec.h2d_gbps,
-            d2h_gbps=spec.d2h_gbps,
-            fixed_q_block_overhead_us=spec.fixed_q_block_overhead_us,
+        requested_config = (
+            spec.config
+            if spec.q_chunk_tokens is None
+            else replace(spec.config, q_chunk_tokens=spec.q_chunk_tokens)
         )
-        normalized_specs.append(normalized)
-        plans.append(
-            build_plan(
+        initial_plan = build_plan(
+            q_heads=q_heads,
+            kv_heads=kv_heads,
+            head_dim=head_dim,
+            dtype=dtype,
+            device=device,
+            max_q_tokens=max_q_tokens,
+            max_kv_tokens=max_kv_tokens,
+            config=requested_config,
+        )
+        initial_q_tokens = initial_plan.q_chunk_tokens
+        q_capacity_tokens = (
+            initial_q_tokens if spec.q_capacity_tokens is None else spec.q_capacity_tokens
+        )
+        q_capacity_tokens = min(q_capacity_tokens, max_q_tokens)
+        q_min_tokens = (
+            min(initial_plan.block_m, max_q_tokens)
+            if spec.q_min_tokens is None
+            else spec.q_min_tokens
+        )
+        if q_min_tokens > q_capacity_tokens:
+            raise ValueError("q_min_tokens cannot exceed q_capacity_tokens")
+        if initial_q_tokens > q_capacity_tokens:
+            raise ValueError("q_chunk_tokens cannot exceed q_capacity_tokens")
+        workspace_config = (
+            requested_config
+            if q_capacity_tokens == initial_plan.q_chunk_tokens
+            else replace(requested_config, q_chunk_tokens=q_capacity_tokens)
+        )
+        plan = (
+            initial_plan
+            if workspace_config == requested_config
+            else build_plan(
                 q_heads=q_heads,
                 kv_heads=kv_heads,
                 head_dim=head_dim,
@@ -309,27 +375,50 @@ def build_multi_gpu_plan(
                 device=device,
                 max_q_tokens=max_q_tokens,
                 max_kv_tokens=max_kv_tokens,
-                config=spec.config,
+                config=workspace_config,
             )
         )
+        if q_min_tokens > plan.q_chunk_tokens:
+            raise ValueError("q_min_tokens cannot exceed the aligned Q capacity")
+        normalized = MultiGpuDeviceSpec(
+            device=device,
+            config=workspace_config,
+            compute_tflops=spec.compute_tflops,
+            h2d_gbps=spec.h2d_gbps,
+            d2h_gbps=spec.d2h_gbps,
+            fixed_q_block_overhead_us=spec.fixed_q_block_overhead_us,
+            q_chunk_tokens=initial_q_tokens,
+            q_min_tokens=q_min_tokens,
+            q_capacity_tokens=plan.q_chunk_tokens,
+        )
+        normalized_specs.append(normalized)
+        plans.append(plan)
     output_modes = {plan.output_mode for plan in plans}
     if len(output_modes) != 1:
         raise ValueError("all multi-GPU device plans must use the same output_mode")
 
-    ranges = _partition_query_ranges(
-        q_bounds=q_bounds,
-        k_bounds=k_bounds,
-        plans=plans,
-        specs=normalized_specs,
+    ranges = (
+        _partition_query_ranges(
+            q_bounds=q_bounds,
+            k_bounds=k_bounds,
+            plans=plans,
+            specs=normalized_specs,
+        )
+        if schedule_mode == "static"
+        else [(0, max_q_tokens) for _ in plans]
     )
     schedules = []
     for spec, plan, (range_start, range_stop) in zip(normalized_specs, plans, ranges):
-        tasks = build_query_tasks(
-            q_bounds,
-            k_bounds,
-            q_chunk_tokens=plan.q_chunk_tokens,
-            range_start=range_start,
-            range_stop=range_stop,
+        tasks = (
+            build_query_tasks(
+                q_bounds,
+                k_bounds,
+                q_chunk_tokens=spec.q_chunk_tokens,
+                range_start=range_start,
+                range_stop=range_stop,
+            )
+            if schedule_mode == "static"
+            else ()
         )
         estimated_seconds = sum(_task_seconds(task, plan=plan, spec=spec) for task in tasks)
         schedules.append(
@@ -341,6 +430,10 @@ def build_multi_gpu_plan(
                 q_range_stop=range_stop,
                 query_tasks=tasks,
                 estimated_seconds=estimated_seconds,
+                device_spec=spec,
+                initial_q_tokens=spec.q_chunk_tokens,
+                q_min_tokens=spec.q_min_tokens,
+                q_capacity_tokens=spec.q_capacity_tokens,
             )
         )
 
@@ -356,19 +449,33 @@ def build_multi_gpu_plan(
         k_bounds=tuple(k_bounds),
         schedules=tuple(schedules),
         estimated_makespan_seconds=max(schedule.estimated_seconds for schedule in schedules),
+        schedule_mode=schedule_mode,
+        dynamic_config=dynamic_config,
     )
 
 
 class MultiGpuStreamingAttentionRunner:
-    """Single-flight executor for an immutable static multi-GPU Q schedule."""
+    """Single-flight executor for static or completion-driven multi-GPU Q scheduling."""
 
     def __init__(
         self,
         plan: MultiGpuAttentionPlan,
         *,
         runner_overrides: dict[torch.device | str, StreamingAttentionRunner] | None = None,
+        schedule_mode: Literal["static", "dynamic"] | None = None,
+        dynamic_config: DynamicScheduleConfig | None = None,
     ) -> None:
         self.plan = plan
+        self.schedule_mode = plan.schedule_mode if schedule_mode is None else schedule_mode
+        if self.schedule_mode not in {"static", "dynamic"}:
+            raise ValueError("schedule_mode must be 'static' or 'dynamic'")
+        if self.schedule_mode == "static" and plan.schedule_mode == "dynamic":
+            raise ValueError("a dynamic plan cannot be executed as a static schedule")
+        self.dynamic_config = plan.dynamic_config if dynamic_config is None else dynamic_config
+        if self.schedule_mode == "dynamic" and self.dynamic_config is None:
+            self.dynamic_config = DynamicScheduleConfig()
+        if self.dynamic_config is not None:
+            self.dynamic_config.validate()
         overrides = {
             str(torch.device(device)): runner
             for device, runner in ({} if runner_overrides is None else runner_overrides).items()
@@ -385,11 +492,54 @@ class MultiGpuStreamingAttentionRunner:
                 raise ValueError(f"runner override plan does not match {schedule.device}")
             runners.append(runner)
         self.runners = tuple(runners)
+        element_size = torch.empty((), dtype=plan.dtype).element_size()
+        self.controllers = tuple(
+            DynamicQController(
+                initial_q_tokens=schedule.initial_q_tokens,
+                q_min_tokens=schedule.q_min_tokens,
+                q_capacity_tokens=schedule.q_capacity_tokens,
+                block_m=schedule.attention_plan.block_m,
+                compute_tflops=schedule.device_spec.compute_tflops,
+                h2d_gbps=schedule.device_spec.h2d_gbps,
+                d2h_gbps=(
+                    schedule.device_spec.h2d_gbps
+                    if schedule.device_spec.d2h_gbps is None
+                    else schedule.device_spec.d2h_gbps
+                ),
+                q_heads=plan.q_heads,
+                kv_heads=plan.kv_heads,
+                element_size=element_size,
+                config=self.dynamic_config or DynamicScheduleConfig(),
+            )
+            for schedule in plan.schedules
+        )
         self._executor = ThreadPoolExecutor(
             max_workers=len(self.runners),
             thread_name_prefix="seqattn-gpu",
         )
         self._run_lock = threading.Lock()
+
+    def _workload_signature(
+        self,
+        schedule: DeviceQuerySchedule,
+        consumer_mode: str,
+    ) -> DynamicWorkloadSignature:
+        attention_plan = schedule.attention_plan
+        return DynamicWorkloadSignature(
+            q_segment_lengths=tuple(stop - start for start, stop in pairwise(self.plan.q_bounds)),
+            k_segment_lengths=tuple(stop - start for start, stop in pairwise(self.plan.k_bounds)),
+            q_heads=self.plan.q_heads,
+            kv_heads=self.plan.kv_heads,
+            head_dim=self.plan.head_dim,
+            dtype=str(self.plan.dtype),
+            kernel_profile=(
+                attention_plan.block_m,
+                attention_plan.block_n,
+                attention_plan.num_warps,
+                attention_plan.num_stages,
+            ),
+            consumer_mode=consumer_mode,
+        )
 
     def close(self) -> None:
         self._executor.shutdown(wait=True)
@@ -410,21 +560,21 @@ class MultiGpuStreamingAttentionRunner:
             cu_seqlens_k,
         )
         if tuple(q_bounds) != self.plan.q_bounds or tuple(k_bounds) != self.plan.k_bounds:
-            raise ValueError("runtime cu_seqlens do not match the static multi-GPU plan")
+            raise ValueError("runtime cu_seqlens do not match the multi-GPU plan")
         if q_cpu.shape != (
             self.plan.max_q_tokens,
             self.plan.q_heads,
             self.plan.head_dim,
         ):
-            raise ValueError("q shape does not match the static multi-GPU plan")
+            raise ValueError("q shape does not match the multi-GPU plan")
         if k_cpu.shape != (
             self.plan.max_kv_tokens,
             self.plan.kv_heads,
             self.plan.head_dim,
         ):
-            raise ValueError("k/v shape does not match the static multi-GPU plan")
+            raise ValueError("k/v shape does not match the multi-GPU plan")
         if q_cpu.dtype != self.plan.dtype:
-            raise ValueError("input dtype does not match the static multi-GPU plan")
+            raise ValueError("input dtype does not match the multi-GPU plan")
 
     def _run_workers(self, worker, stats: MultiGpuAttentionStats) -> None:
         per_device_stats = stats.per_device
@@ -443,6 +593,158 @@ class MultiGpuStreamingAttentionRunner:
             future.result()
         stats.wall_seconds += time.perf_counter() - started
         stats.per_device = per_device_stats
+
+    def _run_dynamic_workers(
+        self,
+        worker,
+        stats: MultiGpuAttentionStats,
+        *,
+        consumer_mode: str,
+        worker_context=None,
+    ) -> None:
+        assert self.dynamic_config is not None
+        per_device_stats = stats.per_device
+        dynamic_stats = stats.dynamic_per_device
+        for index, schedule in enumerate(self.plan.schedules):
+            device = str(schedule.device)
+            per_device_stats.setdefault(device, StreamingAttentionStats())
+            dynamic_stats[device] = DynamicDeviceStats()
+            self.controllers[index].reset_for_signature(
+                self._workload_signature(schedule, consumer_mode)
+            )
+
+        cursor = DynamicQueryCursor(
+            self.plan.q_bounds,
+            self.plan.k_bounds,
+            active_workers=len(self.runners),
+            tail_balance_factor=self.dynamic_config.tail_balance_factor,
+        )
+        start_barrier = threading.Barrier(len(self.runners))
+        failure_lock = threading.Lock()
+        trace_lock = threading.Lock()
+        failures: list[Exception] = []
+
+        def run_device(index: int) -> None:
+            schedule = self.plan.schedules[index]
+            device = str(schedule.device)
+            controller = self.controllers[index]
+            device_stats = per_device_stats[device]
+            summary = dynamic_stats[device]
+            start_barrier.wait()
+            try:
+                context = nullcontext() if worker_context is None else worker_context(index)
+                with context:
+                    while True:
+                        requested_q = controller.q_current
+                        task = cursor.claim(index, requested_q)
+                        if task is None:
+                            break
+                        measurement = QueryTaskMeasurement()
+                        h2d_before = device_stats.h2d_bytes
+                        d2h_before = device_stats.d2h_bytes
+                        task_started = time.perf_counter()
+                        worker(index, task, device_stats, measurement)
+                        host_elapsed = time.perf_counter() - task_started
+                        if measurement.elapsed_seconds <= 0:
+                            measurement.elapsed_seconds = host_elapsed
+                        if measurement.attention_seconds <= 0:
+                            measurement.attention_seconds = host_elapsed
+                        if measurement.h2d_bytes <= 0:
+                            measurement.h2d_bytes = device_stats.h2d_bytes - h2d_before
+                        if measurement.d2h_bytes <= 0:
+                            measurement.d2h_bytes = device_stats.d2h_bytes - d2h_before
+                        if measurement.attention_flops <= 0:
+                            measurement.attention_flops = (
+                                4
+                                * task.q_tokens
+                                * task.k_tokens
+                                * self.plan.q_heads
+                                * self.plan.head_dim
+                            )
+
+                        q_before, q_after = controller.observe(
+                            measurement,
+                            update_compute=not (task.segment_clamped or task.tail_clamped),
+                        )
+                        summary.task_count += 1
+                        summary.q_tokens += task.q_tokens
+                        summary.q_tokens_min = (
+                            task.q_tokens
+                            if summary.q_tokens_min == 0
+                            else min(summary.q_tokens_min, task.q_tokens)
+                        )
+                        summary.q_tokens_max = max(summary.q_tokens_max, task.q_tokens)
+                        summary.busy_seconds += measurement.elapsed_seconds
+                        summary.attention_seconds += measurement.attention_seconds
+                        summary.h2d_seconds += measurement.h2d_seconds
+                        summary.d2h_seconds += measurement.d2h_seconds
+                        summary.attention_flops += measurement.attention_flops
+                        summary.h2d_bytes += measurement.h2d_bytes
+                        summary.d2h_bytes += measurement.d2h_bytes
+                        if self.dynamic_config.enable_task_trace:
+                            trace = DynamicTaskTrace(
+                                device=device,
+                                segment_id=task.segment_id,
+                                q_start=task.q_start,
+                                q_stop=task.q_stop,
+                                claim_order=task.claim_order,
+                                requested_q=requested_q,
+                                actual_q=task.q_tokens,
+                                h2d_seconds=measurement.h2d_seconds,
+                                attention_seconds=measurement.attention_seconds,
+                                consumer_seconds=measurement.consumer_seconds,
+                                d2h_seconds=measurement.d2h_seconds,
+                                elapsed_seconds=measurement.elapsed_seconds,
+                                q_before=q_before,
+                                q_after=q_after,
+                                segment_clamped=task.segment_clamped,
+                                tail_clamped=task.tail_clamped,
+                            )
+                            with trace_lock:
+                                stats.task_trace.append(trace)
+            except Exception as error:  # noqa: BLE001 - worker boundary propagates the original.
+                cursor.cancel()
+                with failure_lock:
+                    if not failures:
+                        failures.append(error)
+            finally:
+                cursor.retire(index)
+
+        started = time.perf_counter()
+        futures = [self._executor.submit(run_device, index) for index in range(len(self.runners))]
+        for future in futures:
+            future.result()
+        stats.wall_seconds += time.perf_counter() - started
+        if failures:
+            raise failures[0]
+
+        total_q_tokens = sum(item.q_tokens for item in dynamic_stats.values())
+        for index, schedule in enumerate(self.plan.schedules):
+            summary = dynamic_stats[str(schedule.device)]
+            summary.q_tokens_average = (
+                summary.q_tokens / summary.task_count if summary.task_count else 0.0
+            )
+            summary.effective_tflops = (
+                summary.attention_flops / summary.attention_seconds / 1e12
+                if summary.attention_seconds > 0
+                else 0.0
+            )
+            summary.h2d_gbps = (
+                summary.h2d_bytes / summary.h2d_seconds / 1e9 if summary.h2d_seconds > 0 else 0.0
+            )
+            summary.d2h_gbps = (
+                summary.d2h_bytes / summary.d2h_seconds / 1e9 if summary.d2h_seconds > 0 else 0.0
+            )
+            snapshot = self.controllers[index].snapshot()
+            summary.effective_tflops_ema = snapshot.effective_tflops_ema
+            summary.h2d_gbps_ema = snapshot.h2d_gbps_ema
+            summary.d2h_gbps_ema = snapshot.d2h_gbps_ema
+            summary.task_elapsed_ema = snapshot.task_elapsed_ema
+            summary.q_current = snapshot.q_current
+            summary.work_fraction = summary.q_tokens / total_q_tokens if total_q_tokens else 0.0
+        stats.task_trace.sort(key=lambda item: item.claim_order)
+        stats.per_device = per_device_stats
+        stats.dynamic_per_device = dynamic_stats
 
     @torch.inference_mode()
     def __call__(
@@ -477,20 +779,49 @@ class MultiGpuStreamingAttentionRunner:
 
             stats = MultiGpuAttentionStats() if stats is None else stats
 
-            def worker(index: int, device_stats: StreamingAttentionStats) -> torch.Tensor:
-                schedule = self.plan.schedules[index]
-                return self.runners[index].run_query_tasks(
-                    q_cpu,
-                    k_cpu,
-                    v_cpu,
-                    schedule.query_tasks,
-                    softmax_scale=softmax_scale,
-                    causal=causal,
-                    out=out,
-                    stats=device_stats,
-                )
+            if self.schedule_mode == "static":
 
-            self._run_workers(worker, stats)
+                def static_worker(
+                    index: int, device_stats: StreamingAttentionStats
+                ) -> torch.Tensor:
+                    schedule = self.plan.schedules[index]
+                    return self.runners[index].run_query_tasks(
+                        q_cpu,
+                        k_cpu,
+                        v_cpu,
+                        schedule.query_tasks,
+                        softmax_scale=softmax_scale,
+                        causal=causal,
+                        out=out,
+                        stats=device_stats,
+                    )
+
+                self._run_workers(static_worker, stats)
+            else:
+
+                def dynamic_worker(
+                    index: int,
+                    task: QueryTask,
+                    device_stats: StreamingAttentionStats,
+                    measurement: QueryTaskMeasurement,
+                ) -> torch.Tensor:
+                    return self.runners[index].run_query_tasks(
+                        q_cpu,
+                        k_cpu,
+                        v_cpu,
+                        (task,),
+                        softmax_scale=softmax_scale,
+                        causal=causal,
+                        out=out,
+                        stats=device_stats,
+                        task_measurement=measurement,
+                    )
+
+                self._run_dynamic_workers(
+                    dynamic_worker,
+                    stats,
+                    consumer_mode="host",
+                )
             return out
         finally:
             self._run_lock.release()
@@ -531,29 +862,65 @@ class MultiGpuStreamingAttentionRunner:
                 raise ValueError("device_contexts contains a device outside the multi-GPU plan")
             stats = MultiGpuAttentionStats() if stats is None else stats
 
-            def worker(index: int, device_stats: StreamingAttentionStats) -> None:
-                schedule = self.plan.schedules[index]
-                context_factory = contexts.get(str(schedule.device))
-                context = nullcontext() if context_factory is None else context_factory()
-                with context:
+            if self.schedule_mode == "static":
+
+                def static_worker(index: int, device_stats: StreamingAttentionStats) -> None:
+                    schedule = self.plan.schedules[index]
+                    context_factory = contexts.get(str(schedule.device))
+                    context = nullcontext() if context_factory is None else context_factory()
+                    with context:
+                        self.runners[index].run_query_tasks_with_device_consumer(
+                            q_cpu,
+                            k_cpu,
+                            v_cpu,
+                            schedule.query_tasks,
+                            output_consumer=consumers[str(schedule.device)],
+                            softmax_scale=softmax_scale,
+                            causal=causal,
+                            stats=device_stats,
+                        )
+
+                self._run_workers(static_worker, stats)
+            else:
+
+                def dynamic_worker(
+                    index: int,
+                    task: QueryTask,
+                    device_stats: StreamingAttentionStats,
+                    measurement: QueryTaskMeasurement,
+                ) -> None:
+                    schedule = self.plan.schedules[index]
                     self.runners[index].run_query_tasks_with_device_consumer(
                         q_cpu,
                         k_cpu,
                         v_cpu,
-                        schedule.query_tasks,
+                        (task,),
                         output_consumer=consumers[str(schedule.device)],
                         softmax_scale=softmax_scale,
                         causal=causal,
                         stats=device_stats,
+                        task_measurement=measurement,
+                        task_lifecycle=True,
                     )
 
-            self._run_workers(worker, stats)
+                def dynamic_context(index: int):
+                    schedule = self.plan.schedules[index]
+                    context_factory = contexts.get(str(schedule.device))
+                    return nullcontext() if context_factory is None else context_factory()
+
+                self._run_dynamic_workers(
+                    dynamic_worker,
+                    stats,
+                    consumer_mode="device_consumer",
+                    worker_context=dynamic_context,
+                )
         finally:
             self._run_lock.release()
 
 
 __all__ = [
     "DeviceQuerySchedule",
+    "DynamicScheduleConfig",
     "MultiGpuAttentionPlan",
     "MultiGpuDeviceSpec",
     "MultiGpuStreamingAttentionRunner",

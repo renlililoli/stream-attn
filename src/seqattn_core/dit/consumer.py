@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 
 from ..stats import H3DiTStats
 from .types import H3BlockOps
 from .workspace import H3BlockWorkspace
+
+if TYPE_CHECKING:
+    from ..streaming.tasks import QueryTask
 
 
 class H3DeviceOutputConsumer:
@@ -18,6 +23,9 @@ class H3DeviceOutputConsumer:
         self.carry_start = 0
         self.carry_tokens = 0
         self.output_index = 0
+        self._task_active = False
+        self._task_d2h_started = False
+        self._task_q_tokens = 0
 
     def reset(
         self,
@@ -39,6 +47,21 @@ class H3DeviceOutputConsumer:
         self.carry_start = range_start
         self.carry_tokens = 0
         self.output_index = 0
+        self._task_active = False
+        self._task_d2h_started = False
+        self._task_q_tokens = 0
+
+    def begin_task(self, task: QueryTask) -> None:
+        if self._task_active:
+            raise RuntimeError("cannot begin a new H3 task before finishing the current task")
+        if self.carry_tokens:
+            raise RuntimeError("H3 task carry must be empty at task boundaries")
+        self.total_tokens = task.q_stop
+        self.next_token = task.q_start
+        self.carry_start = task.q_start
+        self._task_active = True
+        self._task_d2h_started = False
+        self._task_q_tokens = task.q_tokens
 
     def _validate_device_tile(
         self,
@@ -62,6 +85,8 @@ class H3DeviceOutputConsumer:
         assert self.stats is not None
         workspace = self.workspace
         tokens = stop - start
+        if tokens > workspace.final_output_chunk_tokens:
+            raise ValueError("consumer output exceeds the preallocated final_output_chunk_tokens")
         compute_stream = torch.cuda.current_stream(workspace.device)
         slot_index = self.output_index % len(workspace.final_output)
         if workspace.output_pending[slot_index]:
@@ -74,6 +99,9 @@ class H3DeviceOutputConsumer:
         workspace.output_ready[slot_index].record(compute_stream)
 
         with torch.cuda.stream(workspace.d2h_stream):
+            if self._task_active and not self._task_d2h_started:
+                workspace.task_d2h_start.record(workspace.d2h_stream)
+                self._task_d2h_started = True
             workspace.d2h_stream.wait_event(workspace.output_ready[slot_index])
             self.hidden_host[start:stop].copy_(
                 final_slot,
@@ -102,6 +130,13 @@ class H3DeviceOutputConsumer:
             tokens=tokens,
             name="attention_epilogue",
         )
+
+        if self._task_active:
+            if stop != self.total_tokens:
+                raise ValueError("dynamic H3 tasks must be consumed as one complete Q chunk")
+            self._emit(post_attention, start, stop)
+            self.next_token = stop
+            return
 
         chunk = self.workspace.mlp_chunk_tokens
         cursor = 0
@@ -137,7 +172,7 @@ class H3DeviceOutputConsumer:
             self.carry_tokens = remaining
         self.next_token = stop
 
-    def finish(self) -> None:
+    def _finish_range(self) -> None:
         if self.next_token != self.total_tokens:
             raise ValueError(
                 f"attention consumer received {self.next_token} of {self.total_tokens} tokens"
@@ -149,6 +184,30 @@ class H3DeviceOutputConsumer:
                 self.carry_start + self.carry_tokens,
             )
             self.carry_tokens = 0
+
+    def finish_task(self) -> torch.cuda.Event:
+        if not self._task_active:
+            raise RuntimeError("cannot finish an H3 task before begin_task()")
+        self._finish_range()
+        with torch.cuda.stream(self.workspace.d2h_stream):
+            self.workspace.task_done.record(self.workspace.d2h_stream)
+        self._task_active = False
+        return self.workspace.task_done
+
+    def task_d2h_seconds(self) -> float:
+        if not self._task_d2h_started:
+            return 0.0
+        return self.workspace.task_d2h_start.elapsed_time(self.workspace.task_done) / 1000.0
+
+    def task_d2h_bytes(self) -> int:
+        return (
+            self._task_q_tokens
+            * self.workspace.hidden_features
+            * self.workspace.carry.element_size()
+        )
+
+    def finish(self) -> None:
+        self._finish_range()
 
     def synchronize(self) -> None:
         self.workspace.d2h_stream.synchronize()

@@ -11,6 +11,7 @@ from ..reference import streaming_attention_reference
 from ..stats import StreamingAttentionStats
 from ..validation import require_pinned_inputs, validate_host_qkv
 from .backend import configured_backend_name, resolve_backend
+from .dynamic import QueryTaskMeasurement
 from .executor import TritonExecutorMixin
 from .flash_split_executor import FlashSplitExecutorMixin
 from .tasks import QueryTask, build_query_tasks
@@ -178,6 +179,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         causal: bool,
         out: torch.Tensor,
         stats: StreamingAttentionStats,
+        task_measurement: QueryTaskMeasurement | None = None,
     ) -> torch.Tensor:
         if execution_backend == "triton":
             return self._run_triton(
@@ -189,6 +191,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
                 causal,
                 out,
                 stats,
+                task_measurement=task_measurement,
             )
         if execution_backend in {"fa2", "fa3", "fa4"}:
             return self._run_flash_split(
@@ -216,6 +219,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         causal: bool = False,
         out: torch.Tensor,
         stats: StreamingAttentionStats | None = None,
+        task_measurement: QueryTaskMeasurement | None = None,
     ) -> torch.Tensor:
         """Execute a preplanned ordered subset of global query ranges."""
 
@@ -242,6 +246,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             causal,
             out,
             stats,
+            task_measurement,
         )
         stats.wall_seconds += time.perf_counter() - started
         return result
@@ -258,6 +263,8 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: StreamingAttentionStats | None = None,
+        task_measurement: QueryTaskMeasurement | None = None,
+        task_lifecycle: bool = False,
     ) -> None:
         """Pass a preplanned query subset to one device-local output consumer."""
 
@@ -279,6 +286,8 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             None,
             stats,
             output_consumer=output_consumer,
+            task_measurement=task_measurement,
+            task_lifecycle=task_lifecycle,
         )
         stats.wall_seconds += time.perf_counter() - started
 

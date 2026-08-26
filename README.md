@@ -188,9 +188,10 @@ buffers; callers must reserve separate memory for the CUDA context, weights,
 and other activations.
 
 For a fixed packed sequence, heterogeneous GPUs can use different resident-Q
-and streamed-K/V tile sizes. The multi-GPU planner runs once before denoising,
-uses measured compute and transfer rates to assign one contiguous Q shard to
-each device, and reuses that immutable schedule for every block and step:
+and streamed-K/V tile sizes. Static scheduling remains the default: the
+multi-GPU planner runs once before denoising, uses configured compute and
+transfer rates to assign one contiguous Q shard to each device, and reuses
+that immutable schedule for every block and step:
 
 ```python
 from seqattn_core import (
@@ -240,22 +241,86 @@ finally:
     runner.close()
 ```
 
+Dynamic scheduling is explicit opt-in. It keeps one segment-aware host cursor,
+lets each GPU claim another Q task only after its previous CUDA completion
+event, and retains per-device performance EMAs across repeated calls:
+
+```python
+from seqattn_core import DynamicScheduleConfig
+
+dynamic_devices = [
+    MultiGpuDeviceSpec(
+        device="cuda:0",
+        config=StreamingAttentionConfig(
+            q_chunk_tokens=5760,
+            kv_chunk_tokens=4096,
+            backend="triton",
+        ),
+        q_min_tokens=2048,
+        q_capacity_tokens=11520,
+        compute_tflops=205.0,
+        h2d_gbps=50.0,
+    ),
+    MultiGpuDeviceSpec(
+        device="cuda:1",
+        config=StreamingAttentionConfig(
+            q_chunk_tokens=5760,
+            kv_chunk_tokens=8192,
+            backend="triton",
+        ),
+        q_min_tokens=2048,
+        q_capacity_tokens=11520,
+        compute_tflops=150.0,
+        h2d_gbps=35.0,
+    ),
+]
+dynamic_plan = build_multi_gpu_plan(
+    q_heads=56,
+    kv_heads=56,
+    head_dim=128,
+    dtype=torch.bfloat16,
+    max_q_tokens=tokens,
+    max_kv_tokens=tokens,
+    cu_seqlens_q=cu,
+    cu_seqlens_k=cu,
+    devices=dynamic_devices,
+    schedule_mode="dynamic",
+    dynamic_config=DynamicScheduleConfig(enable_task_trace=False),
+)
+```
+
+In dynamic mode, `q_chunk_tokens` is the initial controller value and
+`q_capacity_tokens` is the fixed workspace capacity. Runtime tasks only use a
+workspace prefix; increasing Q never reallocates the workspace. The 5760
+initial value above illustrates an isolated RTX 5090 knee for one deployment,
+while the larger capacity leaves preallocated headroom for the lower per-device
+bandwidth that can appear under concurrent multi-GPU traffic. Neither value is
+a portable default. Configured compute and transfer rates only bootstrap the
+first tasks: the EMAs observe each device while all workers are running, so
+shared PCIe and host-memory contention may produce rates unlike any
+isolated-device measurement. Set capacity equal to the initial Q only when the
+deployment must forbid growth; otherwise the controller can move within the
+preallocated range without a steady-state allocation. Segment or global-tail
+clamps can still produce a smaller final task.
+
 Each GPU scans the complete K/V segment for its assigned Q rows. There is no
 cross-device softmax reduction or NCCL dependency. `MultiGpuH3DiTRunner`
-extends the same static schedule through the fused OutProj/MLP consumer path;
-the integration supplies one device-local `H3BlockOps` instance per GPU.
+extends both schedules through the fused OutProj/MLP consumer path; the
+integration supplies one device-local `H3BlockOps` instance per GPU. Dynamic
+H3 uses the current Q task as the OutProj, FFN, and final D2H unit, with no
+independent MLP tile or carry across tasks.
 
 ## Core APIs
 
 - `streaming_attn_func` and `streaming_attn_varlen_func` provide dense and
   packed CPU-backed attention entry points.
 - `StreamingAttentionRunner` reuses a planned contiguous host-memory pipeline.
-- `MultiGpuStreamingAttentionRunner` executes a preplanned heterogeneous Q
-  partition across independent device-local runners.
+- `MultiGpuStreamingAttentionRunner` executes either a preplanned Q partition
+  or completion-driven dynamic Q tasks across device-local runners.
 - `ProjectedAttentionRunner` connects model-owned QKV and output-projection
   callbacks without materializing raw attention output on the CPU.
-- `MultiGpuH3DiTRunner` applies the static partition to the fused H3 attention,
-  output-projection, and MLP consumer path.
+- `MultiGpuH3DiTRunner` applies static or dynamic Q scheduling to the fused H3
+  attention, output-projection, and MLP consumer path.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.
 - `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` provide aligned,
@@ -353,8 +418,8 @@ memory-budget enforcement, and runner reuse.
 Current scope:
 
 - Linux, inference-only dense attention. Contiguous DRAM streaming and the H3
-  fused consumer support static multi-GPU Q sharding; paged/NVMe execution
-  remains single-GPU.
+  fused consumer support static and dynamic multi-GPU Q scheduling;
+  paged/NVMe execution remains single-GPU.
 - No backward pass, dropout, arbitrary sparse masks, model-weight paging,
   cross-request HBM residency, io_uring, or GPUDirect Storage.
 - Caller-owned complete tensors used through memory adapters are outside the

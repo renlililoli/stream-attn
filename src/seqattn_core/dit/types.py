@@ -99,6 +99,7 @@ def estimate_h3_consumer_workspace_bytes(
     dtype: torch.dtype,
     mlp_chunk_tokens: int,
     num_final_output_buffers: int = 2,
+    final_output_chunk_tokens: int | None = None,
 ) -> int:
     if hidden_features <= 0:
         raise ValueError("hidden_features must be positive")
@@ -106,8 +107,17 @@ def estimate_h3_consumer_workspace_bytes(
         raise ValueError("mlp_chunk_tokens must be positive")
     if num_final_output_buffers <= 0:
         raise ValueError("num_final_output_buffers must be positive")
+    final_output_chunk_tokens = (
+        mlp_chunk_tokens if final_output_chunk_tokens is None else final_output_chunk_tokens
+    )
+    if final_output_chunk_tokens <= 0:
+        raise ValueError("final_output_chunk_tokens must be positive")
     element_size = torch.empty((), dtype=dtype).element_size()
-    return (1 + num_final_output_buffers) * mlp_chunk_tokens * hidden_features * element_size
+    return (
+        (mlp_chunk_tokens + num_final_output_buffers * final_output_chunk_tokens)
+        * hidden_features
+        * element_size
+    )
 
 
 __all__ = [

@@ -38,6 +38,8 @@ from .paged import (
 from .planner import AttentionPlan, build_plan
 from .projection import ProjectedAttentionRunner, streaming_projected_self_attention
 from .stats import (
+    DynamicDeviceStats,
+    DynamicTaskTrace,
     H3DiTStats,
     MultiGpuAttentionStats,
     MultiGpuH3DiTStats,
@@ -54,10 +56,16 @@ from .storage import (
 )
 from .streaming import (
     DeviceQuerySchedule,
+    DynamicControllerSnapshot,
+    DynamicQController,
+    DynamicQueryCursor,
+    DynamicScheduleConfig,
+    DynamicWorkloadSignature,
     MultiGpuAttentionPlan,
     MultiGpuDeviceSpec,
     MultiGpuStreamingAttentionRunner,
     QueryTask,
+    QueryTaskMeasurement,
     build_multi_gpu_plan,
     build_query_tasks,
 )
@@ -66,6 +74,13 @@ __all__ = [
     "AttentionPlan",
     "CallbackOutputSink",
     "DeviceQuerySchedule",
+    "DynamicControllerSnapshot",
+    "DynamicDeviceStats",
+    "DynamicQController",
+    "DynamicQueryCursor",
+    "DynamicScheduleConfig",
+    "DynamicTaskTrace",
+    "DynamicWorkloadSignature",
     "H3BlockOps",
     "H3ChunkPlan",
     "H3DiTRunner",
@@ -96,6 +111,7 @@ __all__ = [
     "ProjectedAttentionStats",
     "ProjectionPipelineConfig",
     "QueryTask",
+    "QueryTaskMeasurement",
     "SimulatedIoDelay",
     "SimulatedNvmeConfig",
     "SimulatedNvmeDevice",

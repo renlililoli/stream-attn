@@ -13,6 +13,12 @@ class QueryTask:
     k_stop: int
     q_local_offset: int
     causal_shift: int
+    segment_id: int = -1
+    device_id: int = -1
+    claim_order: int = -1
+    requested_q: int | None = None
+    segment_clamped: bool = False
+    tail_clamped: bool = False
 
     @property
     def q_tokens(self) -> int:
@@ -29,6 +35,8 @@ class QueryTask:
             raise ValueError("query task must contain a non-empty non-negative K/V range")
         if self.q_local_offset < 0:
             raise ValueError("query task q_local_offset must be non-negative")
+        if self.requested_q is not None and self.requested_q < self.q_tokens:
+            raise ValueError("query task requested_q cannot be smaller than its Q range")
 
 
 def build_query_tasks(
@@ -52,8 +60,8 @@ def build_query_tasks(
         raise ValueError(f"query range must lie within [0, {total_q}]")
 
     tasks: list[QueryTask] = []
-    for q_start, q_stop, k_start, k_stop in zip(
-        q_bounds[:-1], q_bounds[1:], k_bounds[:-1], k_bounds[1:]
+    for segment_id, (q_start, q_stop, k_start, k_stop) in enumerate(
+        zip(q_bounds[:-1], q_bounds[1:], k_bounds[:-1], k_bounds[1:])
     ):
         tile_range_start = max(q_start, range_start)
         tile_range_stop = min(q_stop, range_stop)
@@ -74,6 +82,7 @@ def build_query_tasks(
                     k_stop=k_stop,
                     q_local_offset=tile_start - q_start,
                     causal_shift=causal_shift,
+                    segment_id=segment_id,
                 )
             )
     return tuple(tasks)
