@@ -18,12 +18,43 @@ results, crashes, installation failures, or hardware-specific regressions,
 please open a [GitHub issue](https://github.com/renlililoli/stream-attn/issues)
 with the GPU, software versions, configuration, and a minimal reproduction.
 
-## Latest validation: 2026-08-24
+## Latest validation: 2026-08-26
 
-The figures below are regenerated directly from the final machine-readable
-observations with [`benchmarks/plot_latest_readme_results.py`](benchmarks/plot_latest_readme_results.py).
-They intentionally exclude older workspace sweeps, projections, contaminated
-runs, and measurements made with a different fixed K/V chunk.
+The figures below are regenerated from the checked-in final observations with
+[`benchmarks/plot_latest_readme_results.py`](benchmarks/plot_latest_readme_results.py).
+They intentionally exclude contaminated runs and measurements that do not match
+the documented timing boundary or fixed experiment configuration.
+
+### NVIDIA RTX 5090: near-linear multi-GPU scaling at 524K tokens
+
+<p align="center">
+  <img src="docs/assets/latest-rtx5090-multigpu-efficiency.svg" alt="RTX 5090 static and dynamic multi-GPU speedup and parallel efficiency" width="100%">
+</p>
+
+The 524,288-token host-output path retains more than 95% parallel efficiency
+through three RTX 5090 GPUs. Static scheduling uses the Q sizes reached by the
+dynamic controller under concurrent traffic, making this a tuned comparison
+rather than holding static mode to the isolated-device Q knee.
+
+| GPUs | Schedule | Median time | Speedup | Parallel efficiency |
+|---:|---|---:|---:|---:|
+| 1 | Historical SeqAttn, 14 GiB | 36.010 s | 1.000x | 100.00% |
+| 2 | Tuned static | 18.323 s | 1.965x | 98.26% |
+| 2 | Converged dynamic | 18.431 s | 1.954x | 97.69% |
+| 3 | Tuned static | 12.431 s | 2.897x | 96.56% |
+| 3 | Converged dynamic | 12.558 s | 2.867x | 95.58% |
+
+The tuned static Q sizes are `12288/13056` on two GPUs and
+`12928/12928/13056` on three GPUs. Static is 0.59% faster on two idle GPUs and
+1.02% faster on three idle GPUs; dynamic reaches 99.41% and 98.99% of that
+throughput while adapting to the actual per-device bandwidth observed when the
+GPUs contend for PCIe and host-memory resources. The one-GPU row is historical
+context from an earlier revision. The resident FA4 baseline documented in the
+full report has a different, GPU-resident output boundary and is not used to
+compute parallel efficiency.
+
+Full protocol, device mapping, Q convergence, and raw artifact index:
+[RTX 5090 524K multi-GPU scheduling report](docs/rtx5090_dynamic_multigpu_524k_2026-08-26.md).
 
 ### NVIDIA A30: complete host-memory roofline sweep
 
@@ -286,7 +317,7 @@ dynamic_devices = [
             backend="triton",
         ),
         q_min_tokens=2048,
-        q_capacity_tokens=11520,
+        q_capacity_tokens=23040,
         compute_tflops=205.0,
         h2d_gbps=50.0,
     ),
@@ -298,7 +329,7 @@ dynamic_devices = [
             backend="triton",
         ),
         q_min_tokens=2048,
-        q_capacity_tokens=11520,
+        q_capacity_tokens=23040,
         compute_tflops=150.0,
         h2d_gbps=35.0,
     ),
@@ -428,7 +459,7 @@ dependencies with `pip install -r benchmarks/requirements.txt`. Benchmark JSON
 records configuration, wall and CUDA-event timing, effective throughput,
 planned workspace, transfer volume, and memory peaks where applicable.
 
-Regenerate the two README figures from the checked-in final observations:
+Regenerate the three README figures from the checked-in final observations:
 
 ```bash
 python benchmarks/plot_latest_readme_results.py

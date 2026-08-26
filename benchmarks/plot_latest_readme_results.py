@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-
 
 ROOT = Path(__file__).resolve().parents[1]
 A30_OBSERVATIONS = (
@@ -16,6 +16,14 @@ RTX_COMPARISON = (
     / "docs/experiments/rtx5090_host_memory_roofline_experiment0b_interleave57_20260824"
     / "comparison_observations.json"
 )
+MULTIGPU_OBSERVATIONS = ROOT / "docs/experiments/rtx5090_dynamic_multigpu_524k_20260826"
+MULTIGPU_FILES = {
+    "2-GPU static": MULTIGPU_OBSERVATIONS / "two_gpu_static_tuned_final.json",
+    "2-GPU dynamic": MULTIGPU_OBSERVATIONS / "two_gpu_dynamic.json",
+    "3-GPU static": MULTIGPU_OBSERVATIONS / "three_gpu_static_tuned.json",
+    "3-GPU dynamic": MULTIGPU_OBSERVATIONS / "three_gpu_dynamic.json",
+}
+HISTORICAL_SINGLE_GPU_SECONDS = 36.010153
 
 INK = "#172033"
 MUTED = "#64748B"
@@ -59,8 +67,8 @@ def finish_axes(ax: plt.Axes) -> None:
     ax.tick_params(length=0)
 
 
-def save_svg(fig: plt.Figure, output: Path) -> None:
-    fig.savefig(output, format="svg", dpi=144, metadata={"Date": "2026-08-24"})
+def save_svg(fig: plt.Figure, output: Path, *, date: str = "2026-08-24") -> None:
+    fig.savefig(output, format="svg", dpi=144, metadata={"Date": date})
     lines = output.read_text().splitlines()
     output.write_text("\n".join(line.rstrip() for line in lines) + "\n")
 
@@ -290,12 +298,128 @@ def plot_rtx5090(output: Path) -> None:
     plt.close(fig)
 
 
+def plot_rtx5090_multigpu(output: Path) -> None:
+    observations = {name: load_json(path) for name, path in MULTIGPU_FILES.items()}
+    seconds = {
+        "2-GPU static": observations["2-GPU static"]["median_seconds"],
+        "2-GPU dynamic": statistics.median(
+            call["seconds"] for call in observations["2-GPU dynamic"]["calls"][-3:]
+        ),
+        "3-GPU static": observations["3-GPU static"]["median_seconds"],
+        "3-GPU dynamic": statistics.median(
+            call["seconds"] for call in observations["3-GPU dynamic"]["calls"][-3:]
+        ),
+    }
+    speedup = {name: HISTORICAL_SINGLE_GPU_SECONDS / value for name, value in seconds.items()}
+
+    gpu_counts = [1, 2, 3]
+    static_speedup = [1.0, speedup["2-GPU static"], speedup["3-GPU static"]]
+    dynamic_speedup = [1.0, speedup["2-GPU dynamic"], speedup["3-GPU dynamic"]]
+    static_efficiency = [value / gpu * 100.0 for gpu, value in zip(gpu_counts, static_speedup)]
+    dynamic_efficiency = [value / gpu * 100.0 for gpu, value in zip(gpu_counts, dynamic_speedup)]
+
+    fig, (speed_ax, efficiency_ax) = plt.subplots(1, 2, figsize=(12.2, 5.5))
+    speed_ax.plot(
+        gpu_counts,
+        gpu_counts,
+        color=MODEL,
+        linewidth=1.7,
+        linestyle=(0, (5, 4)),
+        label="Ideal linear scaling",
+    )
+    for values, color, marker, label in [
+        (static_speedup, TEAL, "o", "Tuned static"),
+        (dynamic_speedup, ORANGE, "s", "Converged dynamic"),
+    ]:
+        speed_ax.plot(
+            gpu_counts,
+            values,
+            color=color,
+            marker=marker,
+            markersize=7,
+            markerfacecolor="white",
+            markeredgewidth=1.8,
+            linewidth=2.2,
+            label=label,
+            zorder=3,
+        )
+        for gpu, value in zip(gpu_counts[1:], values[1:]):
+            speed_ax.annotate(
+                f"{value:.2f}x",
+                xy=(gpu, value),
+                xytext=(0, -17 if label == "Tuned static" else 10),
+                textcoords="offset points",
+                ha="center",
+                color=color,
+                fontsize=9,
+                fontweight="bold",
+            )
+    speed_ax.set_title("Measured speedup", loc="left")
+    speed_ax.set_xlabel("RTX 5090 GPUs")
+    speed_ax.set_ylabel("Speedup vs historical 1-GPU SeqAttn")
+    speed_ax.set_xticks(gpu_counts)
+    speed_ax.set_xlim(0.85, 3.15)
+    speed_ax.set_ylim(0.75, 3.15)
+    finish_axes(speed_ax)
+    speed_ax.legend(loc="upper left", fontsize=9)
+
+    x = [2, 3]
+    width = 0.3
+    static_bars = efficiency_ax.bar(
+        [value - width / 2 for value in x],
+        static_efficiency[1:],
+        width,
+        color=TEAL,
+        label="Tuned static",
+    )
+    dynamic_bars = efficiency_ax.bar(
+        [value + width / 2 for value in x],
+        dynamic_efficiency[1:],
+        width,
+        color=ORANGE,
+        label="Converged dynamic",
+    )
+    efficiency_ax.axhline(100.0, color=MODEL, linewidth=1.5, linestyle=(0, (5, 4)))
+    efficiency_ax.bar_label(static_bars, fmt="%.1f%%", padding=4, color=TEAL, fontweight="bold")
+    efficiency_ax.bar_label(dynamic_bars, fmt="%.1f%%", padding=4, color=ORANGE, fontweight="bold")
+    efficiency_ax.set_title("Parallel efficiency", loc="left")
+    efficiency_ax.set_xlabel("RTX 5090 GPUs")
+    efficiency_ax.set_ylabel("Efficiency")
+    efficiency_ax.set_xticks(x)
+    efficiency_ax.set_xticklabels(["2 GPUs", "3 GPUs"])
+    efficiency_ax.set_ylim(0, 106)
+    efficiency_ax.yaxis.set_major_formatter(lambda value, _position: f"{value:.0f}%")
+    finish_axes(efficiency_ax)
+    efficiency_ax.legend(loc="lower left", fontsize=9)
+
+    fig.suptitle(
+        "RTX 5090 multi-GPU scaling stays close to linear at 524K tokens",
+        x=0.06,
+        ha="left",
+        fontsize=18,
+        fontweight="bold",
+        color=INK,
+    )
+    fig.text(
+        0.06,
+        0.02,
+        "524,288 tokens | BF16 MHA 56x128 | host output | tuned static Q | "
+        "dynamic median after convergence | 2026-08-26",
+        color=MUTED,
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0.04, 0.07, 0.99, 0.91), w_pad=3.0)
+    save_svg(fig, output, date="2026-08-26")
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render the latest README benchmark figures")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "docs/assets")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     configure_style()
+    plot_rtx5090_multigpu(args.output_dir / "latest-rtx5090-multigpu-efficiency.svg")
     plot_a30(args.output_dir / "latest-a30-host-memory-roofline.svg")
     plot_rtx5090(args.output_dir / "latest-rtx5090-host-memory-roofline.svg")
 
