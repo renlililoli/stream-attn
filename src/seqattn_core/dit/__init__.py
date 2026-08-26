@@ -1,4 +1,5 @@
 from .config import H3TileConfig, load_h3_tile_config
+from .multigpu import MultiGpuH3DiTRunner
 from .runner import H3DiTRunner
 from .types import (
     DeviceTileOp,
@@ -17,6 +18,7 @@ __all__ = [
     "H3SequenceMeta",
     "H3TileConfig",
     "LeaseFactory",
+    "MultiGpuH3DiTRunner",
     "estimate_h3_aux_workspace_bytes",
     "load_h3_tile_config",
 ]
