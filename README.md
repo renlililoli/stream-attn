@@ -140,6 +140,9 @@ Windows users should run SeqAttn inside WSL2. For ComfyUI, the recommended
 deployment is a Linux CUDA container through Docker Desktop's WSL2 backend;
 for core development and hardware calibration, use a Python environment
 directly inside WSL2. Native Windows is not currently a supported runtime.
+WSL2 limits pinned system memory, so large-sequence capacity remains
+experimental and must be validated at the intended host-memory footprint;
+bare-metal Linux remains the production and performance reference platform.
 See the [Windows and WSL2 guide](docs/windows_wsl2.md) for setup, storage,
 validation, and performance constraints.
 

@@ -10,8 +10,8 @@ Use one of these two WSL2 paths:
 
 | Path | Recommended use | Status |
 |---|---|---|
-| Docker Desktop with the WSL2 backend and Linux CUDA containers | ComfyUI users and reproducible deployments | Recommended default |
-| Python virtual environment directly inside an Ubuntu WSL2 distribution | SeqAttn development, tests, and hardware calibration | Recommended for developers |
+| Docker Desktop with the WSL2 backend and Linux CUDA containers | ComfyUI users and reproducible Windows deployments | Preferred Windows path; experimental for large sequences |
+| Python virtual environment directly inside an Ubuntu WSL2 distribution | SeqAttn development, tests, and hardware calibration | Preferred Windows developer path |
 | Native Windows Python or Windows containers | None | Unsupported |
 
 The Docker and direct-Python paths execute the same Linux SeqAttn package. A
@@ -25,6 +25,15 @@ contract are Linux-only, the physical NVMe path uses POSIX file descriptors
 and `O_DIRECT`, and the supported CUDA kernels are built and tested with the
 Linux PyTorch/Triton toolchain. Do not silently disable these invariants merely
 to make an import succeed on native Windows.
+
+WSL2 is not yet equivalent to the bare-metal Linux reference platform for
+SeqAttn's largest workloads. NVIDIA documents a limit on pinned system memory
+available to CUDA applications under WSL2. SeqAttn intentionally keeps large
+Q/K/V or hidden-state working sets in pinned host memory, so a workload that
+runs on bare-metal Linux may fail at allocation or require smaller problem
+sizes under WSL2. A Docker Desktop container still runs through WSL2 and does
+not remove this limit. Use bare-metal Linux for production-scale long-sequence
+work until the intended end-to-end shape has passed the acceptance tests below.
 
 ## Recommended user path: Docker Desktop
 
@@ -129,6 +138,12 @@ print("pinned H2D probe:", tuple(copied.shape), copied.dtype)
 PY
 ```
 
+The small probe verifies that pinned transfer works, not that the required
+host-memory footprint is available. Before a full denoise, allocate and pin a
+representative input working set in an isolated process. Record the requested
+bytes and failure mode; do not add retry logic that silently reduces sequence
+length, tile count, or precision.
+
 Run CPU coverage first, followed by the CUDA paths relevant to the change:
 
 ```bash
@@ -191,6 +206,8 @@ concurrent H2D bandwidth and resident-attention roof in that same environment.
   containers through WSL2.
 - Native Windows Python is not a release target, even if CPU reference imports
   happen to work.
+- WSL2 has a documented pinned-system-memory limit. Docker Desktop does not
+  bypass it, so successful small tests do not establish large-sequence support.
 - Direct I/O and physical NVMe performance are not assumed from bare-metal
   Linux results.
 - WSL2 benchmark results must not be mixed with bare-metal Linux results in an
@@ -207,9 +224,11 @@ system records all of the following from a clean checkout:
 2. CPU reference, planner, backend-selection, Triton, projected-pipeline, and
    DiT tests.
 3. One contiguous streaming example with correctness statistics and peak HBM.
-4. One independent Q-chunk calibration sweep in the final WSL2 topology.
-5. The ComfyUI community example in its pinned Docker Desktop Linux image.
-6. Direct I/O capability recorded as pass, skip, or unsupported without silent
+4. A pinned-host allocation and one full denoise at the intended maximum
+   sequence shape, with process RAM and HBM peaks recorded.
+5. One independent Q-chunk calibration sweep in the final WSL2 topology.
+6. The ComfyUI community example in its pinned Docker Desktop Linux image.
+7. Direct I/O capability recorded as pass, skip, or unsupported without silent
    fallback.
 
 ## Platform references

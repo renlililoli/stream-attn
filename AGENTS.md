@@ -89,7 +89,10 @@ Follow `docs/windows_wsl2.md` when changing platform guidance. Do not disable
 `O_DIRECT`, replace POSIX storage semantics, or weaken CUDA/Triton validation
 to make native Windows imports pass. Do not call WSL2 validated until its
 acceptance checklist has been completed on a physical Windows/NVIDIA system;
-keep WSL2 and bare-metal Linux benchmark evidence labeled separately.
+keep WSL2 and bare-metal Linux benchmark evidence labeled separately. WSL2's
+pinned-system-memory limit is material to SeqAttn: require a representative
+host allocation and full target-shape run before claiming large-sequence
+support, including when the workload runs through Docker Desktop.
 
 ## Configuration
 
