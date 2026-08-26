@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Read `AGENTS.md` first. It is the current development, benchmark, and release
+guide. Prefer current source and `AGENTS.md` when older notes differ.
+
 ## Scope and setup
 
 `seqattn` is a standalone Linux/Python package for inference-only exact attention when Q/K/V exceed a fixed GPU or host-memory working set. It is also checked out as a submodule of the MiniMax-H3 integration repository; commits here and updates to the parent submodule pointer are separate operations.
