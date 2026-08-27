@@ -170,8 +170,8 @@ The formal A/B defaults are:
 tokens=262720
 q_chunk_tokens=16384
 kv_chunk_tokens=4096
-mlp_tile_tokens=2048
-materialized qkv_tile_tokens=2048
+mlp_tile_tokens=4096
+materialized qkv_tile_tokens=4096
 warmup=1
 repeats=3
 ```
@@ -180,6 +180,12 @@ repeats=3
 records median/mean wall time, Torch allocated/reserved peaks, PID NVML peak,
 RSS peak, and logical host activation bytes. Generated JSON is an experiment
 artifact and is not committed.
+
+The RTX 5090 Community calibration that selected the 4K tiles is recorded in
+[`minimax_h3_qkv_recompute_profile_2026-08-27.md`](minimax_h3_qkv_recompute_profile_2026-08-27.md).
+These are dedicated H3 deployment defaults; the generic projection pipeline
+keeps its portable default because the 4K result has not been generalized to
+other models or devices.
 
 Results from the removed projection-subtiled recompute implementation are not
 comparable with this architecture. In particular, earlier `Q=196608` results

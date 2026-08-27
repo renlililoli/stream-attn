@@ -38,13 +38,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--tokens", type=int, default=262_720)
     parser.add_argument("--q-chunk-tokens", type=int, default=16_384)
     parser.add_argument("--kv-chunk-tokens", type=int, default=4_096)
-    parser.add_argument("--qkv-tile-tokens", type=int, default=2_048)
-    parser.add_argument("--mlp-tile-tokens", type=int, default=2_048)
+    parser.add_argument("--qkv-tile-tokens", type=int, default=4_096)
+    parser.add_argument("--mlp-tile-tokens", type=int, default=4_096)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--validation-tokens", type=int, default=16)
     parser.add_argument("--sample-interval-ms", type=float, default=20.0)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--nvtx", action="store_true")
+    parser.add_argument("--cuda-profiler-range", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -62,7 +64,7 @@ def _require_version(actual: str, expected: str, name: str) -> None:
 
 
 def _mode_command(args: argparse.Namespace, mode: str, output: Path) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(Path(__file__).resolve()),
         "--mode",
@@ -96,6 +98,11 @@ def _mode_command(args: argparse.Namespace, mode: str, output: Path) -> list[str
         "--output",
         str(output),
     ]
+    if args.nvtx:
+        command.append("--nvtx")
+    if args.cuda_profiler_range:
+        command.append("--cuda-profiler-range")
+    return command
 
 
 def _run_comparison(args: argparse.Namespace) -> None:
@@ -327,6 +334,7 @@ def _run_mode(args: argparse.Namespace) -> None:
             q_chunk_tokens=args.q_chunk_tokens,
             kv_chunk_tokens=args.kv_chunk_tokens,
             output_mode="device_consumer",
+            enable_nvtx=args.nvtx,
         )
         attention_plan = build_plan(
             q_heads=heads,
@@ -442,13 +450,19 @@ def _run_mode(args: argparse.Namespace) -> None:
                 yield
 
         def attention_epilogue(attention, residual_host, start, stop):
-            update = block.attn.out_proj(attention)
-            residual = residual_host[start:stop].to(device, non_blocking=True)
-            return residual.add_(update)
+            with (
+                torch.cuda.nvtx.range("seqattn:h3_attention_epilogue")
+                if args.nvtx
+                else nullcontext()
+            ):
+                update = block.attn.out_proj(attention)
+                residual = residual_host[start:stop].to(device, non_blocking=True)
+                return residual.add_(update)
 
         def mlp(post_attention, start, stop):
             del start, stop
-            return post_attention.add_(block.mlp(block.norm2(post_attention)))
+            with torch.cuda.nvtx.range("seqattn:h3_mlp") if args.nvtx else nullcontext():
+                return post_attention.add_(block.mlp(block.norm2(post_attention)))
 
         ops = H3BlockOps(
             attention_epilogue=attention_epilogue,
@@ -462,6 +476,7 @@ def _run_mode(args: argparse.Namespace) -> None:
                 ProjectionPipelineConfig(
                     projection_chunk_tokens=args.qkv_tile_tokens,
                     num_projection_buffers=2,
+                    enable_nvtx=args.nvtx,
                 ),
             )
             runner = H3MaterializedRunner(
@@ -493,6 +508,7 @@ def _run_mode(args: argparse.Namespace) -> None:
                 attention_plan,
                 hidden_features=hidden_features,
                 attention_config=attention_config,
+                enable_nvtx=args.nvtx,
             )
             runner = H3RecomputeRunner(
                 recomputed_attention,
@@ -537,6 +553,8 @@ def _run_mode(args: argparse.Namespace) -> None:
         torch.cuda.reset_peak_memory_stats(device)
 
         records = []
+        if args.cuda_profiler_range:
+            torch.cuda.cudart().cudaProfilerStart()
         for repeat in range(args.repeats):
             reset_current_hidden()
             stats = H3DiTStats()
@@ -550,6 +568,8 @@ def _run_mode(args: argparse.Namespace) -> None:
                     "stats": stats.as_dict(),
                 }
             )
+        if args.cuda_profiler_range:
+            torch.cuda.cudart().cudaProfilerStop()
 
         output_hidden = current_hidden()
         signature_indices = sorted(

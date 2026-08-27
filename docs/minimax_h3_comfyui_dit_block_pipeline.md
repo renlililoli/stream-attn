@@ -113,8 +113,8 @@ TOML file selected by `SEQATTN_CONFIG`, or from
 
 ```toml
 [minimax_h3]
-qkv_tile_tokens = 2048
-mlp_tile_tokens = 2048
+qkv_tile_tokens = 4096
+mlp_tile_tokens = 4096
 ```
 
 The ComfyUI node exposes only `Q_attn` and `K_attn`. This keeps hardware
@@ -504,8 +504,8 @@ or device memory.
 The standalone ConvRot benchmark validates its Q-only and K/V-only row slices
 against the complete block-25 QKV projection element by element before timing.
 Its formal A/B comparison uses separate processes with the same
-`tokens=262720`, `Q_attn=16384`, `K_attn=4096`, and `C_mlp=2048`; only the
-materialized path has `C_proj=2048`. It records wall-time median/mean, PyTorch
+`tokens=262720`, `Q_attn=16384`, `K_attn=4096`, and `C_mlp=4096`; only the
+materialized path has `C_proj=4096`. It records wall-time median/mean, PyTorch
 allocated/reserved peaks, PID NVML peak, RSS peak, and logical host activation.
 It runs in the Community ComfyUI `comfyui:cu128` environment pinned to ComfyUI
 `0.30.0` commit `9a9fdb10ed144ce760d9682cb247526ea23cc525`, Torch
