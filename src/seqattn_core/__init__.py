@@ -9,9 +9,14 @@ from .config import (
     StreamingAttentionConfig,
 )
 from .dit import (
+    AttentionEpilogue,
     H3BlockOps,
-    H3ChunkPlan,
-    H3DiTRunner,
+    H3MaterializedPlan,
+    H3MaterializedProjection,
+    H3MaterializedRunner,
+    H3RecomputePlan,
+    H3RecomputeProjection,
+    H3RecomputeRunner,
     H3SequenceMeta,
     H3TileConfig,
     load_h3_tile_config,
@@ -35,8 +40,20 @@ from .paged import (
     TensorLayout,
 )
 from .planner import AttentionPlan, build_plan
-from .projection import ProjectedAttentionRunner, streaming_projected_self_attention
-from .stats import H3DiTStats, PagedAttentionStats, ProjectedAttentionStats, StreamingAttentionStats
+from .projection import (
+    KVTileProjector,
+    ProjectedAttentionRunner,
+    QTileProjector,
+    RecomputedAttentionRunner,
+    streaming_projected_self_attention,
+)
+from .stats import (
+    H3DiTStats,
+    PagedAttentionStats,
+    ProjectedAttentionStats,
+    RecomputedAttentionStats,
+    StreamingAttentionStats,
+)
 from .storage import (
     NvmeOutputSink,
     NvmeQKVStore,
@@ -46,17 +63,23 @@ from .storage import (
 )
 
 __all__ = [
+    "AttentionEpilogue",
     "AttentionPlan",
     "CallbackOutputSink",
     "H3BlockOps",
-    "H3ChunkPlan",
-    "H3DiTRunner",
     "H3DiTStats",
+    "H3MaterializedPlan",
+    "H3MaterializedProjection",
+    "H3MaterializedRunner",
+    "H3RecomputePlan",
+    "H3RecomputeProjection",
+    "H3RecomputeRunner",
     "H3SequenceMeta",
     "H3TileConfig",
     "HostMemoryPlan",
     "HostMemorySnapshot",
     "KVLayout",
+    "KVTileProjector",
     "MemoryPageSink",
     "MemoryPageSource",
     "NvmeOutputSink",
@@ -71,6 +94,9 @@ __all__ = [
     "ProjectedAttentionRunner",
     "ProjectedAttentionStats",
     "ProjectionPipelineConfig",
+    "QTileProjector",
+    "RecomputedAttentionRunner",
+    "RecomputedAttentionStats",
     "SimulatedIoDelay",
     "SimulatedNvmeConfig",
     "SimulatedNvmeDevice",

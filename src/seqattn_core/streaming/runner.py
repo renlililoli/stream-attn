@@ -9,10 +9,11 @@ from ..config import StreamingAttentionConfig
 from ..planner import AttentionPlan
 from ..reference import streaming_attention_reference
 from ..stats import StreamingAttentionStats
-from ..validation import require_pinned_inputs, validate_host_qkv
+from ..validation import require_pinned_inputs, validate_cu_seqlens, validate_host_qkv
 from .backend import configured_backend_name, resolve_backend
 from .executor import TritonExecutorMixin
 from .flash_split_executor import FlashSplitExecutorMixin
+from .tile_source import QKVTileSource
 from .workspace import CudaWorkspace
 
 
@@ -47,9 +48,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             allowed=allowed,
         )
         self._workspace = (
-            CudaWorkspace(plan)
-            if self.backend in {"triton", "fa2", "fa3", "fa4"}
-            else None
+            CudaWorkspace(plan) if self.backend in {"triton", "fa2", "fa3", "fa4"} else None
         )
 
     def _validate_inputs(
@@ -253,9 +252,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
 
         if self.backend != "triton":
             raise ValueError("device output consumers require the Triton backend")
-        q_bounds, k_bounds = self._validate_inputs(
-            q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k
-        )
+        q_bounds, k_bounds = self._validate_inputs(q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k)
         self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
 
         scale = self.plan.head_dim**-0.5 if softmax_scale is None else float(softmax_scale)
@@ -265,6 +262,53 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             q_cpu,
             k_cpu,
             v_cpu,
+            q_bounds,
+            k_bounds,
+            scale,
+            causal,
+            None,
+            stats,
+            output_consumer=output_consumer,
+        )
+        stats.wall_seconds += time.perf_counter() - started
+
+    def _run_with_qkv_source(
+        self,
+        source: QKVTileSource,
+        q_tokens: int,
+        kv_tokens: int,
+        cu_seqlens_q: torch.Tensor,
+        cu_seqlens_k: torch.Tensor,
+        *,
+        output_consumer,
+        softmax_scale: float | None = None,
+        causal: bool = False,
+        stats: StreamingAttentionStats | None = None,
+    ) -> None:
+        if self.backend != "triton":
+            raise ValueError("device Q/K/V tile sources require the Triton backend")
+        if self.plan.output_mode != "device_consumer":
+            raise ValueError("device Q/K/V tile sources require device_consumer output mode")
+        if q_tokens <= 0 or kv_tokens <= 0:
+            raise ValueError("q_tokens and kv_tokens must be positive")
+        if q_tokens > self.plan.max_q_tokens or kv_tokens > self.plan.max_kv_tokens:
+            raise ValueError("input token count exceeds the runner plan")
+
+        q_bounds = validate_cu_seqlens(cu_seqlens_q, q_tokens, "cu_seqlens_q")
+        k_bounds = validate_cu_seqlens(cu_seqlens_k, kv_tokens, "cu_seqlens_k")
+        if len(q_bounds) != len(k_bounds):
+            raise ValueError("cu_seqlens_q and cu_seqlens_k must describe the same batch size")
+        for index, (q_start, q_stop, k_start, k_stop) in enumerate(
+            zip(q_bounds[:-1], q_bounds[1:], k_bounds[:-1], k_bounds[1:])
+        ):
+            if q_stop > q_start and k_stop == k_start:
+                raise ValueError(f"sequence {index} has queries but no keys")
+
+        scale = self.plan.head_dim**-0.5 if softmax_scale is None else float(softmax_scale)
+        stats = self._prepare_stats(stats)
+        started = time.perf_counter()
+        self._run_triton_from_source(
+            source,
             q_bounds,
             k_bounds,
             scale,

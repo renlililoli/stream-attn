@@ -193,7 +193,13 @@ and other activations.
   packed CPU-backed attention entry points.
 - `StreamingAttentionRunner` reuses a planned contiguous host-memory pipeline.
 - `ProjectedAttentionRunner` connects model-owned QKV and output-projection
-  callbacks without materializing raw attention output on the CPU.
+  callbacks through sequence-sized pinned host Q/K/V without materializing raw
+  attention output on the CPU.
+- `RecomputedAttentionRunner` regenerates complete attention-sized Q and K/V
+  tiles through direct-write callbacks and allocates no host Q/K/V.
+- `H3MaterializedRunner` and `H3RecomputeRunner` provide explicit MiniMax-H3
+  block policies with one-hidden in-place and two-hidden ping-pong contracts,
+  respectively.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.
 - `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` provide aligned,
@@ -206,7 +212,9 @@ boundaries are scheduler boundaries, and causal positions use bottom-right
 alignment for unequal Q/K lengths.
 
 See [architecture notes](docs/architecture.md) for package boundaries, memory
-hierarchy, recurrence details, and pipeline invariants.
+hierarchy, recurrence details, and pipeline invariants. The split DiT storage
+policies and direct-write projector contracts are documented in
+[DiT QKV recompute architecture](docs/dit_qkv_recompute_architecture.md).
 
 ## Paging and NVMe
 

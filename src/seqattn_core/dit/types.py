@@ -3,17 +3,22 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from itertools import pairwise
 
 import torch
 
-from ..projection.types import QKVProjector
+from ..projection.types import KVTileProjector, QKVProjector, QTileProjector
 
 DeviceTileOp = Callable[[torch.Tensor, int, int], torch.Tensor]
+AttentionEpilogue = Callable[
+    [torch.Tensor, torch.Tensor, int, int],
+    torch.Tensor,
+]
 LeaseFactory = Callable[[], AbstractContextManager]
 
 
 @dataclass(frozen=True)
-class H3ChunkPlan:
+class H3MaterializedPlan:
     projection_chunk_tokens: int
     q_chunk_tokens: int
     kv_chunk_tokens: int
@@ -21,27 +26,49 @@ class H3ChunkPlan:
     estimated_workspace_bytes: int
 
     def validate(self) -> None:
-        for name, value in (
-            ("projection_chunk_tokens", self.projection_chunk_tokens),
-            ("q_chunk_tokens", self.q_chunk_tokens),
-            ("kv_chunk_tokens", self.kv_chunk_tokens),
-            ("mlp_chunk_tokens", self.mlp_chunk_tokens),
-            ("estimated_workspace_bytes", self.estimated_workspace_bytes),
-        ):
+        for name, value in vars(self).items():
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
 
 
 @dataclass(frozen=True)
-class H3BlockOps:
-    project_qkv: QKVProjector
-    attention_epilogue: DeviceTileOp
-    mlp: DeviceTileOp
-    qkv_lease: LeaseFactory | None = None
-    consumer_lease: LeaseFactory | None = None
+class H3RecomputePlan:
+    q_chunk_tokens: int
+    kv_chunk_tokens: int
+    mlp_chunk_tokens: int
+    hidden_staging_tokens: int
+    estimated_workspace_bytes: int
 
-    def qkv_context(self) -> AbstractContextManager:
-        return nullcontext() if self.qkv_lease is None else self.qkv_lease()
+    def validate(self) -> None:
+        for name, value in vars(self).items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+
+
+@dataclass(frozen=True)
+class H3MaterializedProjection:
+    project_qkv: QKVProjector
+    weight_lease: LeaseFactory | None = None
+
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
+
+
+@dataclass(frozen=True)
+class H3RecomputeProjection:
+    project_q: QTileProjector
+    project_kv: KVTileProjector
+    weight_lease: LeaseFactory | None = None
+
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
+
+
+@dataclass(frozen=True)
+class H3BlockOps:
+    attention_epilogue: AttentionEpilogue
+    mlp: DeviceTileOp
+    consumer_lease: LeaseFactory | None = None
 
     def consumer_context(self) -> AbstractContextManager:
         return nullcontext() if self.consumer_lease is None else self.consumer_lease()
@@ -62,9 +89,37 @@ class H3SequenceMeta:
             raise ValueError("cu_seqlens must contain at least two boundaries")
         if int(self.cu_seqlens[0]) != 0 or int(self.cu_seqlens[-1]) != tokens:
             raise ValueError("cu_seqlens must span the complete hidden tensor")
+        bounds = self.cu_seqlens.to(dtype=torch.int64).tolist()
+        if any(stop < start for start, stop in pairwise(bounds)):
+            raise ValueError("cu_seqlens must be non-decreasing")
 
 
-def estimate_h3_aux_workspace_bytes(
+def _validate_aux_workspace_args(
+    *,
+    hidden_features: int,
+    mlp_chunk_tokens: int,
+    num_final_output_buffers: int,
+) -> None:
+    for name, value in (
+        ("hidden_features", hidden_features),
+        ("mlp_chunk_tokens", mlp_chunk_tokens),
+        ("num_final_output_buffers", num_final_output_buffers),
+    ):
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+
+
+def _consumer_workspace_bytes(
+    *,
+    hidden_features: int,
+    mlp_chunk_tokens: int,
+    num_final_output_buffers: int,
+    element_size: int,
+) -> int:
+    return (1 + num_final_output_buffers) * mlp_chunk_tokens * hidden_features * element_size
+
+
+def estimate_h3_materialized_aux_workspace_bytes(
     *,
     hidden_features: int,
     dtype: torch.dtype,
@@ -73,31 +128,64 @@ def estimate_h3_aux_workspace_bytes(
     mlp_chunk_tokens: int,
     num_final_output_buffers: int = 2,
 ) -> int:
-    if hidden_features <= 0:
-        raise ValueError("hidden_features must be positive")
+    _validate_aux_workspace_args(
+        hidden_features=hidden_features,
+        mlp_chunk_tokens=mlp_chunk_tokens,
+        num_final_output_buffers=num_final_output_buffers,
+    )
     for name, value in (
         ("projection_chunk_tokens", projection_chunk_tokens),
         ("num_projection_buffers", num_projection_buffers),
-        ("mlp_chunk_tokens", mlp_chunk_tokens),
-        ("num_final_output_buffers", num_final_output_buffers),
     ):
         if value <= 0:
             raise ValueError(f"{name} must be positive")
     element_size = torch.empty((), dtype=dtype).element_size()
-    projection = (
-        num_projection_buffers * projection_chunk_tokens * hidden_features * element_size
-    )
-    consumer = (
-        (1 + num_final_output_buffers) * mlp_chunk_tokens * hidden_features * element_size
+    projection = num_projection_buffers * projection_chunk_tokens * hidden_features * element_size
+    consumer = _consumer_workspace_bytes(
+        hidden_features=hidden_features,
+        mlp_chunk_tokens=mlp_chunk_tokens,
+        num_final_output_buffers=num_final_output_buffers,
+        element_size=element_size,
     )
     return projection + consumer
 
 
+def estimate_h3_recompute_aux_workspace_bytes(
+    *,
+    hidden_features: int,
+    dtype: torch.dtype,
+    hidden_staging_tokens: int,
+    mlp_chunk_tokens: int,
+    num_final_output_buffers: int = 2,
+) -> int:
+    _validate_aux_workspace_args(
+        hidden_features=hidden_features,
+        mlp_chunk_tokens=mlp_chunk_tokens,
+        num_final_output_buffers=num_final_output_buffers,
+    )
+    if hidden_staging_tokens <= 0:
+        raise ValueError("hidden_staging_tokens must be positive")
+    element_size = torch.empty((), dtype=dtype).element_size()
+    staging = hidden_staging_tokens * hidden_features * element_size
+    consumer = _consumer_workspace_bytes(
+        hidden_features=hidden_features,
+        mlp_chunk_tokens=mlp_chunk_tokens,
+        num_final_output_buffers=num_final_output_buffers,
+        element_size=element_size,
+    )
+    return staging + consumer
+
+
 __all__ = [
+    "AttentionEpilogue",
     "DeviceTileOp",
     "H3BlockOps",
-    "H3ChunkPlan",
+    "H3MaterializedPlan",
+    "H3MaterializedProjection",
+    "H3RecomputePlan",
+    "H3RecomputeProjection",
     "H3SequenceMeta",
     "LeaseFactory",
-    "estimate_h3_aux_workspace_bytes",
+    "estimate_h3_materialized_aux_workspace_bytes",
+    "estimate_h3_recompute_aux_workspace_bytes",
 ]

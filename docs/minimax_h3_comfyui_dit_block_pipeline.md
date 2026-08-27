@@ -1,6 +1,6 @@
 # MiniMax-H3 ComfyUI DiT block streaming pipeline
 
-Date: 2026-08-25
+Date: 2026-08-27
 
 ## Scope and ownership boundary
 
@@ -18,7 +18,8 @@ or weight-prefetch policy.
 The ComfyUI adapter supplies only leaf operations and their weight leases:
 
 - AdaLN projection;
-- QKV projection;
+- complete QKV projection for materialized execution;
+- Q-only and K/V-only direct-write projection for recompute execution;
 - attention output projection;
 - MLP FC1 and FC2;
 - normalization weights, epsilons, dimensions, and quantization metadata.
@@ -52,14 +53,22 @@ X2       = X1 + gate_mlp * M
 Only `X2` returns to CPU. The full raw attention output, `X1`, FC1 output, and
 SwiGLU intermediate are never materialized in host memory.
 
-The completed block writes `X2` back into the same pinned allocation that held
-`X0`. The overwrite is safe because QKV projection has consumed all of `X0`
-before attention begins, and each destination slice is written only after its
-attention residual H2D has completed.
+The storage policy is selected explicitly by the caller:
+
+- the materialized runner writes `X2` back into the pinned allocation that
+  held `X0`; complete QKV projection has consumed `X0` before attention begins;
+- the recompute runner keeps `X0` immutable for the complete block and writes
+  `X2` into a distinct pinned destination because later query ranges must still
+  regenerate K/V from the original source.
+
+There is no automatic host-memory policy or compatibility wrapper between the
+two modes. The implementation details and public projection contracts are also
+summarized in
+[`dit_qkv_recompute_architecture.md`](dit_qkv_recompute_architecture.md).
 
 ## Independent chunk axes
 
-The block plan has four independent sequence chunk sizes:
+The materialized block plan has four independent sequence chunk sizes:
 
 | Symbol | Stage | Primary constraint |
 |---|---|---|
@@ -70,6 +79,12 @@ The block plan has four independent sequence chunk sizes:
 
 No equality relationship is imposed between these values. In particular,
 `C_mlp` is not inherited from `C_proj` or `Q_attn`.
+
+The recompute plan has only three sequence axes: `Q_attn`, `K_attn`, and
+`C_mlp`. It has no `C_proj`. Every Q-only projection range is exactly one
+attention Q range, and every K/V-only projection range is exactly one
+attention K/V tile, including non-divisible tails. Its hidden staging capacity
+is `max(Q_attn, K_attn)` tokens.
 
 `Q_attn` is an explicit runtime input selected from a calibrated roofline
 critical point. It is not inferred from an activation-workspace budget. The
@@ -91,9 +106,10 @@ turn device memory back into a tuning variable. The reported estimated
 workspace bytes are diagnostic only; there is no H3 workspace-budget input or
 workspace-driven planner mode.
 
-`C_proj` and `C_mlp` are deployment configuration rather than ComfyUI workflow
-parameters. They are read from the shared SeqAttn TOML file selected by
-`SEQATTN_CONFIG`, or from `~/.config/seqattn/config.toml` by default:
+For materialized execution, `C_proj` and `C_mlp` are deployment configuration
+rather than ComfyUI workflow parameters. They are read from the shared SeqAttn
+TOML file selected by `SEQATTN_CONFIG`, or from
+`~/.config/seqattn/config.toml` by default:
 
 ```toml
 [minimax_h3]
@@ -124,7 +140,7 @@ Each block computes its six AdaLN tables from `t_emb` once. Pointwise kernels
 select rows by `modulation_row_ids_gpu`; Python segment loops and per-segment
 device copies are not part of the target path.
 
-## Phase A: fused QKV producer
+## Materialized Phase A: fused QKV producer
 
 The producer uses a two-slot H2D/compute/D2H ring:
 
@@ -160,12 +176,19 @@ The QKV lease can be released after the final projection compute event, while
 the last Q/K/V D2H is still draining. Consumer-weight preparation may overlap
 that drain.
 
-## Phase B: attention and MLP consumer
+## Shared attention and MLP consumer
+
+Both storage policies enter the same Triton online-softmax, finalize, and
+output-consumer loop. Materialized execution loads Q/K/V from pinned host
+backing through the H2D stream and its double-buffer events. Recompute execution
+stages the matching source-hidden range and invokes a Q-only or K/V-only
+projector directly into the attention workspace on the compute stream.
 
 The consumer holds OutProj, FC1, and FC2 together for the complete resident-Q
 sweep. For each query range `[q0, q1)`:
 
-1. Copy `Q_host[q0:q1]` and the original residual `X0_host[q0:q1]` to GPU.
+1. Load or recompute Q for `[q0:q1)` and copy the explicit residual
+   `X0_host[q0:q1]` to GPU.
 2. Scan the complete K/V segment through a double-buffered `K_attn` ring.
 3. Maintain FP32 online-softmax maximum, sum, and accumulator for resident Q.
 4. Finalize raw attention output into a buffer separate from resident Q.
@@ -173,7 +196,7 @@ sweep. For each query range `[q0, q1)`:
    gate/residual into a Q-sized post-attention GPU buffer.
 6. Reblock the post-attention range into independent `C_mlp` tiles.
 7. Run Norm2, AdaLN, FC1, SwiGLU, FC2, and the MLP gate/residual.
-8. Copy only the final hidden tile into its original host location.
+8. Copy only the final hidden tile into the selected destination host range.
 
 The separate raw-output buffer is intentional. It frees the resident-Q buffer
 immediately after attention finalize, allowing the H2D stream to prefetch the
@@ -194,7 +217,7 @@ contiguous token order and bounded GPU memory.
 
 ## Host and device buffer ownership
 
-Persistent host allocations:
+Materialized persistent host allocations:
 
 ```text
 hidden_host  [N, H]                 in-place block input/output
@@ -205,10 +228,32 @@ v_host       [N, heads, head_dim]
 
 There is no `post_attn_host` or MLP-intermediate host allocation.
 
-Persistent device allocations owned by the block runner:
+Recompute persistent host allocations:
+
+```text
+source_hidden_host       [N, H]     immutable complete-block input
+destination_hidden_host  [N, H]     complete-block output
+```
+
+Recompute does not allocate host Q, K, or V. `run_blocks_` swaps the two
+physical hidden allocations after each block and returns the one containing
+the final result.
+
+Materialized-specific device allocation:
 
 ```text
 projection_input[2]  [C_proj, H]
+```
+
+Recompute-specific device allocation:
+
+```text
+hidden_staging  [max(Q_attn, K_attn), H]
+```
+
+Shared attention and consumer allocations owned by the runners:
+
+```text
 resident_q            [Q_attn, heads, head_dim]
 kv_ring[2]            K/V [K_attn, heads, head_dim]
 running_max/sum       FP32 [Q_attn, heads]
@@ -239,7 +284,7 @@ H2D:     KV scan[q]   -> Q/residual[q+1] + initial KV tiles[q+1]
 D2H:                       final hidden tiles[q]
 ```
 
-Required events include:
+Materialized source events include:
 
 - `q_residual_ready`: resident Q and the original residual are available;
 - `kv_ready[slot]` / `kv_free[slot]`: K/V ring ownership;
@@ -250,22 +295,32 @@ Required events include:
 - `final_output_ready[slot]` / `final_output_free[slot]`: D2H ring ownership;
 - `block_complete`: all final hidden D2H copies have completed.
 
+The recompute source replaces Q/K/V host-transfer ownership with
+`hidden_ready` and `hidden_free` around its single staging allocation. The
+compute stream invokes the projector after `hidden_ready`; `hidden_free` is
+recorded after the projector has enqueued all work consuming the staged hidden
+tile. Q/K/V destinations are then consumed on the same compute stream.
+
 Writing `X2` over `X0` is legal only after the same token range's residual H2D
 is ordered before the compute that produces `X2`. The next block must wait for
-`block_complete` before reading the in-place host state.
+`block_complete` before reading the in-place host state. This rule applies to
+materialized execution; recompute always writes a distinct destination.
 
 ## Weight residency schedule
 
-Each block uses three weight groups:
+Each block uses projection and consumer weight groups:
 
 ```text
-W_adaln    AdaLN projection
-W_qkv      QKV projection plus small Q/K norm state
-W_consumer OutProj + FC1 + FC2 plus small normalization state
+W_projection  AdaLN, QKV or Q-only/K/V-only projection, Q/K norm state
+W_consumer    OutProj + FC1 + FC2 plus small normalization state
 ```
 
-`W_qkv` remains resident for Phase A, then `W_consumer` remains resident for
-Phase B. QKV and consumer weights are not repeatedly prepared per chunk.
+For materialized execution, `W_projection` remains leased for the complete
+host-QKV producer phase, then `W_consumer` remains leased for the attention and
+MLP consumer phase. For recompute, both leases cover the complete attention
+sweep because every Q and K/V tile is projected on demand while finalized
+query ranges immediately enter the consumer. Weights are not repeatedly
+prepared per tile.
 
 When the device-memory guard permits it, the scheduler prepares the next
 block's AdaLN/QKV group during the current block's consumer phase. If this
@@ -274,46 +329,60 @@ boundary. The weight adapter may use ComfyUI's low-level model-management and
 quantized-linear preparation primitives, but ComfyUI's prefetch queue is not
 the scheduling authority.
 
-## Proposed interfaces
+## Implemented interfaces
 
-The block stack is represented by four core contracts:
+The block stack is represented by explicit materialized and recompute
+contracts:
 
 ```text
-H3ChunkPlan
+H3MaterializedPlan
     projection_chunk_tokens
     q_chunk_tokens
     kv_chunk_tokens
     mlp_chunk_tokens
     estimated_workspace_bytes
 
+H3RecomputePlan
+    q_chunk_tokens
+    kv_chunk_tokens
+    mlp_chunk_tokens
+    hidden_staging_tokens
+    estimated_workspace_bytes
+
 H3SequenceMeta
     position_ids_gpu
     modulation_row_ids_gpu
     cu_seqlens
-    model dimensions
+
+H3MaterializedProjection
+    project_qkv
+    weight_lease
+
+H3RecomputeProjection
+    project_q
+    project_kv
+    weight_lease
 
 H3BlockOps
-    weight lease interface
-    adaln_linear
-    qkv_linear
-    out_linear
-    fc1_linear
-    fc2_linear
-    norm weights and epsilons
+    attention_epilogue
+    mlp
+    consumer_lease
 
-H3DiTRunner.run_blocks_
-    hidden_host
-    block adapters
-    t_emb
-    sequence metadata
-    chunk plan
-    optional statistics
+H3MaterializedRunner.run_blocks_(hidden_host, sequence_meta, blocks, ...)
+H3RecomputeRunner.run_blocks_(hidden_host, scratch_hidden_host,
+                              sequence_meta, blocks, ...)
 ```
 
-`run_blocks_` mutates and returns the same pinned host tensor. It owns the block
-loop so next-block weight preparation can be scheduled independently of
-ComfyUI, but it does not own input embedding/packing or the final H3 output
-layer.
+`H3MaterializedRunner.run_blocks_` mutates and returns the same pinned host
+tensor. `H3RecomputeRunner.run_blocks_` requires two distinct pinned hidden
+tensors, ping-pongs them across blocks, and returns the physical tensor holding
+the final result. Both own the block loop but do not own input
+embedding/packing or the final H3 output layer.
+
+The attention epilogue always receives the residual host tensor explicitly.
+The materialized runner passes its current in-place hidden tensor; the
+recompute runner passes its immutable source tensor. `H3BlockOps` does not
+branch on storage policy.
 
 ## Traffic reduction
 
@@ -331,32 +400,36 @@ At `N=157249`, `H=5376`, and BF16, one hidden direction is approximately
 logical PCIe traffic per block, or 157.46 GiB across 50 blocks in one denoise
 step.
 
-The V1 baseline deliberately retains Q/K/V host storage and repeated K/V
-scans. Retaining one producer-generated Q range on GPU can remove one Q
-D2H/H2D pair, but it complicates producer/Q alignment and output ordering. It
-is a V1.1 optimization and is disabled in the baseline design.
+The materialized policy deliberately retains Q/K/V host storage and repeated
+K/V scans. Retaining one producer-generated Q range on GPU could remove one Q
+D2H/H2D pair, but it would complicate producer/Q alignment and output ordering
+and is not implemented. Recompute instead bypasses host Q/K/V completely.
 
-## Deferred host-memory-minimal QKV recomputation
+## Implemented host-memory-minimal QKV recomputation
 
-Exact dense attention does not fundamentally require materialized host Q/K/V.
-A more aggressive capacity mode can retain only CPU-backed block input and
-output hidden states, then recompute Q and K/V from the input hidden state as
-the attention sweep needs them. This is an inference-time recomputation mode,
-not an approximate attention algorithm.
+Exact dense attention does not require materialized host Q/K/V. The implemented
+recompute runner retains CPU-backed block input and output hidden states, then
+regenerates Q and K/V from the immutable input hidden state as the attention
+sweep needs them. This is an inference-time recomputation policy, not an
+approximate attention algorithm.
 
-For source and destination pinned hidden tensors, the dataflow would be:
+For source and destination pinned hidden tensors, the dataflow is:
 
 ```text
 src_hidden_host [N, H]                    read-only for the complete block
 dst_hidden_host [N, H]                    final block output
 
 for each resident query range [q0, q1):
-    Q = project_Q(src_hidden_host[q0:q1])
+    hidden_q = H2D(src_hidden_host[q0:q1])
+    project_Q(hidden_q, attention_q_workspace, q0, q1)
     initialize online-softmax state
 
     for each K/V range [k0, k1):
         hidden_tile = H2D(src_hidden_host[k0:k1])
-        K, V = project_KV(hidden_tile)
+        project_KV(hidden_tile,
+                   attention_k_workspace,
+                   attention_v_workspace,
+                   k0, k1)
         update exact attention state directly from device K/V
 
     finalize attention
@@ -402,44 +475,49 @@ projection and attention workspaces. The reduction is nevertheless large
 enough to make recomputation a plausible capacity mode for host-memory-limited
 262K-token and larger workloads.
 
-The cost is repeated projection. If `R = ceil(N / Q_attn)`, each resident-Q
+The cost is repeated K/V projection. If `R = ceil(N / Q_attn)`, each resident-Q
 range scans the complete source hidden state and repeats Norm1, modulation,
-quantized projection, K normalization, and RoPE. With the current fused INT8
-ConvRot QKV operator, collecting Q separately may also compute and discard K/V,
-while each K/V scan computes and discards Q. A future Q-only/KV-only packed
-operator could reduce this redundant arithmetic, but it is not assumed by this
-design.
+K/V-only quantized projection, K normalization, and RoPE. Q projection runs
+once per planned Q range. K/V projection runs once per attention K/V tile for
+each query sweep. No projection sub-tiling is allowed inside the core runner.
 
-The recomputation mode would also use a different Q planning objective. The V1
-materialized path selects the smallest Q at or above the measured roofline
-knee, subject to memory constraints. Recomputation cost grows with the number
-of Q ranges, so its planner would instead favor the largest resident Q that
-fits the complete block workspace. A mode requiring dozens of full hidden
-projection scans is not an acceptable default latency path.
+The public direct-write projection contracts are:
 
-Immediate attention-to-MLP consumption additionally requires QKV, OutProj,
-FC1, and FC2 weights to remain available across the query sweep. If those
-weight groups cannot coexist under the device-memory guard, the alternatives
-are repeated weight preparation or a two-phase path that materializes the
-post-attention hidden tensor. Both weaken the latency benefit and must be
-measured explicitly.
+```text
+QTileProjector(hidden_tile, destination_q, start, stop) -> None
+KVTileProjector(hidden_tile, destination_k, destination_v,
+                start, stop) -> None
+```
 
-This recomputation mode is deferred. The V1 implementation order is:
+Callbacks are responsible for the complete large-tile fused operation and
+writing the supplied destination. The core intentionally does not depend on
+ComfyUI or comfy-kitchen. A MiniMax-H3 adapter can use a ConvRot-specialized
+operator that selects only Q rows or the contiguous K/V rows, together with
+the matching per-output scales, optional bias, and ConvRot metadata.
 
-1. Implement the materialized-QKV block runner specified in the preceding
-   sections.
-2. Join attention finalize, OutProj, both residual epilogues, and the complete
-   SwiGLU MLP so only final `X2` returns to host.
-3. Validate correctness, stream lifetimes, weight leases, the four independent
-   chunk axes, and the `1.20x` latency acceptance target.
-4. Evaluate QKV recomputation as a separate capacity experiment only after the
-   baseline fused block runner is complete and measured.
+Recomputation has a different Q planning tradeoff from materialized execution.
+Its repeated K/V work grows with the number of Q ranges, so a deployment may
+favor a larger resident Q when device memory permits. The caller supplies the
+mode and plan explicitly; the core does not infer either from available host
+or device memory.
 
-The initial `H3DiTRunner` therefore materializes pinned Q/K/V and retains the
-single-hidden in-place contract. It must not delay or complicate the baseline
-implementation to support recomputation. A later extension may introduce
-explicit `materialized`, `kv_only`, and `recompute` storage policies after the
-required projection and weight-residency measurements exist.
+The standalone ConvRot benchmark validates its Q-only and K/V-only row slices
+against the complete block-25 QKV projection element by element before timing.
+Its formal A/B comparison uses separate processes with the same
+`tokens=262720`, `Q_attn=16384`, `K_attn=4096`, and `C_mlp=2048`; only the
+materialized path has `C_proj=2048`. It records wall-time median/mean, PyTorch
+allocated/reserved peaks, PID NVML peak, RSS peak, and logical host activation.
+It runs in the Community ComfyUI `comfyui:cu128` environment pinned to ComfyUI
+`0.30.0` commit `9a9fdb10ed144ce760d9682cb247526ea23cc525`, Torch
+`2.10.0+cu128`, CUDA `12.8`, and comfy-aimdo `0.4.11`. The benchmark validates
+those versions, uses `/opt/ComfyUI/models`, and loads the checkpoint through
+`comfy.sd.load_diffusion_model`; the DiffSynth service is not the authoritative
+environment for this comparison.
+
+Results from the removed projection-subtiled recompute implementation are
+invalid for this architecture. In particular, earlier runs with `Q=196608`,
+or any run where recompute callback ranges were controlled by `C_proj`, must
+not be used in final performance conclusions.
 
 ## Correctness and fallback rules
 
@@ -447,37 +525,49 @@ required projection and weight-residency measurements exist.
 - No Q, K/V, carry, or output slot is reused before its free event.
 - MLP reblocking changes scheduling only; the MLP remains token-local and
   mathematically identical to native execution.
-- Host in-place writes never race a residual H2D read of the same token range.
+- Materialized host in-place writes never race a residual H2D read of the same
+  token range.
+- Recompute source hidden remains unchanged for the complete block, and source
+  and destination may not alias.
+- Q-only callback count and ranges equal the planned attention Q chunks;
+  K/V-only callback count and ranges equal the attention K/V tiles actually
+  scanned, including packed segments, empty segments, and tail chunks.
 - Unsupported training state, custom DiT patches, leaf output shapes, dtypes,
   or quantization formats cause a whole-block or whole-stack native fallback;
   the runtime does not execute a partially compatible graph.
-- Performance records include all four explicit chunk sizes so results do not
-  accidentally compare different roofline or tile policies as if they were
-  equal.
+- Materialized performance records include all four explicit chunk sizes;
+  recompute records include Q, K/V, and MLP chunks and has no projection chunk.
 
 ## Experiment and acceptance plan
 
 Correctness tests:
 
-1. Compare one BF16 block with native execution on small deterministic shapes.
-2. Cover non-divisible `C_proj`, `Q_attn`, `K_attn`, and `C_mlp` boundaries.
-3. Cover an MLP tile that crosses a Q boundary and a final partial carry.
-4. Cover multiple modulation rows and packed-sequence boundaries.
-5. Stress asynchronous in-place writeback without global synchronization
-   between individual chunks.
-6. Repeat parity through several consecutive blocks to detect accumulated
-   state or lifetime errors.
+1. Compare materialized and recompute BF16 blocks with full GPU execution on
+   deterministic shapes.
+2. Cover packed sequences, empty segments, non-divisible Q/K/V tails, and
+   different Q and K/V chunk sizes.
+3. Assert exact Q-only and K/V-only projector ranges and prove they are
+   independent of materialized `C_proj`.
+4. Cover an MLP tile that crosses a Q boundary and a final partial carry.
+5. Verify materialized asynchronous in-place writeback and recompute source
+   immutability plus distinct destination storage.
+6. Repeat recompute through multiple blocks and verify the returned physical
+   ping-pong buffer.
+7. Verify recompute allocates no host Q/K/V and has bounded allocator growth
+   across repeated runs.
 
 Performance experiments:
 
-1. Sweep the real INT8 ConvRot QKV path to select `C_proj`.
-2. Validate the calibrated `Q_attn` at the active NUMA placement and measure
-   neighboring aligned values.
+1. Sweep the real INT8 ConvRot materialized QKV path to select `C_proj`.
+2. Validate the calibrated materialized `Q_attn` at the active NUMA placement
+   and measure neighboring aligned values.
 3. Sweep `K_attn` for K/V copy/update overlap.
 4. Sweep `C_mlp` at `256, 512, 1024, 2048, 4096` using the full fused MLP path.
 5. Profile one block and confirm that post-attention host traffic and host MLP
    intermediate traffic are both zero.
-6. Compare at least three warmed complete 50-block DiT runs with the same GPU,
+6. Run the formal independent-process materialized/recompute ConvRot A/B with
+   the fixed 262,720-token configuration and mandatory small-tile parity.
+7. Compare at least three warmed complete 50-block DiT runs with the same GPU,
    NUMA placement, INT8 checkpoint, input, and no artificial native allocator
    cap.
 

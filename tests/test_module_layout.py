@@ -2,11 +2,14 @@ from pathlib import Path
 
 import seqattn_core
 from seqattn_core import (
+    H3MaterializedRunner,
+    H3RecomputeRunner,
     MemoryPageSource,
     NvmeQKVStore,
     NvmeQKVWriter,
     PagedAttentionRunner,
     ProjectedAttentionRunner,
+    RecomputedAttentionRunner,
     SimulatedNvmeDevice,
     StreamingAttentionRunner,
 )
@@ -18,6 +21,9 @@ from seqattn_core.paged import MemoryPageSource as PagedMemoryPageSource
 from seqattn_core.paged import PagedAttentionRunner as PackagedPagedAttentionRunner
 from seqattn_core.paged.simulation import SimulatedNvmeDevice as PackagedSimulatedNvmeDevice
 from seqattn_core.projection import ProjectedAttentionRunner as PackagedProjectedAttentionRunner
+from seqattn_core.projection import (
+    RecomputedAttentionRunner as PackagedRecomputedAttentionRunner,
+)
 from seqattn_core.storage import NvmeQKVStore as PackagedNvmeQKVStore
 from seqattn_core.storage import NvmeQKVWriter as PackagedNvmeQKVWriter
 from seqattn_core.streaming import StreamingAttentionRunner as PackagedStreamingAttentionRunner
@@ -30,7 +36,11 @@ def test_subpackages_export_the_canonical_implementations():
     assert PackagedNvmeQKVStore is NvmeQKVStore
     assert PackagedNvmeQKVWriter is NvmeQKVWriter
     assert PackagedProjectedAttentionRunner is ProjectedAttentionRunner
+    assert PackagedRecomputedAttentionRunner is RecomputedAttentionRunner
     assert PackagedStreamingAttentionRunner is StreamingAttentionRunner
+    assert H3MaterializedRunner.__name__ == "H3MaterializedRunner"
+    assert H3RecomputeRunner.__name__ == "H3RecomputeRunner"
+    assert not hasattr(seqattn_core, "H3DiTRunner")
 
 
 def test_repository_benchmark_modules_expose_main_functions():
