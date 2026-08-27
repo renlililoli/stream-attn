@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import statistics
@@ -314,11 +315,11 @@ def _run_mode(args: argparse.Namespace) -> None:
             prepare_stream.synchronize()
 
         generator = torch.Generator(device="cpu").manual_seed(args.seed)
-        hidden_a = torch.randn(
+        hidden_a = torch.empty(
             (args.tokens, hidden_features),
             dtype=dtype,
-            generator=generator,
         ).pin_memory()
+        hidden_a.normal_(generator=generator)
         hidden_b = torch.empty_like(hidden_a, pin_memory=True) if args.mode == "recompute" else None
         sequence_meta = H3SequenceMeta(cu_seqlens=torch.tensor([0, args.tokens], dtype=torch.int32))
         attention_config = StreamingAttentionConfig(
@@ -524,13 +525,20 @@ def _run_mode(args: argparse.Namespace) -> None:
                 args.tokens * 2 * hidden_features * hidden_a.element_size()
             )
 
+        def reset_current_hidden():
+            generator.manual_seed(args.seed)
+            current_hidden().normal_(generator=generator)
+
         for _ in range(args.warmup):
+            reset_current_hidden()
             run_once(H3DiTStats())
+            torch.cuda.synchronize(device)
         torch.cuda.synchronize(device)
         torch.cuda.reset_peak_memory_stats(device)
 
         records = []
         for repeat in range(args.repeats):
+            reset_current_hidden()
             stats = H3DiTStats()
             started = time.perf_counter()
             run_once(stats)
@@ -550,6 +558,11 @@ def _run_mode(args: argparse.Namespace) -> None:
         output_signature = {
             str(index): output_hidden[index, :8].float().tolist() for index in signature_indices
         }
+        sampled_output_is_finite = all(
+            math.isfinite(value) for values in output_signature.values() for value in values
+        )
+        if not sampled_output_is_finite:
+            raise RuntimeError("sampled block output contains non-finite values")
         walls = [record["wall_seconds"] for record in records]
         sampler.__exit__()
         process_peak_rss_bytes = sampler.peak_rss_bytes
@@ -592,6 +605,10 @@ def _run_mode(args: argparse.Namespace) -> None:
             plan={key: value for key, value in vars(runner.plan).items()},
             records=records,
             output_signature=output_signature,
+            output_validation={
+                "sampled_values": sum(len(values) for values in output_signature.values()),
+                "sampled_all_finite": sampled_output_is_finite,
+            },
             summary={
                 "wall_median_seconds": statistics.median(walls),
                 "wall_mean_seconds": statistics.mean(walls),
