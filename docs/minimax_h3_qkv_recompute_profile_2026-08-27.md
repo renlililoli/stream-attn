@@ -20,27 +20,44 @@ outside the timed region. Q-only and K/V-only projection matched the complete
 QKV operator exactly, and the materialized and recompute sampled outputs were
 finite and identical.
 
-## Formal wall time
+## Formal measurements
 
-| Mode | 2K median | 4K median | Change |
+| Mode | 2K mean | 2K median | 4K mean | 4K median | Median change |
+|---|---:|---:|---:|---:|---:|
+| Materialized | 11.179503 s | 11.179313 s | 11.018168 s | 11.022211 s | -1.41% |
+| Recompute | 15.831779 s | 15.828434 s | 15.729613 s | 15.727886 s | -0.64% |
+
+The recompute/materialized median ratio is `1.4159x` at 2K and `1.4269x` at
+4K.
+
+The unrounded measured wall times were:
+
+| Configuration | Repeat 0 | Repeat 1 | Repeat 2 |
 |---|---:|---:|---:|
-| Materialized | 11.1793 s | 11.0222 s | -1.41% |
-| Recompute | 15.8284 s | 15.7279 s | -0.64% |
-| Recompute / materialized | 1.4159x | 1.4269x | +0.0110x |
+| 2K materialized | 11.182602211 s | 11.179312767 s | 11.176594866 s |
+| 2K recompute | 15.818961724 s | 15.828433870 s | 15.847941785 s |
+| 4K materialized | 11.003184426 s | 11.029109673 s | 11.022211228 s |
+| 4K recompute | 15.727885503 s | 15.726514061 s | 15.734438875 s |
 
 The 4K tiles improve both modes, but materialized benefits from both the larger
 QKV projection tile and the larger MLP tile. Recompute benefits only from the
 MLP tile because its Q and K/V projection ranges are fixed by the attention
 plan, not `C_proj`.
 
-## Memory effect
+## Memory measurements
 
-| Mode | Metric | 2K | 4K | Change |
-|---|---|---:|---:|---:|
-| Materialized | estimated workspace | 1,090,519,040 B | 1,200,619,520 B | +10.10% |
-| Materialized | Torch allocated peak | 2,716,321,280 B | 2,873,559,040 B | +5.79% |
-| Recompute | estimated workspace | 1,222,639,616 B | 1,288,699,904 B | +5.40% |
-| Recompute | Torch allocated peak | 2,875,701,248 B | 2,960,558,080 B | +2.95% |
+| Metric | 2K materialized | 2K recompute | 4K materialized | 4K recompute |
+|---|---:|---:|---:|---:|
+| Estimated workspace | 1,090,519,040 B | 1,222,639,616 B | 1,200,619,520 B | 1,288,699,904 B |
+| Torch allocated peak | 2,716,321,280 B | 2,875,701,248 B | 2,873,559,040 B | 2,960,558,080 B |
+| Torch reserved peak | 3,797,942,272 B | 3,300,917,248 B | 3,506,438,144 B | 3,363,831,808 B |
+| PID NVML peak | 5,140,119,552 B | 4,643,094,528 B | 4,848,615,424 B | 4,706,009,088 B |
+| Process RSS peak | 19,448,967,168 B | 10,797,760,512 B | 19,446,194,176 B | 10,797,703,168 B |
+| Logical host activation | 14,123,827,200 B | 5,649,530,880 B | 14,123,827,200 B | 5,649,530,880 B |
+
+Moving from 2K to 4K changes estimated workspace by `+10.10%` and Torch
+allocated peak by `+5.79%` for materialized. For recompute, the corresponding
+changes are `+5.40%` and `+2.95%`.
 
 The additional bounded workspace is small relative to the RTX 5090 capacity
 and does not change logical host activation. For this dedicated H3 deployment,
@@ -69,24 +86,32 @@ GPU time and 116 ms of MLP GPU time in the profiled block. Pipeline overlap and
 minor run-to-run variation reduce the formal wall-time improvement to 157 ms
 for materialized and 101 ms for recompute.
 
-### 4K materialized versus recompute
+### Complete NVTX GPU projected data
 
-| GPU projected range | Materialized | Recompute |
-|---|---:|---:|
-| Fused online-softmax update | 9.0429 s | 8.9816 s |
-| Complete materialized QKV projection | 0.4560 s | n/a |
-| Recompute Q-only projection | n/a | 0.1630 s |
-| Recompute K/V-only projection | n/a | 5.5688 s |
-| H3 attention epilogue | 0.2371 s | 0.2375 s |
-| H3 MLP | 0.9448 s | 0.9434 s |
-| Attention finalize | 0.0069 s | 0.0071 s |
+| GPU projected range | 2K materialized | 2K recompute | 4K materialized | 4K recompute |
+|---|---:|---:|---:|---:|
+| Complete recomputed attention | n/a | 16.110651 s | n/a | 15.980300 s |
+| Fused online-softmax update | 9.047553 s | 8.985275 s | 9.042882 s | 8.981593 s |
+| Complete materialized QKV projection | 0.527557 s | n/a | 0.455966 s | n/a |
+| Recompute Q-only projection | n/a | 0.162772 s | n/a | 0.163012 s |
+| Recompute K/V-only projection | n/a | 5.570879 s | n/a | 5.568778 s |
+| H3 attention epilogue | 0.236714 s | 0.241496 s | 0.237078 s | 0.237508 s |
+| H3 MLP | 1.061202 s | 1.059353 s | 0.944820 s | 0.943448 s |
+| Device output consumer | 1.316805 s | 1.309567 s | 1.222730 s | 1.200605 s |
+| Attention finalize | 0.006940 s | 0.007101 s | 0.006930 s | 0.007114 s |
+| Materialized projection hidden H2D | 0.143980 s | n/a | 0.150694 s | n/a |
+| Materialized projection QKV D2H | 0.623935 s | n/a | 0.575651 s | n/a |
+| Materialized attention Q H2D | 0.112544 s | n/a | 0.124803 s | n/a |
+| Materialized attention K/V H2D | 3.437015 s | n/a | 3.463104 s | n/a |
+| Recompute hidden H2D | n/a | 1.454790 s | n/a | 1.370812 s |
 
 CUDA memory-operation totals were:
 
-| Transfer | Materialized | Recompute |
-|---|---:|---:|
-| Host to device | 3.8144 s | 1.4472 s |
-| Device to host | 0.5052 s | 0.0889 s |
+| Transfer | 2K materialized | 2K recompute | 4K materialized | 4K recompute |
+|---|---:|---:|---:|---:|
+| Host to device | 3.768962 s | 1.535125 s | 3.814383 s | 1.447236 s |
+| Device to host | 0.480234 s | 0.091123 s | 0.505188 s | 0.088928 s |
+| Device to device | 0.037189 s | 0.194613 s | 0.003182 s | 0.172414 s |
 
 The attention kernel, MLP, epilogue, and finalize times are effectively equal.
 Recompute also transfers less data than materialized. The slowdown is the
@@ -99,6 +124,40 @@ tiles per complete sequence. Recompute therefore invokes the K/V projector
 streams the host K/V backing. The repeated K/V projection accounts for more
 than the net wall-time gap because recompute recovers part of that cost through
 lower H2D/D2H traffic and by avoiding the materialized preprojection stage.
+
+## Validation data
+
+Both formal configurations completed without OOM or runtime failure. For each
+mode and tile size:
+
+- the 16-token Q-only plus K/V-only ConvRot projection had
+  `max_abs_difference=0.0` against complete QKV, with `atol=0` and `rtol=0`;
+- all 40 sampled output values were finite;
+- materialized and recompute sampled output signatures were exactly equal;
+- recompute issued 17 Q projector calls and 1,105 K/V projector calls per
+  measured block;
+- recompute allocated no host Q/K/V backing.
+
+## Artifacts
+
+The experiment produced these uncommitted artifacts:
+
+```text
+/tmp/minimax_h3_convrot_qkv_recompute_formal_gpu2_reset.json
+/tmp/minimax_h3_convrot_qkv_recompute_formal_gpu2_4k.json
+/tmp/seqattn_h3_2k_materialized_profile.json
+/tmp/seqattn_h3_2k_recompute_profile.json
+/tmp/seqattn_h3_4k_materialized_profile.json
+/tmp/seqattn_h3_4k_recompute_profile.json
+/tmp/seqattn_h3_2k_materialized.nsys-rep
+/tmp/seqattn_h3_2k_recompute.nsys-rep
+/tmp/seqattn_h3_4k_materialized.nsys-rep
+/tmp/seqattn_h3_4k_recompute.nsys-rep
+/tmp/seqattn_h3_2k_materialized.sqlite
+/tmp/seqattn_h3_2k_recompute.sqlite
+/tmp/seqattn_h3_4k_materialized.sqlite
+/tmp/seqattn_h3_4k_recompute.sqlite
+```
 
 ## Conclusion
 
