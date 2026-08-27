@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 class H3DeviceOutputConsumer:
     def __init__(self, workspace: H3BlockWorkspace) -> None:
         self.workspace = workspace
-        self.hidden_host: torch.Tensor | None = None
+        self.destination_hidden_host: torch.Tensor | None = None
+        self.residual_hidden_host: torch.Tensor | None = None
         self.ops: H3BlockOps | None = None
         self.stats: H3DiTStats | None = None
         self.total_tokens = 0
@@ -30,16 +31,20 @@ class H3DeviceOutputConsumer:
     def reset(
         self,
         *,
-        hidden_host: torch.Tensor,
+        destination_hidden_host: torch.Tensor,
+        residual_hidden_host: torch.Tensor,
         ops: H3BlockOps,
         stats: H3DiTStats,
         range_start: int = 0,
         range_stop: int | None = None,
     ) -> None:
-        range_stop = hidden_host.shape[0] if range_stop is None else range_stop
-        if not 0 <= range_start < range_stop <= hidden_host.shape[0]:
-            raise ValueError("consumer range must be a non-empty hidden_host slice")
-        self.hidden_host = hidden_host
+        if destination_hidden_host.shape != residual_hidden_host.shape:
+            raise ValueError("destination and residual hidden tensors must have identical shapes")
+        range_stop = destination_hidden_host.shape[0] if range_stop is None else range_stop
+        if not 0 <= range_start < range_stop <= destination_hidden_host.shape[0]:
+            raise ValueError("consumer range must be a non-empty hidden tensor slice")
+        self.destination_hidden_host = destination_hidden_host
+        self.residual_hidden_host = residual_hidden_host
         self.ops = ops
         self.stats = stats
         self.total_tokens = range_stop
@@ -80,7 +85,7 @@ class H3DeviceOutputConsumer:
             raise ValueError(f"{name} output dtype must be {workspace.dtype}")
 
     def _emit(self, tile: torch.Tensor, start: int, stop: int) -> None:
-        assert self.hidden_host is not None
+        assert self.destination_hidden_host is not None
         assert self.ops is not None
         assert self.stats is not None
         workspace = self.workspace
@@ -103,9 +108,9 @@ class H3DeviceOutputConsumer:
                 workspace.task_d2h_start.record(workspace.d2h_stream)
                 self._task_d2h_started = True
             workspace.d2h_stream.wait_event(workspace.output_ready[slot_index])
-            self.hidden_host[start:stop].copy_(
+            self.destination_hidden_host[start:stop].copy_(
                 final_slot,
-                non_blocking=self.hidden_host.is_pinned(),
+                non_blocking=self.destination_hidden_host.is_pinned(),
             )
             workspace.output_free[slot_index].record(workspace.d2h_stream)
         workspace.output_pending[slot_index] = True
@@ -118,13 +123,19 @@ class H3DeviceOutputConsumer:
     def __call__(self, attention: torch.Tensor, start: int, stop: int) -> None:
         assert self.ops is not None
         assert self.stats is not None
+        assert self.residual_hidden_host is not None
         if start != self.next_token or stop <= start:
             raise ValueError(
                 f"attention output ranges must be contiguous, got [{start}, {stop}) "
                 f"after token {self.next_token}"
             )
         tokens = stop - start
-        post_attention = self.ops.attention_epilogue(attention, start, stop)
+        post_attention = self.ops.attention_epilogue(
+            attention,
+            self.residual_hidden_host,
+            start,
+            stop,
+        )
         self._validate_device_tile(
             post_attention,
             tokens=tokens,

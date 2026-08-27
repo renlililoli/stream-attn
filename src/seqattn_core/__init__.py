@@ -9,9 +9,14 @@ from .config import (
     StreamingAttentionConfig,
 )
 from .dit import (
+    AttentionEpilogue,
     H3BlockOps,
-    H3ChunkPlan,
-    H3DiTRunner,
+    H3MaterializedPlan,
+    H3MaterializedProjection,
+    H3MaterializedRunner,
+    H3RecomputePlan,
+    H3RecomputeProjection,
+    H3RecomputeRunner,
     H3SequenceMeta,
     H3TileConfig,
     MultiGpuH3DiTRunner,
@@ -36,7 +41,13 @@ from .paged import (
     TensorLayout,
 )
 from .planner import AttentionPlan, build_plan
-from .projection import ProjectedAttentionRunner, streaming_projected_self_attention
+from .projection import (
+    KVTileProjector,
+    ProjectedAttentionRunner,
+    QTileProjector,
+    RecomputedAttentionRunner,
+    streaming_projected_self_attention,
+)
 from .stats import (
     DynamicDeviceStats,
     DynamicTaskTrace,
@@ -45,6 +56,7 @@ from .stats import (
     MultiGpuH3DiTStats,
     PagedAttentionStats,
     ProjectedAttentionStats,
+    RecomputedAttentionStats,
     StreamingAttentionStats,
 )
 from .storage import (
@@ -71,6 +83,7 @@ from .streaming import (
 )
 
 __all__ = [
+    "AttentionEpilogue",
     "AttentionPlan",
     "CallbackOutputSink",
     "DeviceQuerySchedule",
@@ -82,14 +95,19 @@ __all__ = [
     "DynamicTaskTrace",
     "DynamicWorkloadSignature",
     "H3BlockOps",
-    "H3ChunkPlan",
-    "H3DiTRunner",
     "H3DiTStats",
+    "H3MaterializedPlan",
+    "H3MaterializedProjection",
+    "H3MaterializedRunner",
+    "H3RecomputePlan",
+    "H3RecomputeProjection",
+    "H3RecomputeRunner",
     "H3SequenceMeta",
     "H3TileConfig",
     "HostMemoryPlan",
     "HostMemorySnapshot",
     "KVLayout",
+    "KVTileProjector",
     "MemoryPageSink",
     "MemoryPageSource",
     "MultiGpuAttentionPlan",
@@ -110,8 +128,11 @@ __all__ = [
     "ProjectedAttentionRunner",
     "ProjectedAttentionStats",
     "ProjectionPipelineConfig",
+    "QTileProjector",
     "QueryTask",
     "QueryTaskMeasurement",
+    "RecomputedAttentionRunner",
+    "RecomputedAttentionStats",
     "SimulatedIoDelay",
     "SimulatedNvmeConfig",
     "SimulatedNvmeDevice",

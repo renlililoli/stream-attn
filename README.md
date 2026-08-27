@@ -371,8 +371,9 @@ disjoint Q/K/V range into shared pinned host buffers. Exact attention starts
 after the complete K/V projection barrier. GPUs then dynamically claim Q tasks
 for attention, OutProj, FFN, and final hidden D2H. The current Q task is the FFN
 unit, with no independent MLP tile or carry across tasks. The integration
-supplies one device-local `H3BlockOps` instance per GPU so each stage uses the
-weights resident or leased on that device.
+supplies one device-local `H3MaterializedProjection` and `H3BlockOps` pair per
+GPU so projection and consumer weights remain independently resident or leased
+on that device.
 
 ## Core APIs
 
@@ -382,9 +383,15 @@ weights resident or leased on that device.
 - `MultiGpuStreamingAttentionRunner` executes either a preplanned Q partition
   or completion-driven dynamic Q tasks across device-local runners.
 - `ProjectedAttentionRunner` connects model-owned QKV and output-projection
-  callbacks without materializing raw attention output on the CPU.
-- `MultiGpuH3DiTRunner` dynamically distributes QKV projection, attention,
-  output projection, and MLP work across device-local H3 block operators.
+  callbacks through sequence-sized pinned host Q/K/V without materializing raw
+  attention output on the CPU.
+- `RecomputedAttentionRunner` regenerates complete attention-sized Q and K/V
+  tiles through direct-write callbacks and allocates no host Q/K/V.
+- `H3MaterializedRunner` and `H3RecomputeRunner` provide explicit MiniMax-H3
+  block policies with one-hidden in-place and two-hidden ping-pong contracts,
+  respectively.
+- `MultiGpuH3DiTRunner` dynamically distributes materialized QKV projection,
+  attention, output projection, and MLP work across device-local H3 operators.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.
 - `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` provide aligned,
@@ -397,7 +404,9 @@ boundaries are scheduler boundaries, and causal positions use bottom-right
 alignment for unequal Q/K lengths.
 
 See [architecture notes](docs/architecture.md) for package boundaries, memory
-hierarchy, recurrence details, and pipeline invariants.
+hierarchy, recurrence details, and pipeline invariants. The split DiT storage
+policies and direct-write projector contracts are documented in
+[DiT QKV recompute architecture](docs/dit_qkv_recompute_architecture.md).
 
 ## Paging and NVMe
 

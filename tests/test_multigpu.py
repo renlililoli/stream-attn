@@ -8,6 +8,7 @@ import torch
 from seqattn_core import (
     DynamicScheduleConfig,
     H3BlockOps,
+    H3MaterializedProjection,
     H3SequenceMeta,
     MultiGpuAttentionStats,
     MultiGpuDeviceSpec,
@@ -432,20 +433,20 @@ def test_two_gpu_qkv_projection_uses_default_4096_token_blocks():
     )
     ranges = {str(device): [] for device in qkv_by_device}
 
-    def make_ops(device):
+    def make_projection(device):
         def project_qkv(tile, start, stop):
             ranges[str(device)].append((start, stop))
             qkv = qkv_by_device[device](tile).view(-1, 3, heads, head_dim)
             return tuple(qkv[:, index].contiguous() for index in range(3))
 
-        return H3BlockOps(project_qkv, lambda *args: args[0], lambda *args: args[0])
+        return H3MaterializedProjection(project_qkv)
 
     stats = ProjectedAttentionStats()
     per_device_stats = {device: ProjectedAttentionStats() for device in ranges}
     try:
         q_cpu, k_cpu, v_cpu = runner.run(
             hidden,
-            {str(device): make_ops(device) for device in qkv_by_device},
+            {str(device): make_projection(device) for device in qkv_by_device},
             stats=stats,
             per_device_stats=per_device_stats,
         )
@@ -558,7 +559,7 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
 
     projection_ranges = {device: [] for device in modules}
 
-    def make_ops(device):
+    def make_block(device):
         qkv_linear, out_linear, fc1, fc2 = modules[device]
 
         def project_qkv(tile, start, stop):
@@ -566,8 +567,8 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
             qkv = qkv_linear(tile).view(-1, 3, heads, head_dim)
             return tuple(qkv[:, index].contiguous() for index in range(3))
 
-        def attention_epilogue(attention, start, stop):
-            residual = hidden[start:stop].to(device, non_blocking=True)
+        def attention_epilogue(attention, residual_host, start, stop):
+            residual = residual_host[start:stop].to(device, non_blocking=True)
             return out_linear(attention).add_(residual)
 
         def mlp(post_attention, start, stop):
@@ -575,14 +576,17 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
             gate, up = fc1(post_attention).chunk(2, dim=-1)
             return post_attention.add_(fc2(torch.nn.functional.silu(gate).mul_(up)))
 
-        return H3BlockOps(project_qkv, attention_epilogue, mlp)
+        return H3MaterializedProjection(project_qkv), H3BlockOps(attention_epilogue, mlp)
+
+    blocks = {device: make_block(device) for device in modules}
 
     stats = MultiGpuH3DiTStats()
     try:
         runner.run_block_(
             hidden,
             H3SequenceMeta(cu),
-            {device: make_ops(device) for device in modules},
+            {device: block[0] for device, block in blocks.items()},
+            {device: block[1] for device, block in blocks.items()},
             softmax_scale=head_dim**-0.5,
             stats=stats,
         )
@@ -697,13 +701,15 @@ def test_two_gpu_h3_projection_failure_stops_before_attention():
     def unexpected_consumer(*_args):
         raise AssertionError("attention consumer must not run after projection failure")
 
-    ops = H3BlockOps(fail_projection, unexpected_consumer, unexpected_consumer)
+    projection = H3MaterializedProjection(fail_projection)
+    ops = H3BlockOps(unexpected_consumer, unexpected_consumer)
     stats = MultiGpuH3DiTStats()
     try:
         with pytest.raises(RuntimeError, match="injected QKV projection failure"):
             runner.run_block_(
                 hidden,
                 H3SequenceMeta(cu),
+                {"cuda:0": projection, "cuda:1": projection},
                 {"cuda:0": ops, "cuda:1": ops},
                 stats=stats,
             )

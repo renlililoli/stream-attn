@@ -1,7 +1,7 @@
 # RTX 5090 SeqAttn Streaming 性能分析与优化路线
 
-> 日期：2026-08-19  
-> 范围：独立 `seqattn` runtime，重点分析完整 Q/K/V 已驻留 CPU DRAM 时的 exact streaming attention。  
+> 日期：2026-08-19
+> 范围：独立 `seqattn` runtime，重点分析完整 Q/K/V 已驻留 CPU DRAM 时的 exact streaming attention。
 > 结论口径：表中的延迟使用未插桩 benchmark；Nsight Systems 和 Nsight Compute 只用于解释瓶颈，不与未插桩延迟直接混算。
 
 ## 1. 执行摘要

@@ -13,7 +13,7 @@ from ..projection import ProjectedAttentionRunner
 from ..projection.workspace import ProjectionWorkspace
 from ..stats import ProjectedAttentionStats
 from ..streaming import MultiGpuAttentionPlan
-from .types import H3BlockOps
+from .types import H3MaterializedProjection
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,7 @@ class MultiGpuQKVProjectionRunner:
         device: torch.device,
         hidden_host: torch.Tensor,
         task: QKVProjectionTask,
-        ops: H3BlockOps,
+        projection: H3MaterializedProjection,
         stats: ProjectedAttentionStats,
     ) -> None:
         workspace = self.workspaces[str(device)]
@@ -150,7 +150,7 @@ class MultiGpuQKVProjectionRunner:
 
         with torch.cuda.stream(workspace.compute_stream):
             workspace.compute_stream.wait_event(workspace.input_ready[0])
-            q, k, v = ops.project_qkv(
+            q, k, v = projection.project_qkv(
                 workspace.hidden[0][:tile_tokens],
                 task.start,
                 task.stop,
@@ -191,7 +191,7 @@ class MultiGpuQKVProjectionRunner:
     def run(
         self,
         hidden_host: torch.Tensor,
-        ops_by_device: Mapping[str, H3BlockOps],
+        projections_by_device: Mapping[str, H3MaterializedProjection],
         *,
         stats: ProjectedAttentionStats,
         per_device_stats: Mapping[str, ProjectedAttentionStats],
@@ -204,8 +204,8 @@ class MultiGpuQKVProjectionRunner:
             if tokens != self.attention_plan.max_q_tokens:
                 raise ValueError("hidden token count must match the multi-GPU attention plan")
             expected = {str(device) for device in self.attention_plan.devices}
-            if set(ops_by_device) != expected or set(per_device_stats) != expected:
-                raise ValueError("projection ops and stats must contain every planned device")
+            if set(projections_by_device) != expected or set(per_device_stats) != expected:
+                raise ValueError("projections and stats must contain every planned device")
 
             cursor = DynamicQKVProjectionCursor(tokens, self.chunk_tokens)
             start_barrier = threading.Barrier(len(self.attention_plan.schedules))
@@ -221,7 +221,7 @@ class MultiGpuQKVProjectionRunner:
                     with (
                         torch.inference_mode(),
                         torch.cuda.device(device),
-                        ops_by_device[device_name].qkv_context(),
+                        projections_by_device[device_name].context(),
                     ):
                         while True:
                             task = cursor.claim()
@@ -231,7 +231,7 @@ class MultiGpuQKVProjectionRunner:
                                 device,
                                 hidden_host,
                                 task,
-                                ops_by_device[device_name],
+                                projections_by_device[device_name],
                                 per_device_stats[device_name],
                             )
                 except Exception as error:  # noqa: BLE001 - propagate the original worker error.

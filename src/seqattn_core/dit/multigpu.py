@@ -14,7 +14,12 @@ from ..streaming import (
 )
 from .consumer import H3DeviceOutputConsumer
 from .projection import MultiGpuQKVProjectionRunner
-from .types import H3BlockOps, H3SequenceMeta, estimate_h3_consumer_workspace_bytes
+from .types import (
+    H3BlockOps,
+    H3MaterializedProjection,
+    H3SequenceMeta,
+    estimate_h3_consumer_workspace_bytes,
+)
 from .workspace import H3BlockWorkspace
 
 
@@ -153,6 +158,18 @@ class MultiGpuH3DiTRunner:
             raise ValueError(f"ops_by_device must contain exactly {sorted(expected)}")
         return ops
 
+    def _normalize_projections(
+        self,
+        projections_by_device: Mapping[torch.device | str, H3MaterializedProjection],
+    ) -> dict[str, H3MaterializedProjection]:
+        projections = {
+            str(torch.device(device)): item for device, item in projections_by_device.items()
+        }
+        expected = {str(device) for device in self.attention_plan.devices}
+        if set(projections) != expected:
+            raise ValueError(f"projections_by_device must contain exactly {sorted(expected)}")
+        return projections
+
     def _validate_inputs(
         self,
         hidden_host: torch.Tensor,
@@ -173,6 +190,7 @@ class MultiGpuH3DiTRunner:
         self,
         hidden_host: torch.Tensor,
         sequence_meta: H3SequenceMeta,
+        projections_by_device: Mapping[torch.device | str, H3MaterializedProjection],
         ops_by_device: Mapping[torch.device | str, H3BlockOps],
         *,
         softmax_scale: float | None = None,
@@ -180,6 +198,7 @@ class MultiGpuH3DiTRunner:
         stats: MultiGpuH3DiTStats | None = None,
     ) -> torch.Tensor:
         self._validate_inputs(hidden_host, sequence_meta)
+        projections = self._normalize_projections(projections_by_device)
         ops = self._normalize_ops(ops_by_device)
         stats = MultiGpuH3DiTStats() if stats is None else stats
         stats.per_device_estimated_workspace_bytes = dict(self.per_device_estimated_workspace_bytes)
@@ -189,13 +208,14 @@ class MultiGpuH3DiTRunner:
             device = str(schedule.device)
             device_stats = stats.per_device.setdefault(device, H3DiTStats())
             device_stats.backend = "triton"
+            device_stats.qkv_storage_policy = "materialized"
             device_stats.estimated_workspace_bytes = self.per_device_estimated_workspace_bytes[
                 device
             ]
 
         q_cpu, k_cpu, v_cpu = self.projection.run(
             hidden_host,
-            ops,
+            projections,
             stats=stats.projection,
             per_device_stats={
                 str(schedule.device): stats.per_device[str(schedule.device)].projection
@@ -212,7 +232,8 @@ class MultiGpuH3DiTRunner:
         for schedule in self.attention_plan.schedules:
             device = str(schedule.device)
             self.consumers[device].reset(
-                hidden_host=hidden_host,
+                destination_hidden_host=hidden_host,
+                residual_hidden_host=hidden_host,
                 ops=ops[device],
                 stats=stats.per_device[device],
             )
@@ -254,17 +275,23 @@ class MultiGpuH3DiTRunner:
         self,
         hidden_host: torch.Tensor,
         sequence_meta: H3SequenceMeta,
-        block_ops: Iterable[Mapping[torch.device | str, H3BlockOps]],
+        blocks: Iterable[
+            tuple[
+                Mapping[torch.device | str, H3MaterializedProjection],
+                Mapping[torch.device | str, H3BlockOps],
+            ]
+        ],
         *,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: MultiGpuH3DiTStats | None = None,
     ) -> torch.Tensor:
         stats = MultiGpuH3DiTStats() if stats is None else stats
-        for ops_by_device in block_ops:
+        for projections_by_device, ops_by_device in blocks:
             self.run_block_(
                 hidden_host,
                 sequence_meta,
+                projections_by_device,
                 ops_by_device,
                 softmax_scale=softmax_scale,
                 causal=causal,

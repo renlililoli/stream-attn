@@ -9,6 +9,7 @@ from ..kernels import finalize_attention, update_attention_state
 from ..stats import StreamingAttentionStats
 from .dynamic import QueryTaskMeasurement
 from .tasks import QueryTask
+from .tile_source import HostQKVTileSource, QKVTileSource
 
 
 class TritonExecutorMixin:
@@ -22,6 +23,41 @@ class TritonExecutorMixin:
         q_cpu: torch.Tensor,
         k_cpu: torch.Tensor,
         v_cpu: torch.Tensor,
+        query_tasks: tuple[QueryTask, ...],
+        scale: float,
+        causal: bool,
+        out_cpu: torch.Tensor | None,
+        stats: StreamingAttentionStats,
+        output_transform: Callable[[torch.Tensor, int, int], torch.Tensor] | None = None,
+        output_consumer=None,
+        task_measurement: QueryTaskMeasurement | None = None,
+        task_lifecycle: bool = False,
+    ) -> torch.Tensor | None:
+        workspace = self._workspace
+        assert workspace is not None
+        source = HostQKVTileSource(
+            q_cpu,
+            k_cpu,
+            v_cpu,
+            workspace,
+            enable_nvtx=self.config.enable_nvtx,
+        )
+        return self._run_triton_from_source(
+            source,
+            query_tasks,
+            scale,
+            causal,
+            out_cpu,
+            stats,
+            output_transform=output_transform,
+            output_consumer=output_consumer,
+            task_measurement=task_measurement,
+            task_lifecycle=task_lifecycle,
+        )
+
+    def _run_triton_from_source(
+        self,
+        source: QKVTileSource,
         query_tasks: tuple[QueryTask, ...],
         scale: float,
         causal: bool,
@@ -63,22 +99,20 @@ class TritonExecutorMixin:
                     output_transform is not None or output_consumer is not None
                 ) and plan.output_mode == "device_consumer"
 
-                with self._range("seqattn:q_h2d"), torch.cuda.stream(workspace.h2d_stream):
-                    if timing is not None:
+                if timing is not None:
+                    with torch.cuda.stream(workspace.h2d_stream):
                         timing.task_start.record(workspace.h2d_stream)
                         timing.h2d_start.record(workspace.h2d_stream)
-                    if workspace.q_has_pending_compute:
-                        workspace.h2d_stream.wait_event(workspace.q_free)
-                    workspace.q[:q_tokens].copy_(
-                        q_cpu[q_tile_start:q_tile_stop],
-                        non_blocking=q_cpu.is_pinned(),
-                    )
-                    workspace.q_ready.record(workspace.h2d_stream)
-                stats.h2d_bytes += q_tokens * q_cpu.shape[1] * q_cpu.shape[2] * q_cpu.element_size()
                 stats.q_chunks += 1
                 stats.max_resident_q_tokens = max(stats.max_resident_q_tokens, q_tokens)
                 with torch.cuda.stream(compute_stream):
-                    compute_stream.wait_event(workspace.q_ready)
+                    source.load_q(
+                        workspace.q[:q_tokens],
+                        q_tile_start,
+                        q_tile_stop,
+                        compute_stream,
+                        stats,
+                    )
                     if timing is not None:
                         timing.attention_start.record(compute_stream)
 
@@ -89,26 +123,16 @@ class TritonExecutorMixin:
                         kv_tile_stop = min(kv_tile_start + plan.kv_chunk_tokens, task.k_stop)
                         kv_tokens = kv_tile_stop - kv_tile_start
                         buffer_index = kv_tile_index % plan.num_kv_buffers
-                        with (
-                            self._range("seqattn:kv_h2d"),
-                            torch.cuda.stream(workspace.h2d_stream),
-                        ):
-                            if workspace.kv_has_pending_compute[buffer_index]:
-                                workspace.h2d_stream.wait_event(workspace.kv_free[buffer_index])
-                            workspace.k[buffer_index][:kv_tokens].copy_(
-                                k_cpu[kv_tile_start:kv_tile_stop],
-                                non_blocking=k_cpu.is_pinned(),
-                            )
-                            workspace.v[buffer_index][:kv_tokens].copy_(
-                                v_cpu[kv_tile_start:kv_tile_stop],
-                                non_blocking=v_cpu.is_pinned(),
-                            )
-                            workspace.kv_ready[buffer_index].record(workspace.h2d_stream)
-                        stats.h2d_bytes += (
-                            2 * kv_tokens * k_cpu.shape[1] * k_cpu.shape[2] * k_cpu.element_size()
+                        source.load_kv(
+                            workspace.k[buffer_index][:kv_tokens],
+                            workspace.v[buffer_index][:kv_tokens],
+                            buffer_index,
+                            kv_tile_start,
+                            kv_tile_stop,
+                            compute_stream,
+                            stats,
                         )
                         stats.kv_tiles += 1
-                        compute_stream.wait_event(workspace.kv_ready[buffer_index])
                         with self._range("seqattn:fused_update"):
                             update_attention_state(
                                 workspace.q,
@@ -131,16 +155,14 @@ class TritonExecutorMixin:
                                 num_stages=plan.num_stages,
                             )
                         initialize = False
-                        workspace.kv_free[buffer_index].record(compute_stream)
-                        workspace.kv_has_pending_compute[buffer_index] = True
+                        source.release_kv(buffer_index, compute_stream)
 
                     if timing is not None:
                         with torch.cuda.stream(workspace.h2d_stream):
                             timing.h2d_end.record(workspace.h2d_stream)
 
                     if not reuse_q_for_output:
-                        workspace.q_free.record(compute_stream)
-                        workspace.q_has_pending_compute = True
+                        source.release_q(compute_stream)
                     if (
                         output_consumer is None
                         and not reuse_q_for_output
@@ -174,8 +196,7 @@ class TritonExecutorMixin:
                             task_done_event = output_consumer.finish_task()
                         if timing is not None:
                             timing.consumer_end.record(compute_stream)
-                        workspace.q_free.record(compute_stream)
-                        workspace.q_has_pending_compute = True
+                        source.release_q(compute_stream)
                     elif output_transform is not None:
                         assert out_cpu is not None
                         with self._range("seqattn:device_output_transform"):
@@ -191,8 +212,7 @@ class TritonExecutorMixin:
                             raise ValueError(
                                 "output_transform result shape does not match "
                                 "the output slice: "
-                                f"{tuple(output_gpu.shape)} != "
-                                f"{tuple(output_slice_shape)}"
+                                f"{tuple(output_gpu.shape)} != {tuple(output_slice_shape)}"
                             )
                         if output_gpu.dtype != out_cpu.dtype:
                             raise ValueError("output_transform result dtype must match out dtype")
@@ -201,8 +221,7 @@ class TritonExecutorMixin:
                             == workspace.q.untyped_storage().data_ptr()
                         )
                         if reuse_q_for_output and not output_aliases_q:
-                            workspace.q_free.record(compute_stream)
-                            workspace.q_has_pending_compute = True
+                            source.release_q(compute_stream)
                     if output_consumer is None:
                         workspace.output_ready[output_index].record(compute_stream)
                 if output_consumer is None:
@@ -217,8 +236,7 @@ class TritonExecutorMixin:
                         output_gpu.record_stream(workspace.d2h_stream)
                         workspace.output_free[output_index].record(workspace.d2h_stream)
                         if reuse_q_for_output and output_aliases_q:
-                            workspace.q_free.record(workspace.d2h_stream)
-                            workspace.q_has_pending_compute = True
+                            source.release_q(workspace.d2h_stream)
                         if timing is not None:
                             timing.d2h_end.record(workspace.d2h_stream)
                             timing.task_done.record(workspace.d2h_stream)

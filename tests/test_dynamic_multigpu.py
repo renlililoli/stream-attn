@@ -523,12 +523,16 @@ def test_h3_consumer_runs_ffn_once_per_dynamic_q_task():
     )
     stats = H3DiTStats()
     ops = H3BlockOps(
-        project_qkv=lambda *args: args,
-        attention_epilogue=lambda attention, start, stop: attention,
+        attention_epilogue=lambda attention, residual, start, stop: attention,
         mlp=lambda tile, start, stop: tile.add(1),
     )
     consumer = H3DeviceOutputConsumer(workspace)
-    consumer.reset(hidden_host=hidden, ops=ops, stats=stats)
+    consumer.reset(
+        destination_hidden_host=hidden,
+        residual_hidden_host=hidden,
+        ops=ops,
+        stats=stats,
+    )
     tasks = (
         QueryTask(0, 7, 0, 8, 0, 1, segment_id=0),
         QueryTask(17, 24, 8, 16, 1, 0, segment_id=1),

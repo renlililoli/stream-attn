@@ -22,6 +22,7 @@ seqattn_core/        public API and implementation; no compat facades
     workspace.py     persistent CUDA buffers, streams, and events
     executor.py      built-in Triton copy/compute/output schedule
     runner.py        validation, reference dispatch, and public runner
+    tile_source.py   host-materialized and device-recomputed Q/K/V loaders
   paged/             fixed-host-budget page runtime
     layout.py        page descriptors and tensor/KV layouts
     protocols.py     PageSource/PageSink reader/writer contracts
@@ -39,8 +40,13 @@ seqattn_core/        public API and implementation; no compat facades
   projection/        hidden-state projection attention pipeline
     types.py         projection callback contracts
     workspace.py     persistent projection streams and buffers
-    runner.py        projected attention orchestration
+    runner.py        materialized projected attention orchestration
+    recompute.py     large-tile Q-only/KV-only attention orchestration
+    recompute_workspace.py one hidden staging allocation for recompute
     api.py           functional convenience API
+  dit/               MiniMax-H3 block schedulers and device output consumer
+    materialized_runner.py in-place block execution with host Q/K/V
+    recompute_runner.py two-hidden-buffer recompute and block ping-pong
   benchmarking/      repository benchmark tools; excluded from release wheels
     common.py        JSON, sequence bounds, RSS, and NVML sampling
     streaming.py     DRAM-backed and full-GPU benchmark
@@ -163,10 +169,9 @@ and scales together and applies dequantization in the QK/PV path. No complete
 BF16 K/V tensor is produced. CPU reference execution dequantizes only the
 current page for auditability.
 
-## Projected inference pipeline
+## Projected inference pipelines
 
-`ProjectedAttentionRunner` adds model-projection producer/consumer hooks around
-the Triton attention runtime:
+`ProjectedAttentionRunner` is the materialized model-projection path:
 
 ```text
 CPU hidden
@@ -203,10 +208,19 @@ Q/K normalization, and rotary embedding while the attention core remains
 Triton.  The caller is responsible for keeping projection weights resident for
 the duration of each phase.
 
-The planned MiniMax-H3 ComfyUI block runner extends this producer/consumer
-boundary through output projection and the complete SwiGLU MLP, with independent
-projection, resident-Q, streamed-K/V, and MLP chunk axes. Its ownership model,
-buffer schedule, weight leases, and acceptance protocol are specified in
+`RecomputedAttentionRunner` is independent of the materialized projection
+pipeline. It accepts Q-only and KV-only callbacks that write one complete
+attention Q or K/V tile directly into the CUDA attention workspace. It owns one
+device hidden staging buffer sized to the larger attention tile and never
+allocates host Q/K/V. Both paths use the same internal tile-source executor and
+therefore the same online-softmax, finalize, and output-consumer schedule.
+
+MiniMax-H3 extends the device output consumer through output projection and the
+complete SwiGLU MLP. `H3MaterializedRunner` keeps the one-hidden in-place
+contract; `H3RecomputeRunner` requires two pinned hidden buffers and ping-pongs
+them across blocks. The detailed recompute invariants are specified in
+[`dit_qkv_recompute_architecture.md`](dit_qkv_recompute_architecture.md), and
+the complete block pipeline is specified in
 [`minimax_h3_comfyui_dit_block_pipeline.md`](minimax_h3_comfyui_dit_block_pipeline.md).
 
 ## Planned follow-ups
@@ -219,6 +233,6 @@ buffer schedule, weight leases, and acceptance protocol are specified in
   including their lower-level preallocated-output interfaces.
 - Optional prefetched residual/epilogue buffers so model-specific residual H2D
   overlaps the final K/V scan.
-- Projection callback variants that can write into persistent GPU output slots
-  and avoid temporary allocator traffic for standard dense linear layers.
+- Model-specific fused Q-only/KV-only operators that write directly into the
+  public recompute destinations without tile-local allocator traffic.
 - Backward kernels only after the inference API and memory contract stabilize.

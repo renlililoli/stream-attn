@@ -15,8 +15,9 @@ import torch.nn.functional as F
 from seqattn_core import (
     DynamicScheduleConfig,
     H3BlockOps,
-    H3DiTRunner,
     H3DiTStats,
+    H3MaterializedProjection,
+    H3MaterializedRunner,
     H3SequenceMeta,
     MultiGpuDeviceSpec,
     MultiGpuH3DiTRunner,
@@ -55,7 +56,7 @@ def _make_ops(
     head_dim: int,
     mlp_features: int,
     seed: int,
-) -> H3BlockOps:
+) -> tuple[H3MaterializedProjection, H3BlockOps]:
     inner = heads * head_dim
     qkv_weight = _device_weight(
         (3 * inner, hidden_features),
@@ -87,8 +88,13 @@ def _make_ops(
         qkv = F.linear(tile, qkv_weight).view(-1, 3, heads, head_dim)
         return tuple(qkv[:, index].contiguous() for index in range(3))
 
-    def attention_epilogue(attention: torch.Tensor, start: int, stop: int):
-        residual = hidden_host[start:stop].to(device, non_blocking=True)
+    def attention_epilogue(
+        attention: torch.Tensor,
+        residual_host: torch.Tensor,
+        start: int,
+        stop: int,
+    ):
+        residual = residual_host[start:stop].to(device, non_blocking=True)
         return F.linear(attention.reshape(stop - start, inner), out_weight).add_(residual)
 
     def mlp(post_attention: torch.Tensor, start: int, stop: int):
@@ -97,7 +103,7 @@ def _make_ops(
         update = F.linear(F.silu(gate).mul_(up), fc2_weight)
         return post_attention.add_(update)
 
-    return H3BlockOps(project_qkv, attention_epilogue, mlp)
+    return H3MaterializedProjection(project_qkv), H3BlockOps(attention_epilogue, mlp)
 
 
 def _sync_devices(devices: list[torch.device]) -> None:
@@ -168,7 +174,7 @@ def main() -> None:
             "cuda": torch.version.cuda,
         },
     }
-    runner: H3DiTRunner | MultiGpuH3DiTRunner | None = None
+    runner: H3MaterializedRunner | MultiGpuH3DiTRunner | None = None
     try:
         required_devices = 1 if args.mode == "single" else 2
         if torch.cuda.device_count() != required_devices:
@@ -191,7 +197,7 @@ def main() -> None:
         hidden.copy_(original)
         cu_seqlens = torch.tensor([0, args.tokens], dtype=torch.int32)
         sequence_meta = H3SequenceMeta(cu_seqlens)
-        ops = {
+        blocks = {
             str(device): _make_ops(
                 device=device,
                 hidden_host=hidden,
@@ -226,7 +232,7 @@ def main() -> None:
                 attention_config,
                 ProjectionPipelineConfig(projection_chunk_tokens=args.projection_chunk),
             )
-            runner = H3DiTRunner(
+            runner = H3MaterializedRunner(
                 projected,
                 hidden_features=args.hidden_features,
                 mlp_chunk_tokens=attention_plan.q_chunk_tokens,
@@ -243,7 +249,8 @@ def main() -> None:
                 runner.run_block_(
                     hidden,
                     sequence_meta,
-                    ops[str(devices[0])],
+                    blocks[str(devices[0])][0],
+                    blocks[str(devices[0])][1],
                     softmax_scale=args.head_dim**-0.5,
                     stats=stats,
                 )
@@ -308,7 +315,8 @@ def main() -> None:
                 runner.run_block_(
                     hidden,
                     sequence_meta,
-                    ops,
+                    {device: block[0] for device, block in blocks.items()},
+                    {device: block[1] for device, block in blocks.items()},
                     softmax_scale=args.head_dim**-0.5,
                     stats=stats,
                 )

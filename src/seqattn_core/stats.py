@@ -112,8 +112,27 @@ class ProjectedAttentionStats:
 
 
 @dataclass
+class RecomputedAttentionStats:
+    backend: str = ""
+    wall_seconds: float = 0.0
+    q_projection_chunks: int = 0
+    kv_projection_chunks: int = 0
+    hidden_h2d_bytes: int = 0
+    qkv_host_bytes: int = 0
+    raw_attention_roundtrip_bytes_avoided: int = 0
+    attention: StreamingAttentionStats = field(default_factory=StreamingAttentionStats)
+
+    def as_dict(self) -> dict[str, object]:
+        result = asdict(self)
+        result["total_h2d_bytes"] = self.hidden_h2d_bytes + self.attention.h2d_bytes
+        result["total_d2h_bytes"] = self.attention.d2h_bytes
+        return result
+
+
+@dataclass
 class H3DiTStats:
     backend: str = ""
+    qkv_storage_policy: str = ""
     wall_seconds: float = 0.0
     blocks: int = 0
     mlp_chunks: int = 0
@@ -121,8 +140,10 @@ class H3DiTStats:
     final_hidden_d2h_bytes: int = 0
     post_attention_roundtrip_bytes_avoided: int = 0
     qkv_host_bytes_peak: int = 0
+    hidden_host_bytes_peak: int = 0
     estimated_workspace_bytes: int = 0
     projection: ProjectedAttentionStats = field(default_factory=ProjectedAttentionStats)
+    recompute: RecomputedAttentionStats = field(default_factory=RecomputedAttentionStats)
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)

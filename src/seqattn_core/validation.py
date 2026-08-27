@@ -5,6 +5,21 @@ from itertools import pairwise
 import torch
 
 
+def validate_cu_seqlens(
+    cu_seqlens: torch.Tensor,
+    total_tokens: int,
+    name: str,
+) -> list[int]:
+    if cu_seqlens.device.type != "cpu" or cu_seqlens.ndim != 1 or cu_seqlens.numel() < 2:
+        raise ValueError(f"{name} must be a one-dimensional CPU tensor")
+    bounds = cu_seqlens.to(dtype=torch.int64).tolist()
+    if bounds[0] != 0 or bounds[-1] != total_tokens:
+        raise ValueError(f"{name} must span [0, {total_tokens}], got {bounds}")
+    if any(stop < start for start, stop in pairwise(bounds)):
+        raise ValueError(f"{name} must be non-decreasing")
+    return bounds
+
+
 def validate_host_qkv(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -27,18 +42,8 @@ def validate_host_qkv(
     if not all(t.is_contiguous() for t in (q, k, v)):
         raise ValueError("q, k, and v must be contiguous")
 
-    def bounds(name: str, cu: torch.Tensor, total: int) -> list[int]:
-        if cu.device.type != "cpu" or cu.ndim != 1 or cu.numel() < 2:
-            raise ValueError(f"{name} must be a one-dimensional CPU tensor")
-        result = cu.to(dtype=torch.int64).tolist()
-        if result[0] != 0 or result[-1] != total:
-            raise ValueError(f"{name} must span [0, {total}], got {result}")
-        if any(stop < start for start, stop in pairwise(result)):
-            raise ValueError(f"{name} must be non-decreasing")
-        return result
-
-    q_bounds = bounds("cu_seqlens_q", cu_seqlens_q, q.shape[0])
-    k_bounds = bounds("cu_seqlens_k", cu_seqlens_k, k.shape[0])
+    q_bounds = validate_cu_seqlens(cu_seqlens_q, q.shape[0], "cu_seqlens_q")
+    k_bounds = validate_cu_seqlens(cu_seqlens_k, k.shape[0], "cu_seqlens_k")
     if len(q_bounds) != len(k_bounds):
         raise ValueError("cu_seqlens_q and cu_seqlens_k must describe the same batch size")
     for index, ((qs, qe), (ks, ke)) in enumerate(zip(pairwise(q_bounds), pairwise(k_bounds))):
