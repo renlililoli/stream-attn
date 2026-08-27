@@ -208,6 +208,15 @@ Q/K normalization, and rotary embedding while the attention core remains
 Triton.  The caller is responsible for keeping projection weights resident for
 the duration of each phase.
 
+Projection callbacks and device output consumers run with the planned CUDA
+device selected and the runner compute stream current. They must submit every
+operation that reads a supplied tile, and every operation that produces a
+returned tile, to that stream before returning. A callback may hand work to a
+different stream only after recording explicit CUDA dependencies. Returned
+tensors must reside on the planned device and completely cover the requested
+token range. A device consumer's completion method must not return until its
+final destination ranges are fully written and safe for the caller to read.
+
 `RecomputedAttentionRunner` is independent of the materialized projection
 pipeline. It accepts Q-only and KV-only callbacks that write one complete
 attention Q or K/V tile directly into the CUDA attention workspace. It owns one

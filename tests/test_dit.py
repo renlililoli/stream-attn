@@ -1,4 +1,5 @@
 import math
+from dataclasses import fields
 from itertools import pairwise
 
 import pytest
@@ -52,6 +53,7 @@ def test_h3_workspace_estimates_and_sequence_validation():
     )
 
     meta = H3SequenceMeta(torch.tensor([0, 3, 3, 7], dtype=torch.int32))
+    assert [field.name for field in fields(H3SequenceMeta)] == ["cu_seqlens"]
     meta.validate(7)
     with pytest.raises(ValueError, match="span"):
         meta.validate(8)
@@ -388,6 +390,108 @@ def test_h3_recompute_large_tiles_match_full_gpu_and_ping_pong():
     )
     assert stack_result.data_ptr() == stack_source.data_ptr()
     torch.testing.assert_close(stack_result, expected_stack.cpu(), atol=1e-1, rtol=2e-2)
+
+
+@pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
+@torch.inference_mode()
+def test_recomputed_attention_projection_failure_allows_runner_reuse():
+    torch.manual_seed(397)
+    device = torch.device("cuda")
+    dtype = torch.float16
+    tokens = 17
+    hidden_features = 24
+    heads = 2
+    head_dim = 16
+    inner = heads * head_dim
+    hidden = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
+    cu = torch.tensor([0, tokens], dtype=torch.int32)
+    qkv = torch.nn.Linear(hidden_features, 3 * inner, bias=False).to(device, dtype)
+    config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=8,
+        kv_chunk_tokens=8,
+        block_m=16,
+        block_n=16,
+        output_mode="device_consumer",
+    )
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device=device,
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=config,
+    )
+    runner = RecomputedAttentionRunner(
+        plan,
+        hidden_features=hidden_features,
+        attention_config=config,
+    )
+
+    def project_q(tile, destination, start, stop):
+        del start, stop
+        destination.copy_(qkv(tile)[:, :inner].view(-1, heads, head_dim))
+
+    def project_kv(tile, destination_k, destination_v, start, stop):
+        del start, stop
+        projected = qkv(tile)
+        destination_k.copy_(projected[:, inner : 2 * inner].view(-1, heads, head_dim))
+        destination_v.copy_(projected[:, 2 * inner :].view(-1, heads, head_dim))
+
+    kv_calls = 0
+
+    def fail_second_kv(tile, destination_k, destination_v, start, stop):
+        nonlocal kv_calls
+        kv_calls += 1
+        project_kv(tile, destination_k, destination_v, start, stop)
+        if kv_calls == 2:
+            raise RuntimeError("injected KV projection failure")
+
+    class Collector:
+        def __init__(self):
+            self.output = torch.empty((tokens, inner), dtype=dtype, device=device)
+
+        def __call__(self, attention, start, stop):
+            self.output[start:stop].copy_(attention)
+
+        def finish(self):
+            return None
+
+        def synchronize(self):
+            torch.cuda.current_stream(device).synchronize()
+
+    with pytest.raises(RuntimeError, match="injected KV projection failure"):
+        runner.run_with_device_consumer(
+            hidden,
+            cu,
+            project_q=project_q,
+            project_kv=fail_second_kv,
+            output_consumer=Collector(),
+        )
+    assert not runner.workspace.hidden_has_pending_compute
+
+    collector = Collector()
+    runner.run_with_device_consumer(
+        hidden,
+        cu,
+        project_q=project_q,
+        project_kv=project_kv,
+        output_consumer=collector,
+    )
+    projected = qkv(hidden.to(device))
+    q = projected[:, :inner].view(tokens, heads, head_dim)
+    k = projected[:, inner : 2 * inner].view(tokens, heads, head_dim)
+    v = projected[:, 2 * inner :].view(tokens, heads, head_dim)
+    expected = torch.nn.functional.scaled_dot_product_attention(
+        q.transpose(0, 1).unsqueeze(0),
+        k.transpose(0, 1).unsqueeze(0),
+        v.transpose(0, 1).unsqueeze(0),
+        scale=head_dim**-0.5,
+    ).squeeze(0)
+    expected = expected.transpose(0, 1).reshape(tokens, inner)
+    torch.testing.assert_close(collector.output, expected, atol=3e-2, rtol=3e-2)
 
 
 @pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")

@@ -10,6 +10,7 @@ from ..planner import AttentionPlan, build_plan
 from ..stats import ProjectedAttentionStats
 from ..streaming import StreamingAttentionRunner
 from .types import OutputProjector, QKVProjector
+from .validation import validate_projected_qkv, validate_projection_hidden
 from .workspace import ProjectionWorkspace
 
 
@@ -91,42 +92,6 @@ class ProjectedAttentionRunner:
             )
         return self._projection_workspace
 
-    def _validate_hidden(self, hidden_cpu: torch.Tensor) -> None:
-        if hidden_cpu.device.type != "cpu" or hidden_cpu.ndim != 2:
-            raise ValueError("hidden_cpu must use CPU [tokens, hidden_features] layout")
-        if not hidden_cpu.is_contiguous():
-            raise ValueError("hidden_cpu must be contiguous")
-        if hidden_cpu.dtype != self.plan.dtype:
-            raise ValueError("hidden_cpu dtype must match the attention plan")
-        if self.pipeline_config.require_pinned_hidden and not hidden_cpu.is_pinned():
-            raise ValueError("asynchronous projection requires pinned hidden_cpu")
-        tokens = hidden_cpu.shape[0]
-        if tokens > self.plan.max_q_tokens or tokens > self.plan.max_kv_tokens:
-            raise ValueError("hidden token count exceeds the runner plan")
-
-    def _validate_projected_tile(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        tokens: int,
-    ) -> None:
-        expected_q = (tokens, self.plan.q_heads, self.plan.head_dim)
-        expected_kv = (tokens, self.plan.kv_heads, self.plan.head_dim)
-        if q.shape != expected_q:
-            raise ValueError(
-                f"project_qkv returned q shape {tuple(q.shape)}, expected {expected_q}"
-            )
-        if k.shape != expected_kv or v.shape != expected_kv:
-            raise ValueError(
-                "project_qkv returned invalid k/v shapes: "
-                f"{tuple(k.shape)}, {tuple(v.shape)}, expected {expected_kv}"
-            )
-        if any(tensor.device != self.plan.device for tensor in (q, k, v)):
-            raise ValueError("project_qkv must return tensors on the planned CUDA device")
-        if any(tensor.dtype != self.plan.dtype for tensor in (q, k, v)):
-            raise ValueError("project_qkv output dtype must match the attention plan")
-
     def project_qkv_to_host(
         self,
         hidden_cpu: torch.Tensor,
@@ -136,59 +101,68 @@ class ProjectedAttentionRunner:
         """Run the chunked projection producer and return CPU-backed Q/K/V views."""
 
         stats = ProjectedAttentionStats() if stats is None else stats
-        self._validate_hidden(hidden_cpu)
+        validate_projection_hidden(
+            hidden_cpu,
+            plan=self.plan,
+            require_pinned=self.pipeline_config.require_pinned_hidden,
+        )
         stats.backend = self.attention.backend
         tokens, hidden_features = hidden_cpu.shape
         workspace = self._workspace_for(hidden_features)
         chunk = self.pipeline_config.projection_chunk_tokens
-        torch.cuda.synchronize(self.plan.device)
         started = time.perf_counter()
+        try:
+            for chunk_index, start in enumerate(range(0, tokens, chunk)):
+                stop = min(start + chunk, tokens)
+                tile_tokens = stop - start
+                slot = chunk_index % len(workspace.hidden)
+                if workspace.busy[slot]:
+                    workspace.copy_done[slot].synchronize()
+                    workspace.release_slot(slot)
 
-        for chunk_index, start in enumerate(range(0, tokens, chunk)):
-            stop = min(start + chunk, tokens)
-            tile_tokens = stop - start
-            slot = chunk_index % len(workspace.hidden)
-            if workspace.busy[slot]:
-                workspace.copy_done[slot].synchronize()
-                workspace.keepalive[slot] = None
+                with (
+                    self._range("seqattn:projection_hidden_h2d"),
+                    torch.cuda.stream(workspace.h2d_stream),
+                ):
+                    workspace.hidden[slot][:tile_tokens].copy_(
+                        hidden_cpu[start:stop], non_blocking=hidden_cpu.is_pinned()
+                    )
+                    workspace.input_ready[slot].record(workspace.h2d_stream)
 
-            with (
-                self._range("seqattn:projection_hidden_h2d"),
-                torch.cuda.stream(workspace.h2d_stream),
-            ):
-                workspace.hidden[slot][:tile_tokens].copy_(
-                    hidden_cpu[start:stop], non_blocking=hidden_cpu.is_pinned()
+                with torch.cuda.stream(workspace.compute_stream):
+                    workspace.compute_stream.wait_event(workspace.input_ready[slot])
+                    with self._range("seqattn:qkv_projection"):
+                        q, k, v = project_qkv(workspace.hidden[slot][:tile_tokens], start, stop)
+                        validate_projected_qkv(q, k, v, tokens=tile_tokens, plan=self.plan)
+                    workspace.projected_ready[slot].record(workspace.compute_stream)
+
+                with (
+                    self._range("seqattn:projection_qkv_d2h"),
+                    torch.cuda.stream(workspace.d2h_stream),
+                ):
+                    workspace.d2h_stream.wait_event(workspace.projected_ready[slot])
+                    self.q_cpu[start:stop].copy_(q, non_blocking=self.q_cpu.is_pinned())
+                    self.k_cpu[start:stop].copy_(k, non_blocking=self.k_cpu.is_pinned())
+                    self.v_cpu[start:stop].copy_(v, non_blocking=self.v_cpu.is_pinned())
+                    workspace.copy_done[slot].record(workspace.d2h_stream)
+
+                workspace.keepalive[slot] = (q, k, v)
+                workspace.busy[slot] = True
+                stats.projection_chunks += 1
+                stats.projection_tokens += tile_tokens
+                stats.projection_hidden_h2d_bytes += (
+                    tile_tokens * hidden_features * hidden_cpu.element_size()
                 )
-                workspace.input_ready[slot].record(workspace.h2d_stream)
+                stats.projection_qkv_d2h_bytes += sum(
+                    tensor.numel() * tensor.element_size() for tensor in (q, k, v)
+                )
 
-            with torch.cuda.stream(workspace.compute_stream):
-                workspace.compute_stream.wait_event(workspace.input_ready[slot])
-                with self._range("seqattn:qkv_projection"):
-                    q, k, v = project_qkv(workspace.hidden[slot][:tile_tokens], start, stop)
-                    self._validate_projected_tile(q, k, v, tile_tokens)
-                workspace.projected_ready[slot].record(workspace.compute_stream)
-
-            with self._range("seqattn:projection_qkv_d2h"), torch.cuda.stream(workspace.d2h_stream):
-                workspace.d2h_stream.wait_event(workspace.projected_ready[slot])
-                self.q_cpu[start:stop].copy_(q, non_blocking=self.q_cpu.is_pinned())
-                self.k_cpu[start:stop].copy_(k, non_blocking=self.k_cpu.is_pinned())
-                self.v_cpu[start:stop].copy_(v, non_blocking=self.v_cpu.is_pinned())
-                workspace.copy_done[slot].record(workspace.d2h_stream)
-
-            workspace.keepalive[slot] = (q, k, v)
-            workspace.busy[slot] = True
-            stats.projection_chunks += 1
-            stats.projection_tokens += tile_tokens
-            stats.projection_hidden_h2d_bytes += (
-                tile_tokens * hidden_features * hidden_cpu.element_size()
-            )
-            stats.projection_qkv_d2h_bytes += sum(
-                tensor.numel() * tensor.element_size() for tensor in (q, k, v)
-            )
-
-        workspace.d2h_stream.synchronize()
-        for slot in range(len(workspace.keepalive)):
-            workspace.keepalive[slot] = None
+            workspace.d2h_stream.synchronize()
+        except Exception:
+            workspace.recover()
+            raise
+        else:
+            workspace.reset_slots()
         stats.projection_seconds += time.perf_counter() - started
         q_cpu = self.q_cpu[:tokens]
         k_cpu = self.k_cpu[:tokens]
@@ -212,7 +186,11 @@ class ProjectedAttentionRunner:
         causal: bool = False,
         stats: ProjectedAttentionStats | None = None,
     ) -> torch.Tensor:
-        self._validate_hidden(hidden_cpu)
+        validate_projection_hidden(
+            hidden_cpu,
+            plan=self.plan,
+            require_pinned=self.pipeline_config.require_pinned_hidden,
+        )
         tokens = hidden_cpu.shape[0]
         if out is None:
             if output_features is None or output_features <= 0:

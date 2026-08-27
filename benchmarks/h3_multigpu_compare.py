@@ -20,8 +20,8 @@ from seqattn_core import (
     H3MaterializedRunner,
     H3SequenceMeta,
     MultiGpuDeviceSpec,
-    MultiGpuH3DiTRunner,
     MultiGpuH3DiTStats,
+    MultiGpuH3MaterializedRunner,
     ProjectedAttentionRunner,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
@@ -174,7 +174,7 @@ def main() -> None:
             "cuda": torch.version.cuda,
         },
     }
-    runner: H3MaterializedRunner | MultiGpuH3DiTRunner | None = None
+    runner: H3MaterializedRunner | MultiGpuH3MaterializedRunner | None = None
     try:
         required_devices = 1 if args.mode == "single" else 2
         if torch.cuda.device_count() != required_devices:
@@ -295,7 +295,7 @@ def main() -> None:
                 primary_schedule.config,
                 ProjectionPipelineConfig(projection_chunk_tokens=args.projection_chunk),
             )
-            runner = MultiGpuH3DiTRunner(
+            runner = MultiGpuH3MaterializedRunner(
                 projected,
                 multi_plan,
                 hidden_features=args.hidden_features,
@@ -369,7 +369,7 @@ def main() -> None:
         result["failure_message"] = f"{type(error).__name__}: {error}"
         result["traceback"] = traceback.format_exc()
     finally:
-        if isinstance(runner, MultiGpuH3DiTRunner):
+        if isinstance(runner, MultiGpuH3MaterializedRunner):
             runner.close()
 
     atomic_json(args.output, result)

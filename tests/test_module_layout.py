@@ -5,6 +5,8 @@ from seqattn_core import (
     H3MaterializedRunner,
     H3RecomputeRunner,
     MemoryPageSource,
+    MultiGpuH3DiTRunner,
+    MultiGpuH3MaterializedRunner,
     NvmeQKVStore,
     NvmeQKVWriter,
     PagedAttentionRunner,
@@ -40,6 +42,8 @@ def test_subpackages_export_the_canonical_implementations():
     assert PackagedStreamingAttentionRunner is StreamingAttentionRunner
     assert H3MaterializedRunner.__name__ == "H3MaterializedRunner"
     assert H3RecomputeRunner.__name__ == "H3RecomputeRunner"
+    assert MultiGpuH3MaterializedRunner.__name__ == "MultiGpuH3MaterializedRunner"
+    assert MultiGpuH3DiTRunner is MultiGpuH3MaterializedRunner
     assert not hasattr(seqattn_core, "H3DiTRunner")
 
 

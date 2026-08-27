@@ -12,6 +12,7 @@ from seqattn_core import (
     build_plan,
 )
 from seqattn_core.kernels import triton_is_available
+from seqattn_core.reference import streaming_attention_reference
 
 
 def test_projection_pipeline_config_validation():
@@ -180,3 +181,230 @@ def test_projected_runner_reuse_has_bounded_allocator_growth():
         )
     torch.cuda.synchronize()
     assert torch.cuda.memory_allocated() <= baseline + 4 * 2**20
+
+
+@pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
+def test_projection_workspace_resets_without_device_wide_synchronization(monkeypatch):
+    dtype = torch.float16
+    tokens = 19
+    hidden_features = 24
+    heads = 2
+    head_dim = 16
+    inner = heads * head_dim
+    hidden_cpu = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
+    config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=8,
+        kv_chunk_tokens=8,
+        block_m=16,
+        block_n=16,
+    )
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda:0",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=config,
+    )
+    runner = ProjectedAttentionRunner(
+        plan,
+        config,
+        ProjectionPipelineConfig(
+            projection_chunk_tokens=7,
+            num_projection_buffers=2,
+        ),
+    )
+    qkv_linear = torch.nn.Linear(hidden_features, 3 * inner, bias=False).to(
+        device="cuda:0",
+        dtype=dtype,
+    )
+    callback_streams = []
+
+    def project_qkv(hidden, start, stop):
+        del start, stop
+        callback_streams.append(torch.cuda.current_stream("cuda:0"))
+        qkv = qkv_linear(hidden).view(-1, 3, heads, head_dim)
+        return tuple(qkv[:, index].contiguous() for index in range(3))
+
+    def reject_device_sync(*_args, **_kwargs):
+        raise AssertionError("projection must not synchronize the complete CUDA device")
+
+    monkeypatch.setattr(torch.cuda, "synchronize", reject_device_sync)
+    runner.project_qkv_to_host(hidden_cpu, project_qkv)
+
+    workspace = runner._projection_workspace
+    assert workspace is not None
+    assert callback_streams
+    assert all(stream == workspace.compute_stream for stream in callback_streams)
+    assert workspace.busy == [False, False]
+    assert workspace.keepalive == [None, None]
+
+    callback_calls = 0
+
+    def fail_second_tile(hidden, start, stop):
+        nonlocal callback_calls
+        callback_calls += 1
+        result = project_qkv(hidden, start, stop)
+        if callback_calls == 2:
+            raise RuntimeError("injected projection failure")
+        return result
+
+    with pytest.raises(RuntimeError, match="injected projection failure"):
+        runner.project_qkv_to_host(hidden_cpu, fail_second_tile)
+
+    assert workspace.busy == [False, False]
+    assert workspace.keepalive == [None, None]
+    runner.project_qkv_to_host(hidden_cpu, project_qkv)
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2 or not triton_is_available(),
+    reason="requires two CUDA devices and Triton",
+)
+def test_output_transform_rejects_a_tensor_on_the_wrong_cuda_device():
+    dtype = torch.float16
+    tokens = 17
+    heads = 2
+    head_dim = 16
+    q = torch.randn(tokens, heads, head_dim, dtype=dtype, pin_memory=True)
+    k = torch.randn_like(q, pin_memory=True)
+    v = torch.randn_like(q, pin_memory=True)
+    cu = torch.tensor([0, tokens], dtype=torch.int32)
+    config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=8,
+        kv_chunk_tokens=8,
+        block_m=16,
+        block_n=16,
+        output_mode="device_consumer",
+    )
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda:0",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=config,
+    )
+    runner = ProjectedAttentionRunner(plan, config).attention
+    out = torch.empty((tokens, heads * head_dim), dtype=dtype, pin_memory=True)
+
+    def wrong_device_output(attention, start, stop):
+        del attention
+        return torch.empty((stop - start, heads * head_dim), dtype=dtype, device="cuda:1")
+
+    with pytest.raises(ValueError, match="planned CUDA device"):
+        runner.run_with_device_output(
+            q,
+            k,
+            v,
+            cu,
+            cu,
+            output_transform=wrong_device_output,
+            out=out,
+        )
+
+    actual = runner.run_with_device_output(
+        q,
+        k,
+        v,
+        cu,
+        cu,
+        output_transform=lambda attention, start, stop: attention,
+        out=out,
+    )
+    expected = streaming_attention_reference(
+        q,
+        k,
+        v,
+        cu,
+        cu,
+        q_chunk_tokens=8,
+        kv_chunk_tokens=8,
+        device="cuda:0",
+    ).reshape(tokens, -1)
+    torch.testing.assert_close(actual, expected, atol=3e-2, rtol=3e-2)
+
+
+@pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
+def test_output_consumer_failure_synchronizes_and_allows_runner_reuse():
+    dtype = torch.float16
+    tokens = 17
+    heads = 2
+    head_dim = 16
+    q = torch.randn(tokens, heads, head_dim, dtype=dtype, pin_memory=True)
+    k = torch.randn_like(q, pin_memory=True)
+    v = torch.randn_like(q, pin_memory=True)
+    cu = torch.tensor([0, tokens], dtype=torch.int32)
+    config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=8,
+        kv_chunk_tokens=8,
+        block_m=16,
+        block_n=16,
+        output_mode="device_consumer",
+    )
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda:0",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=config,
+    )
+    runner = ProjectedAttentionRunner(plan, config).attention
+
+    class FailingConsumer:
+        def __init__(self):
+            self.stream = torch.cuda.Stream(device="cuda:0")
+            self.ready = torch.cuda.Event()
+            self.output = torch.empty((tokens, heads * head_dim), dtype=dtype, device="cuda:0")
+            self.synchronized = False
+
+        def __call__(self, attention, start, stop):
+            self.ready.record(torch.cuda.current_stream("cuda:0"))
+            with torch.cuda.stream(self.stream):
+                self.stream.wait_event(self.ready)
+                self.output[start:stop].copy_(attention)
+            raise RuntimeError("injected consumer failure")
+
+        def finish(self):
+            raise AssertionError("finish must not run after a tile failure")
+
+        def synchronize(self):
+            self.stream.synchronize()
+            self.synchronized = True
+
+    consumer = FailingConsumer()
+    with pytest.raises(RuntimeError, match="injected consumer failure"):
+        runner.run_with_device_consumer(q, k, v, cu, cu, output_consumer=consumer)
+    assert consumer.synchronized
+
+    out = torch.empty((tokens, heads * head_dim), dtype=dtype, pin_memory=True)
+    actual = runner.run_with_device_output(
+        q,
+        k,
+        v,
+        cu,
+        cu,
+        output_transform=lambda attention, start, stop: attention,
+        out=out,
+    )
+    expected = streaming_attention_reference(
+        q,
+        k,
+        v,
+        cu,
+        cu,
+        q_chunk_tokens=8,
+        kv_chunk_tokens=8,
+        device="cuda:0",
+    ).reshape(tokens, -1)
+    torch.testing.assert_close(actual, expected, atol=3e-2, rtol=3e-2)

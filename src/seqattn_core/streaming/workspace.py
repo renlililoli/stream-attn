@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import suppress
+
 import torch
 
 from ..planner import AttentionPlan
@@ -70,6 +72,14 @@ class CudaWorkspace:
         if self.task_timing is None:
             self.task_timing = TaskTimingEvents()
         return self.task_timing
+
+    def recover(self) -> None:
+        for stream in (self.h2d_stream, self.compute_stream, self.d2h_stream):
+            with suppress(Exception):
+                stream.synchronize()
+        self.q_has_pending_compute = False
+        self.kv_has_pending_compute[:] = [False for _ in self.kv_has_pending_compute]
+        self.output_has_pending_copy[:] = [False for _ in self.output_has_pending_copy]
 
 
 __all__ = ["CudaWorkspace", "TaskTimingEvents"]

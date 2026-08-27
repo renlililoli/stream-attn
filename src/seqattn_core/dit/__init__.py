@@ -1,6 +1,6 @@
 from .config import H3TileConfig, load_h3_tile_config
 from .materialized_runner import H3MaterializedRunner
-from .multigpu import MultiGpuH3DiTRunner
+from .multigpu import MultiGpuH3DiTRunner, MultiGpuH3MaterializedRunner
 from .recompute_runner import H3RecomputeRunner
 from .types import (
     AttentionEpilogue,
@@ -31,6 +31,7 @@ __all__ = [
     "H3TileConfig",
     "LeaseFactory",
     "MultiGpuH3DiTRunner",
+    "MultiGpuH3MaterializedRunner",
     "estimate_h3_consumer_workspace_bytes",
     "estimate_h3_materialized_aux_workspace_bytes",
     "estimate_h3_recompute_aux_workspace_bytes",

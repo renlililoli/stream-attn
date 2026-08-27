@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 
 import torch
 
 from ..kernels import finalize_attention, update_attention_state
 from ..stats import StreamingAttentionStats
 from .dynamic import QueryTaskMeasurement
+from .protocols import DeviceOutputConsumer, DeviceOutputTransform, TaskDeviceOutputConsumer
 from .tasks import QueryTask
 from .tile_source import HostQKVTileSource, QKVTileSource
 
@@ -28,10 +28,9 @@ class TritonExecutorMixin:
         causal: bool,
         out_cpu: torch.Tensor | None,
         stats: StreamingAttentionStats,
-        output_transform: Callable[[torch.Tensor, int, int], torch.Tensor] | None = None,
-        output_consumer=None,
+        output_transform: DeviceOutputTransform | None = None,
+        output_consumer: DeviceOutputConsumer | None = None,
         task_measurement: QueryTaskMeasurement | None = None,
-        task_lifecycle: bool = False,
     ) -> torch.Tensor | None:
         workspace = self._workspace
         assert workspace is not None
@@ -52,7 +51,38 @@ class TritonExecutorMixin:
             output_transform=output_transform,
             output_consumer=output_consumer,
             task_measurement=task_measurement,
-            task_lifecycle=task_lifecycle,
+        )
+
+    def _run_triton_with_task_consumer(
+        self,
+        q_cpu: torch.Tensor,
+        k_cpu: torch.Tensor,
+        v_cpu: torch.Tensor,
+        query_task: QueryTask,
+        scale: float,
+        causal: bool,
+        stats: StreamingAttentionStats,
+        output_consumer: TaskDeviceOutputConsumer,
+        task_measurement: QueryTaskMeasurement,
+    ) -> None:
+        workspace = self._workspace
+        assert workspace is not None
+        source = HostQKVTileSource(
+            q_cpu,
+            k_cpu,
+            v_cpu,
+            workspace,
+            enable_nvtx=self.config.enable_nvtx,
+        )
+        self._run_triton_from_source(
+            source,
+            (query_task,),
+            scale,
+            causal,
+            None,
+            stats,
+            task_output_consumer=output_consumer,
+            task_measurement=task_measurement,
         )
 
     def _run_triton_from_source(
@@ -63,19 +93,77 @@ class TritonExecutorMixin:
         causal: bool,
         out_cpu: torch.Tensor | None,
         stats: StreamingAttentionStats,
-        output_transform: Callable[[torch.Tensor, int, int], torch.Tensor] | None = None,
-        output_consumer=None,
+        output_transform: DeviceOutputTransform | None = None,
+        output_consumer: DeviceOutputConsumer | None = None,
+        task_output_consumer: TaskDeviceOutputConsumer | None = None,
         task_measurement: QueryTaskMeasurement | None = None,
-        task_lifecycle: bool = False,
     ) -> torch.Tensor | None:
-        if output_transform is not None and output_consumer is not None:
-            raise ValueError("output_transform and output_consumer are mutually exclusive")
-        if output_consumer is None and out_cpu is None:
+        consumer_count = sum(
+            item is not None for item in (output_transform, output_consumer, task_output_consumer)
+        )
+        if consumer_count > 1:
+            raise ValueError(
+                "output_transform, output_consumer, and task_output_consumer are mutually exclusive"
+            )
+        active_consumer = (
+            task_output_consumer if task_output_consumer is not None else output_consumer
+        )
+        if active_consumer is None and out_cpu is None:
             raise ValueError("out_cpu is required without an output_consumer")
         if task_measurement is not None and len(query_tasks) != 1:
             raise ValueError("task timing requires exactly one query task")
-        if task_lifecycle and output_consumer is None:
-            raise ValueError("task_lifecycle requires an output_consumer")
+        if task_output_consumer is not None and task_measurement is None:
+            raise ValueError("task_output_consumer requires task_measurement")
+        if output_consumer is not None and task_measurement is not None:
+            raise ValueError("task timing with a consumer requires a task_output_consumer")
+        try:
+            return self._run_triton_from_source_once(
+                source,
+                query_tasks,
+                scale,
+                causal,
+                out_cpu,
+                stats,
+                output_transform=output_transform,
+                output_consumer=output_consumer,
+                task_output_consumer=task_output_consumer,
+                task_measurement=task_measurement,
+            )
+        except Exception:
+            self._recover_triton_failure(source, active_consumer)
+            raise
+
+    def _recover_triton_failure(
+        self,
+        source: QKVTileSource,
+        output_consumer: DeviceOutputConsumer | None,
+    ) -> None:
+        workspace = self._workspace
+        assert workspace is not None
+        with torch.cuda.device(self.plan.device):
+            workspace.recover()
+            if output_consumer is not None:
+                with suppress(Exception):
+                    output_consumer.synchronize()
+            with suppress(Exception):
+                source.recover()
+
+    def _run_triton_from_source_once(
+        self,
+        source: QKVTileSource,
+        query_tasks: tuple[QueryTask, ...],
+        scale: float,
+        causal: bool,
+        out_cpu: torch.Tensor | None,
+        stats: StreamingAttentionStats,
+        output_transform: DeviceOutputTransform | None = None,
+        output_consumer: DeviceOutputConsumer | None = None,
+        task_output_consumer: TaskDeviceOutputConsumer | None = None,
+        task_measurement: QueryTaskMeasurement | None = None,
+    ) -> torch.Tensor | None:
+        active_consumer = (
+            task_output_consumer if task_output_consumer is not None else output_consumer
+        )
         workspace = self._workspace
         assert workspace is not None
         plan = self.plan
@@ -89,14 +177,14 @@ class TritonExecutorMixin:
             timing = workspace.get_task_timing() if task_measurement is not None else None
             workspace.pipeline_start.record(compute_stream)
             for task in query_tasks:
-                if task_lifecycle:
-                    output_consumer.begin_task(task)
+                if task_output_consumer is not None:
+                    task_output_consumer.begin_task(task)
                 q_tile_start = task.q_start
                 q_tile_stop = task.q_stop
                 q_tokens = task.q_tokens
                 output_index = q_chunk_index % plan.num_output_buffers
                 reuse_q_for_output = (
-                    output_transform is not None or output_consumer is not None
+                    output_transform is not None or active_consumer is not None
                 ) and plan.output_mode == "device_consumer"
 
                 if timing is not None:
@@ -164,7 +252,7 @@ class TritonExecutorMixin:
                     if not reuse_q_for_output:
                         source.release_q(compute_stream)
                     if (
-                        output_consumer is None
+                        active_consumer is None
                         and not reuse_q_for_output
                         and workspace.output_has_pending_copy[output_index]
                     ):
@@ -183,17 +271,17 @@ class TritonExecutorMixin:
                         timing.attention_end.record(compute_stream)
                     output_gpu = finalize_output[:q_tokens]
                     output_aliases_q = reuse_q_for_output
-                    if output_consumer is not None:
+                    if active_consumer is not None:
                         if timing is not None:
                             timing.consumer_start.record(compute_stream)
                         with self._range("seqattn:device_output_consumer"):
-                            output_consumer(
+                            active_consumer(
                                 output_gpu.reshape(q_tokens, -1),
                                 q_tile_start,
                                 q_tile_stop,
                             )
-                        if task_lifecycle:
-                            task_done_event = output_consumer.finish_task()
+                        if task_output_consumer is not None:
+                            task_done_event = task_output_consumer.finish_task()
                         if timing is not None:
                             timing.consumer_end.record(compute_stream)
                         source.release_q(compute_stream)
@@ -207,6 +295,10 @@ class TritonExecutorMixin:
                             )
                         if output_gpu.device.type != "cuda":
                             raise ValueError("output_transform must return a CUDA tensor")
+                        if output_gpu.device != plan.device:
+                            raise ValueError(
+                                "output_transform must return a tensor on the planned CUDA device"
+                            )
                         output_slice_shape = out_cpu[q_tile_start:q_tile_stop].shape
                         if output_gpu.shape != output_slice_shape:
                             raise ValueError(
@@ -222,9 +314,9 @@ class TritonExecutorMixin:
                         )
                         if reuse_q_for_output and not output_aliases_q:
                             source.release_q(compute_stream)
-                    if output_consumer is None:
+                    if active_consumer is None:
                         workspace.output_ready[output_index].record(compute_stream)
-                if output_consumer is None:
+                if active_consumer is None:
                     assert out_cpu is not None
                     with self._range("seqattn:output_d2h"), torch.cuda.stream(workspace.d2h_stream):
                         if timing is not None:
@@ -244,13 +336,13 @@ class TritonExecutorMixin:
                     workspace.output_has_pending_copy[output_index] = True
                     stats.d2h_bytes += output_gpu.numel() * output_gpu.element_size()
                 q_chunk_index += 1
-            if output_consumer is not None and not task_lifecycle:
+            if output_consumer is not None:
                 with torch.cuda.stream(compute_stream):
                     output_consumer.finish()
             workspace.pipeline_end.record(compute_stream)
-            if output_consumer is None:
+            if active_consumer is None:
                 workspace.d2h_stream.synchronize()
-            elif task_lifecycle:
+            elif task_output_consumer is not None:
                 if task_done_event is None:
                     raise RuntimeError("task consumer did not return a completion event")
                 task_done_event.synchronize()
@@ -270,16 +362,13 @@ class TritonExecutorMixin:
                 task_measurement.attention_seconds = (
                     timing.attention_start.elapsed_time(timing.attention_end) / 1000.0
                 )
-                if output_consumer is not None:
+                if active_consumer is not None:
                     task_measurement.consumer_seconds = (
                         timing.consumer_start.elapsed_time(timing.consumer_end) / 1000.0
                     )
-                    d2h_seconds = getattr(output_consumer, "task_d2h_seconds", None)
-                    if d2h_seconds is not None:
-                        task_measurement.d2h_seconds = float(d2h_seconds())
-                    d2h_bytes = getattr(output_consumer, "task_d2h_bytes", None)
-                    if d2h_bytes is not None:
-                        task_measurement.d2h_bytes = int(d2h_bytes())
+                    assert task_output_consumer is not None
+                    task_measurement.d2h_seconds = float(task_output_consumer.task_d2h_seconds())
+                    task_measurement.d2h_bytes = int(task_output_consumer.task_d2h_bytes())
                 else:
                     task_measurement.d2h_seconds = (
                         timing.d2h_start.elapsed_time(timing.d2h_end) / 1000.0

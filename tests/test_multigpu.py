@@ -12,8 +12,8 @@ from seqattn_core import (
     H3SequenceMeta,
     MultiGpuAttentionStats,
     MultiGpuDeviceSpec,
-    MultiGpuH3DiTRunner,
     MultiGpuH3DiTStats,
+    MultiGpuH3MaterializedRunner,
     MultiGpuStreamingAttentionRunner,
     ProjectedAttentionRunner,
     ProjectedAttentionStats,
@@ -550,7 +550,7 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
             ),
         ],
     )
-    runner = MultiGpuH3DiTRunner(
+    runner = MultiGpuH3MaterializedRunner(
         projected,
         multi_plan,
         hidden_features=hidden_features,
@@ -688,7 +688,7 @@ def test_two_gpu_h3_projection_failure_stops_before_attention():
             ),
         ],
     )
-    runner = MultiGpuH3DiTRunner(
+    runner = MultiGpuH3MaterializedRunner(
         projected,
         multi_plan,
         hidden_features=hidden_features,

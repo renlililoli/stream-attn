@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 
 import torch
 
@@ -14,6 +13,7 @@ from .backend import configured_backend_name, resolve_backend
 from .dynamic import QueryTaskMeasurement
 from .executor import TritonExecutorMixin
 from .flash_split_executor import FlashSplitExecutorMixin
+from .protocols import DeviceOutputConsumer, DeviceOutputTransform, TaskDeviceOutputConsumer
 from .tasks import QueryTask, build_query_tasks
 from .tile_source import QKVTileSource
 from .workspace import CudaWorkspace
@@ -260,12 +260,10 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         v_cpu: torch.Tensor,
         query_tasks: tuple[QueryTask, ...],
         *,
-        output_consumer,
+        output_consumer: DeviceOutputConsumer,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: StreamingAttentionStats | None = None,
-        task_measurement: QueryTaskMeasurement | None = None,
-        task_lifecycle: bool = False,
     ) -> None:
         """Pass a preplanned query subset to one device-local output consumer."""
 
@@ -287,8 +285,43 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             None,
             stats,
             output_consumer=output_consumer,
-            task_measurement=task_measurement,
-            task_lifecycle=task_lifecycle,
+        )
+        stats.wall_seconds += time.perf_counter() - started
+
+    @torch.inference_mode()
+    def _run_query_task_with_task_consumer(
+        self,
+        q_cpu: torch.Tensor,
+        k_cpu: torch.Tensor,
+        v_cpu: torch.Tensor,
+        query_task: QueryTask,
+        *,
+        output_consumer: TaskDeviceOutputConsumer,
+        softmax_scale: float | None = None,
+        causal: bool = False,
+        stats: StreamingAttentionStats | None = None,
+        task_measurement: QueryTaskMeasurement,
+    ) -> None:
+        """Execute one dynamic task through its explicit task consumer contract."""
+
+        if self.plan.output_mode != "device_consumer" or self.backend != "triton":
+            raise ValueError("scheduled device consumers require device_consumer Triton plans")
+        self._validate_query_task_inputs(q_cpu, k_cpu, v_cpu, (query_task,))
+        self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
+
+        scale = self.plan.head_dim**-0.5 if softmax_scale is None else float(softmax_scale)
+        stats = self._prepare_stats(stats)
+        started = time.perf_counter()
+        self._run_triton_with_task_consumer(
+            q_cpu,
+            k_cpu,
+            v_cpu,
+            query_task,
+            scale,
+            causal,
+            stats,
+            output_consumer,
+            task_measurement,
         )
         stats.wall_seconds += time.perf_counter() - started
 
@@ -383,7 +416,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         cu_seqlens_q: torch.Tensor,
         cu_seqlens_k: torch.Tensor,
         *,
-        output_transform: Callable[[torch.Tensor, int, int], torch.Tensor],
+        output_transform: DeviceOutputTransform,
         out: torch.Tensor,
         softmax_scale: float | None = None,
         causal: bool = False,
@@ -428,7 +461,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         cu_seqlens_q: torch.Tensor,
         cu_seqlens_k: torch.Tensor,
         *,
-        output_consumer,
+        output_consumer: DeviceOutputConsumer,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: StreamingAttentionStats | None = None,
@@ -468,7 +501,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         cu_seqlens_q: torch.Tensor,
         cu_seqlens_k: torch.Tensor,
         *,
-        output_consumer,
+        output_consumer: DeviceOutputConsumer,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: StreamingAttentionStats | None = None,

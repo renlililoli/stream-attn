@@ -27,6 +27,7 @@ from .dynamic import (
     DynamicWorkloadSignature,
     QueryTaskMeasurement,
 )
+from .protocols import DeviceOutputConsumer, TaskDeviceOutputConsumer
 from .runner import StreamingAttentionRunner
 from .tasks import QueryTask, build_query_tasks
 
@@ -835,7 +836,10 @@ class MultiGpuStreamingAttentionRunner:
         cu_seqlens_q: torch.Tensor,
         cu_seqlens_k: torch.Tensor,
         *,
-        output_consumers: dict[torch.device | str, object],
+        output_consumers: dict[
+            torch.device | str,
+            DeviceOutputConsumer | TaskDeviceOutputConsumer,
+        ],
         device_contexts: dict[torch.device | str, Callable[[], AbstractContextManager]]
         | None = None,
         softmax_scale: float | None = None,
@@ -890,17 +894,16 @@ class MultiGpuStreamingAttentionRunner:
                     measurement: QueryTaskMeasurement,
                 ) -> None:
                     schedule = self.plan.schedules[index]
-                    self.runners[index].run_query_tasks_with_device_consumer(
+                    self.runners[index]._run_query_task_with_task_consumer(
                         q_cpu,
                         k_cpu,
                         v_cpu,
-                        (task,),
+                        task,
                         output_consumer=consumers[str(schedule.device)],
                         softmax_scale=softmax_scale,
                         causal=causal,
                         stats=device_stats,
                         task_measurement=measurement,
-                        task_lifecycle=True,
                     )
 
                 def dynamic_context(index: int):

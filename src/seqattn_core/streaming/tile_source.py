@@ -38,6 +38,8 @@ class QKVTileSource(Protocol):
 
     def release_kv(self, buffer_index: int, compute_stream: torch.cuda.Stream) -> None: ...
 
+    def recover(self) -> None: ...
+
 
 class HostQKVTileSource:
     def __init__(
@@ -117,6 +119,9 @@ class HostQKVTileSource:
     def release_kv(self, buffer_index: int, compute_stream: torch.cuda.Stream) -> None:
         self.workspace.kv_free[buffer_index].record(compute_stream)
         self.workspace.kv_has_pending_compute[buffer_index] = True
+
+    def recover(self) -> None:
+        return None
 
 
 class RecomputedQKVTileSource:
@@ -203,6 +208,9 @@ class RecomputedQKVTileSource:
 
     def release_kv(self, buffer_index: int, compute_stream: torch.cuda.Stream) -> None:
         del buffer_index, compute_stream
+
+    def recover(self) -> None:
+        self.workspace.recover()
 
 
 __all__ = ["HostQKVTileSource", "QKVTileSource", "RecomputedQKVTileSource"]

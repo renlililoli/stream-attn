@@ -9,6 +9,7 @@ from ..config import StreamingAttentionConfig
 from ..planner import AttentionPlan, build_plan
 from ..stats import RecomputedAttentionStats
 from ..streaming import StreamingAttentionRunner
+from ..streaming.protocols import DeviceOutputConsumer
 from ..streaming.tile_source import RecomputedQKVTileSource
 from .recompute_workspace import RecomputeWorkspace
 from .types import KVTileProjector, QTileProjector
@@ -92,7 +93,7 @@ class RecomputedAttentionRunner:
         *,
         project_q: QTileProjector,
         project_kv: KVTileProjector,
-        output_consumer,
+        output_consumer: DeviceOutputConsumer,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: RecomputedAttentionStats | None = None,

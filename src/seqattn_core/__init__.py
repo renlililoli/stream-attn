@@ -20,6 +20,7 @@ from .dit import (
     H3SequenceMeta,
     H3TileConfig,
     MultiGpuH3DiTRunner,
+    MultiGpuH3MaterializedRunner,
     load_h3_tile_config,
 )
 from .paged import (
@@ -67,6 +68,8 @@ from .storage import (
     load_nvme_output,
 )
 from .streaming import (
+    DeviceOutputConsumer,
+    DeviceOutputTransform,
     DeviceQuerySchedule,
     DynamicControllerSnapshot,
     DynamicQController,
@@ -78,6 +81,7 @@ from .streaming import (
     MultiGpuStreamingAttentionRunner,
     QueryTask,
     QueryTaskMeasurement,
+    TaskDeviceOutputConsumer,
     build_multi_gpu_plan,
     build_query_tasks,
 )
@@ -86,6 +90,8 @@ __all__ = [
     "AttentionEpilogue",
     "AttentionPlan",
     "CallbackOutputSink",
+    "DeviceOutputConsumer",
+    "DeviceOutputTransform",
     "DeviceQuerySchedule",
     "DynamicControllerSnapshot",
     "DynamicDeviceStats",
@@ -115,6 +121,7 @@ __all__ = [
     "MultiGpuDeviceSpec",
     "MultiGpuH3DiTRunner",
     "MultiGpuH3DiTStats",
+    "MultiGpuH3MaterializedRunner",
     "MultiGpuStreamingAttentionRunner",
     "NvmeOutputSink",
     "NvmeQKVStore",
@@ -141,6 +148,7 @@ __all__ = [
     "StreamingAttentionConfig",
     "StreamingAttentionRunner",
     "StreamingAttentionStats",
+    "TaskDeviceOutputConsumer",
     "TensorLayout",
     "build_multi_gpu_plan",
     "build_plan",

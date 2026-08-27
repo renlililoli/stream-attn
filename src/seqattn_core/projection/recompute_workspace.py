@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import suppress
+
 import torch
 
 
@@ -24,6 +26,11 @@ class RecomputeWorkspace:
         self.h2d_stream = torch.cuda.Stream(device=device)
         self.hidden_ready = torch.cuda.Event()
         self.hidden_free = torch.cuda.Event()
+        self.hidden_has_pending_compute = False
+
+    def recover(self) -> None:
+        with suppress(Exception):
+            self.h2d_stream.synchronize()
         self.hidden_has_pending_compute = False
 
 

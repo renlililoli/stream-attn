@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 import torch
 
 from ..projection import ProjectedAttentionRunner
+from ..projection.validation import validate_projection_hidden
 from ..stats import H3DiTStats, MultiGpuH3DiTStats
 from ..streaming import (
     DynamicScheduleConfig,
@@ -41,8 +42,8 @@ def _normalize_device_values(
     return values
 
 
-class MultiGpuH3DiTRunner:
-    """Dynamic multi-GPU QKV, attention, and fused H3 consumer pipeline."""
+class MultiGpuH3MaterializedRunner:
+    """Dynamic multi-GPU materialized-QKV and fused H3 consumer pipeline."""
 
     def __init__(
         self,
@@ -175,9 +176,13 @@ class MultiGpuH3DiTRunner:
         hidden_host: torch.Tensor,
         sequence_meta: H3SequenceMeta,
     ) -> None:
-        self.projected_attention._validate_hidden(hidden_host)
-        if hidden_host.shape[1] != self.hidden_features:
-            raise ValueError("hidden_host feature size does not match the H3 runner")
+        validate_projection_hidden(
+            hidden_host,
+            plan=self.projected_attention.plan,
+            require_pinned=self.projected_attention.pipeline_config.require_pinned_hidden,
+            hidden_features=self.hidden_features,
+            name="hidden_host",
+        )
         if hidden_host.shape[0] != self.attention_plan.max_q_tokens:
             raise ValueError("hidden_host token count must match the multi-GPU plan")
         sequence_meta.validate(hidden_host.shape[0])
@@ -300,4 +305,7 @@ class MultiGpuH3DiTRunner:
         return hidden_host
 
 
-__all__ = ["MultiGpuH3DiTRunner"]
+MultiGpuH3DiTRunner = MultiGpuH3MaterializedRunner
+
+
+__all__ = ["MultiGpuH3DiTRunner", "MultiGpuH3MaterializedRunner"]

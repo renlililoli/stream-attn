@@ -4,17 +4,36 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from itertools import pairwise
+from typing import Protocol
 
 import torch
 
 from ..projection.types import KVTileProjector, QKVProjector, QTileProjector
 
-DeviceTileOp = Callable[[torch.Tensor, int, int], torch.Tensor]
-AttentionEpilogue = Callable[
-    [torch.Tensor, torch.Tensor, int, int],
-    torch.Tensor,
-]
 LeaseFactory = Callable[[], AbstractContextManager]
+
+
+class DeviceTileOp(Protocol):
+    """Returns a complete same-device tile on the runner compute stream."""
+
+    def __call__(self, tile: torch.Tensor, start: int, stop: int) -> torch.Tensor: ...
+
+
+class AttentionEpilogue(Protocol):
+    """Returns a complete post-attention tile on the runner compute stream.
+
+    Work reading ``attention`` and producing the result must be submitted to
+    the current stream before return. The result must remain on the current
+    CUDA device and cover every token in ``[start, stop)``.
+    """
+
+    def __call__(
+        self,
+        attention: torch.Tensor,
+        residual_hidden_host: torch.Tensor,
+        start: int,
+        stop: int,
+    ) -> torch.Tensor: ...
 
 
 @dataclass(frozen=True)
@@ -77,8 +96,6 @@ class H3BlockOps:
 @dataclass(frozen=True)
 class H3SequenceMeta:
     cu_seqlens: torch.Tensor
-    position_ids_gpu: torch.Tensor | None = None
-    modulation_row_ids_gpu: torch.Tensor | None = None
 
     def validate(self, tokens: int) -> None:
         if self.cu_seqlens.device.type != "cpu":

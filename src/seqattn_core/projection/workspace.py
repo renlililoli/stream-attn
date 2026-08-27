@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import suppress
+
 import torch
 
 from ..config import ProjectionPipelineConfig
@@ -33,6 +35,20 @@ class ProjectionWorkspace:
         self.keepalive: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None] = [
             None for _ in self.hidden
         ]
+
+    def release_slot(self, slot: int) -> None:
+        self.keepalive[slot] = None
+        self.busy[slot] = False
+
+    def reset_slots(self) -> None:
+        for slot in range(len(self.hidden)):
+            self.release_slot(slot)
+
+    def recover(self) -> None:
+        for stream in (self.h2d_stream, self.compute_stream, self.d2h_stream):
+            with suppress(Exception):
+                stream.synchronize()
+        self.reset_slots()
 
 
 __all__ = ["ProjectionWorkspace"]

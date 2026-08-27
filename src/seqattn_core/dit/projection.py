@@ -4,12 +4,13 @@ import threading
 import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
 from dataclasses import dataclass, replace
 
 import torch
 
+from ..planner import AttentionPlan
 from ..projection import ProjectedAttentionRunner
+from ..projection.validation import validate_projected_qkv, validate_projection_hidden
 from ..projection.workspace import ProjectionWorkspace
 from ..stats import ProjectedAttentionStats
 from ..streaming import MultiGpuAttentionPlan
@@ -83,6 +84,7 @@ class MultiGpuQKVProjectionRunner:
             num_projection_buffers=1,
         )
         self.workspaces: dict[str, ProjectionWorkspace] = {}
+        self.device_plans: dict[str, AttentionPlan] = {}
         self.estimated_workspace_bytes: dict[str, int] = {}
         element_size = torch.empty((), dtype=attention_plan.dtype).element_size()
         for schedule in attention_plan.schedules:
@@ -94,6 +96,7 @@ class MultiGpuQKVProjectionRunner:
                     device=schedule.device,
                     config=projection_config,
                 )
+            self.device_plans[device] = schedule.attention_plan
             self.estimated_workspace_bytes[device] = chunk_tokens * hidden_features * element_size
         self._executor = ThreadPoolExecutor(
             max_workers=len(attention_plan.schedules),
@@ -103,31 +106,6 @@ class MultiGpuQKVProjectionRunner:
 
     def close(self) -> None:
         self._executor.shutdown(wait=True)
-
-    def _validate_projected_tile(
-        self,
-        device: torch.device,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        tokens: int,
-    ) -> None:
-        plan = self.attention_plan
-        expected_q = (tokens, plan.q_heads, plan.head_dim)
-        expected_kv = (tokens, plan.kv_heads, plan.head_dim)
-        if q.shape != expected_q:
-            raise ValueError(
-                f"project_qkv returned q shape {tuple(q.shape)}, expected {expected_q}"
-            )
-        if k.shape != expected_kv or v.shape != expected_kv:
-            raise ValueError(
-                "project_qkv returned invalid k/v shapes: "
-                f"{tuple(k.shape)}, {tuple(v.shape)}, expected {expected_kv}"
-            )
-        if any(tensor.device != device for tensor in (q, k, v)):
-            raise ValueError(f"project_qkv must return tensors on {device}")
-        if any(tensor.dtype != plan.dtype for tensor in (q, k, v)):
-            raise ValueError("project_qkv output dtype must match the attention plan")
 
     def _run_task(
         self,
@@ -155,7 +133,13 @@ class MultiGpuQKVProjectionRunner:
                 task.start,
                 task.stop,
             )
-            self._validate_projected_tile(device, q, k, v, tile_tokens)
+            validate_projected_qkv(
+                q,
+                k,
+                v,
+                tokens=tile_tokens,
+                plan=self.device_plans[str(device)],
+            )
             workspace.projected_ready[0].record(workspace.compute_stream)
 
         with torch.cuda.stream(workspace.d2h_stream):
@@ -199,7 +183,13 @@ class MultiGpuQKVProjectionRunner:
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("MultiGpuQKVProjectionRunner is single-flight")
         try:
-            self.projected_attention._validate_hidden(hidden_host)
+            validate_projection_hidden(
+                hidden_host,
+                plan=self.projected_attention.plan,
+                require_pinned=self.projected_attention.pipeline_config.require_pinned_hidden,
+                hidden_features=self.hidden_features,
+                name="hidden_host",
+            )
             tokens = hidden_host.shape[0]
             if tokens != self.attention_plan.max_q_tokens:
                 raise ValueError("hidden token count must match the multi-GPU attention plan")
@@ -236,8 +226,8 @@ class MultiGpuQKVProjectionRunner:
                             )
                 except Exception as error:  # noqa: BLE001 - propagate the original worker error.
                     cursor.cancel()
-                    with suppress(Exception):
-                        torch.cuda.synchronize(device)
+                    workspace = self.workspaces[device_name]
+                    workspace.recover()
                     with failure_lock:
                         if not failures:
                             failures.append(error)

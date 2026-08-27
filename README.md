@@ -364,7 +364,7 @@ preallocated range without a steady-state allocation. Segment or global-tail
 clamps can still produce a smaller final task.
 
 Each GPU scans the complete K/V segment for its assigned Q rows. There is no
-cross-device softmax reduction or NCCL dependency. `MultiGpuH3DiTRunner` uses
+cross-device softmax reduction or NCCL dependency. `MultiGpuH3MaterializedRunner` uses
 only completion-driven dynamic scheduling: every GPU first claims uniform
 4,096-token hidden blocks, runs its device-local QKV projection, and writes the
 disjoint Q/K/V range into shared pinned host buffers. Exact attention starts
@@ -390,7 +390,7 @@ on that device.
 - `H3MaterializedRunner` and `H3RecomputeRunner` provide explicit MiniMax-H3
   block policies with one-hidden in-place and two-hidden ping-pong contracts,
   respectively.
-- `MultiGpuH3DiTRunner` dynamically distributes materialized QKV projection,
+- `MultiGpuH3MaterializedRunner` dynamically distributes materialized QKV projection,
   attention, output projection, and MLP work across device-local H3 operators.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.

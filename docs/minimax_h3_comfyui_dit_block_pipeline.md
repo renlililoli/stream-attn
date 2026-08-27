@@ -128,17 +128,16 @@ selection follows the model in
 
 ## Sequence metadata
 
-The integration constructs sequence metadata before entering the block stack:
+The integration constructs attention boundaries before entering the block stack:
 
-- `position_ids_gpu`: positions required by the H3 rotary embedding;
-- `modulation_row_ids_gpu`: one compact row index per token;
 - `cu_seqlens`: packed attention segment boundaries;
 - static shape metadata: `H`, heads, head dimension, and MLP width.
 
-The token-to-modulation mapping is uploaded once and reused by every block.
-Each block computes its six AdaLN tables from `t_emb` once. Pointwise kernels
-select rows by `modulation_row_ids_gpu`; Python segment loops and per-segment
-device copies are not part of the target path.
+Position IDs and the token-to-modulation mapping are adapter-owned device
+tensors captured by the projection and consumer callbacks. They are not runner
+metadata because SeqAttn does not read them. Each block computes its six AdaLN
+tables from `t_emb` once; pointwise callbacks select the required rows without
+Python segment loops or per-segment device copies.
 
 ## Materialized Phase A: fused QKV producer
 
@@ -350,8 +349,6 @@ H3RecomputePlan
     estimated_workspace_bytes
 
 H3SequenceMeta
-    position_ids_gpu
-    modulation_row_ids_gpu
     cu_seqlens
 
 H3MaterializedProjection
