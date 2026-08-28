@@ -4,24 +4,25 @@ import time
 from collections.abc import Iterable, Mapping
 
 import torch
+from seqattn_core._plugin_api import (
+    H3BlockOps,
+    H3BlockWorkspace,
+    H3DeviceOutputConsumer,
+    H3DiTStats,
+    H3MaterializedProjection,
+    H3SequenceMeta,
+    ProjectedAttentionRunner,
+    estimate_h3_consumer_workspace_bytes,
+    validate_projection_hidden,
+)
 
-from ..projection import ProjectedAttentionRunner
-from ..projection.validation import validate_projection_hidden
-from ..stats import H3DiTStats, MultiGpuH3DiTStats
-from ..streaming import (
-    DynamicScheduleConfig,
+from .dynamic import DynamicScheduleConfig
+from .projection import MultiGpuQKVProjectionRunner
+from .stats import MultiGpuH3DiTStats
+from .streaming import (
     MultiGpuAttentionPlan,
     MultiGpuStreamingAttentionRunner,
 )
-from .consumer import H3DeviceOutputConsumer
-from .projection import MultiGpuQKVProjectionRunner
-from .types import (
-    H3BlockOps,
-    H3MaterializedProjection,
-    H3SequenceMeta,
-    estimate_h3_consumer_workspace_bytes,
-)
-from .workspace import H3BlockWorkspace
 
 
 def _normalize_device_values(
@@ -305,7 +306,4 @@ class MultiGpuH3MaterializedRunner:
         return hidden_host
 
 
-MultiGpuH3DiTRunner = MultiGpuH3MaterializedRunner
-
-
-__all__ = ["MultiGpuH3DiTRunner", "MultiGpuH3MaterializedRunner"]
+__all__ = ["MultiGpuH3MaterializedRunner"]

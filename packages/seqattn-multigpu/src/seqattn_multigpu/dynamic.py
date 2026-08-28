@@ -6,7 +6,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass
 from itertools import pairwise
 
-from .tasks import QueryTask
+from seqattn_core._plugin_api import QueryTask, QueryTaskMeasurement
 
 
 def _align_up(value: float, alignment: int) -> int:
@@ -49,18 +49,6 @@ class DynamicWorkloadSignature:
     dtype: str
     kernel_profile: tuple[int, int, int, int]
     consumer_mode: str
-
-
-@dataclass
-class QueryTaskMeasurement:
-    h2d_seconds: float = 0.0
-    attention_seconds: float = 0.0
-    consumer_seconds: float = 0.0
-    d2h_seconds: float = 0.0
-    elapsed_seconds: float = 0.0
-    h2d_bytes: int = 0
-    d2h_bytes: int = 0
-    attention_flops: int = 0
 
 
 @dataclass(frozen=True)
@@ -315,5 +303,4 @@ __all__ = [
     "DynamicQueryCursor",
     "DynamicScheduleConfig",
     "DynamicWorkloadSignature",
-    "QueryTaskMeasurement",
 ]

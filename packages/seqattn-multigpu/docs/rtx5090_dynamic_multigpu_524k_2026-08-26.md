@@ -152,9 +152,10 @@ and identical sampled BF16 output signatures at five sequence positions.
 
 ## Artifacts
 
-The benchmark entry point is `benchmarks/multigpu_524k.py`. Raw current-run
+The benchmark entry point is `packages/seqattn-multigpu/benchmarks/multigpu_524k.py`.
+Raw current-run
 artifacts are committed under
-`docs/experiments/rtx5090_dynamic_multigpu_524k_20260826/`:
+`packages/seqattn-multigpu/docs/experiments/rtx5090_dynamic_multigpu_524k_20260826/`:
 
 ```text
 two_gpu_dynamic.json

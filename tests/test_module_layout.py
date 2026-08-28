@@ -5,8 +5,6 @@ from seqattn_core import (
     H3MaterializedRunner,
     H3RecomputeRunner,
     MemoryPageSource,
-    MultiGpuH3DiTRunner,
-    MultiGpuH3MaterializedRunner,
     NvmeQKVStore,
     NvmeQKVWriter,
     PagedAttentionRunner,
@@ -42,9 +40,8 @@ def test_subpackages_export_the_canonical_implementations():
     assert PackagedStreamingAttentionRunner is StreamingAttentionRunner
     assert H3MaterializedRunner.__name__ == "H3MaterializedRunner"
     assert H3RecomputeRunner.__name__ == "H3RecomputeRunner"
-    assert MultiGpuH3MaterializedRunner.__name__ == "MultiGpuH3MaterializedRunner"
-    assert MultiGpuH3DiTRunner is MultiGpuH3MaterializedRunner
     assert not hasattr(seqattn_core, "H3DiTRunner")
+    assert not any(name.startswith("MultiGpu") for name in dir(seqattn_core))
 
 
 def test_repository_benchmark_modules_expose_main_functions():
@@ -58,6 +55,7 @@ def test_repository_benchmark_modules_expose_main_functions():
 def test_distribution_contains_only_the_core_package():
     source_root = Path(seqattn_core.__file__).parent.parent
     assert not (source_root / "seqattn").exists()
+    assert not (source_root / "seqattn_multigpu").exists()
 
 
 def test_core_package_contains_no_compat_facades():

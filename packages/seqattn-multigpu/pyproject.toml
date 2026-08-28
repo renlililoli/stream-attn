@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seqattn-multigpu"
+version = "0.3.0a4"
+description = "Optional multi-GPU schedulers and MiniMax-H3 runners for seqattn-core"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "seqattn contributors"}]
+dependencies = ["seqattn-core[dit]==0.3.0a4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.9"]
+
+[project.entry-points."seqattn_core.features"]
+multigpu = "seqattn_multigpu"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["seqattn_multigpu*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

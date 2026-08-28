@@ -4,28 +4,30 @@ from itertools import pairwise
 
 import pytest
 import torch
-
 from seqattn_core import (
-    DynamicQController,
-    DynamicQueryCursor,
-    DynamicScheduleConfig,
     H3BlockOps,
     H3DiTStats,
-    MultiGpuAttentionStats,
-    MultiGpuDeviceSpec,
-    MultiGpuStreamingAttentionRunner,
-    QueryTaskMeasurement,
     StreamingAttentionConfig,
     StreamingAttentionRunner,
-    build_multi_gpu_plan,
     build_plan,
 )
 from seqattn_core.dit.consumer import H3DeviceOutputConsumer
-from seqattn_core.dit.projection import DynamicQKVProjectionCursor
 from seqattn_core.dit.workspace import H3BlockWorkspace
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
 from seqattn_core.streaming.tasks import QueryTask
+
+from seqattn_multigpu import (
+    DynamicQController,
+    DynamicQKVProjectionCursor,
+    DynamicQueryCursor,
+    DynamicScheduleConfig,
+    MultiGpuAttentionStats,
+    MultiGpuDeviceSpec,
+    MultiGpuStreamingAttentionRunner,
+    QueryTaskMeasurement,
+    build_multi_gpu_plan,
+)
 
 
 def _dynamic_spec(

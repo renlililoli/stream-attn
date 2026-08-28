@@ -10,26 +10,27 @@ from itertools import pairwise
 from typing import Literal
 
 import torch
-
-from ..config import StreamingAttentionConfig
-from ..planner import AttentionPlan, build_plan
-from ..stats import (
-    DynamicDeviceStats,
-    DynamicTaskTrace,
-    MultiGpuAttentionStats,
+from seqattn_core._plugin_api import (
+    AttentionPlan,
+    DeviceOutputConsumer,
+    QueryTask,
+    QueryTaskMeasurement,
+    StreamingAttentionConfig,
+    StreamingAttentionRunner,
     StreamingAttentionStats,
+    TaskDeviceOutputConsumer,
+    build_plan,
+    build_query_tasks,
+    validate_host_qkv,
 )
-from ..validation import validate_host_qkv
+
 from .dynamic import (
     DynamicQController,
     DynamicQueryCursor,
     DynamicScheduleConfig,
     DynamicWorkloadSignature,
-    QueryTaskMeasurement,
 )
-from .protocols import DeviceOutputConsumer, TaskDeviceOutputConsumer
-from .runner import StreamingAttentionRunner
-from .tasks import QueryTask, build_query_tasks
+from .stats import DynamicDeviceStats, DynamicTaskTrace, MultiGpuAttentionStats
 
 
 @dataclass(frozen=True)

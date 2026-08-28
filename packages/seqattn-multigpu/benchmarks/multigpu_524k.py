@@ -12,19 +12,19 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import torch
-
-from seqattn_core import (
-    DynamicScheduleConfig,
-    MultiGpuAttentionStats,
-    MultiGpuDeviceSpec,
-    MultiGpuStreamingAttentionRunner,
-    StreamingAttentionConfig,
-    build_multi_gpu_plan,
-)
+from seqattn_core import StreamingAttentionConfig
 from seqattn_core.benchmarking.common import (
     atomic_json,
     make_host_tensors_parallel,
     make_pinned_host_tensors_parallel,
+)
+
+from seqattn_multigpu import (
+    DynamicScheduleConfig,
+    MultiGpuAttentionStats,
+    MultiGpuDeviceSpec,
+    MultiGpuStreamingAttentionRunner,
+    build_multi_gpu_plan,
 )
 
 

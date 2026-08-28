@@ -4,28 +4,30 @@ from itertools import pairwise
 
 import pytest
 import torch
-
 from seqattn_core import (
-    DynamicScheduleConfig,
     H3BlockOps,
     H3MaterializedProjection,
     H3SequenceMeta,
-    MultiGpuAttentionStats,
-    MultiGpuDeviceSpec,
-    MultiGpuH3DiTStats,
-    MultiGpuH3MaterializedRunner,
-    MultiGpuStreamingAttentionRunner,
     ProjectedAttentionRunner,
     ProjectedAttentionStats,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
-    build_multi_gpu_plan,
     build_plan,
     build_query_tasks,
 )
-from seqattn_core.dit.projection import MultiGpuQKVProjectionRunner
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
+
+from seqattn_multigpu import (
+    DynamicScheduleConfig,
+    MultiGpuAttentionStats,
+    MultiGpuDeviceSpec,
+    MultiGpuH3DiTStats,
+    MultiGpuH3MaterializedRunner,
+    MultiGpuQKVProjectionRunner,
+    MultiGpuStreamingAttentionRunner,
+    build_multi_gpu_plan,
+)
 
 
 def device_spec(

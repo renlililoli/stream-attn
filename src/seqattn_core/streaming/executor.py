@@ -6,7 +6,7 @@ import torch
 
 from ..kernels import finalize_attention, update_attention_state
 from ..stats import StreamingAttentionStats
-from .dynamic import QueryTaskMeasurement
+from .measurement import QueryTaskMeasurement
 from .protocols import DeviceOutputConsumer, DeviceOutputTransform, TaskDeviceOutputConsumer
 from .tasks import QueryTask
 from .tile_source import HostQKVTileSource, QKVTileSource

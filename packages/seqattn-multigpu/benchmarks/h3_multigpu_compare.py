@@ -11,24 +11,26 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-
 from seqattn_core import (
-    DynamicScheduleConfig,
     H3BlockOps,
     H3DiTStats,
     H3MaterializedProjection,
     H3MaterializedRunner,
     H3SequenceMeta,
-    MultiGpuDeviceSpec,
-    MultiGpuH3DiTStats,
-    MultiGpuH3MaterializedRunner,
     ProjectedAttentionRunner,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
-    build_multi_gpu_plan,
     build_plan,
 )
 from seqattn_core.benchmarking.common import atomic_json
+
+from seqattn_multigpu import (
+    DynamicScheduleConfig,
+    MultiGpuDeviceSpec,
+    MultiGpuH3DiTStats,
+    MultiGpuH3MaterializedRunner,
+    build_multi_gpu_plan,
+)
 
 
 def _device_weight(

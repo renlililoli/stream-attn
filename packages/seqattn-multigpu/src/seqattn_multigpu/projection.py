@@ -7,14 +7,17 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 import torch
+from seqattn_core._plugin_api import (
+    AttentionPlan,
+    H3MaterializedProjection,
+    ProjectedAttentionRunner,
+    ProjectedAttentionStats,
+    ProjectionWorkspace,
+    validate_projected_qkv,
+    validate_projection_hidden,
+)
 
-from ..planner import AttentionPlan
-from ..projection import ProjectedAttentionRunner
-from ..projection.validation import validate_projected_qkv, validate_projection_hidden
-from ..projection.workspace import ProjectionWorkspace
-from ..stats import ProjectedAttentionStats
-from ..streaming import MultiGpuAttentionPlan
-from .types import H3MaterializedProjection
+from .streaming import MultiGpuAttentionPlan
 
 
 @dataclass(frozen=True)

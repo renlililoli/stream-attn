@@ -10,9 +10,9 @@ from ..reference import streaming_attention_reference
 from ..stats import StreamingAttentionStats
 from ..validation import require_pinned_inputs, validate_cu_seqlens, validate_host_qkv
 from .backend import configured_backend_name, resolve_backend
-from .dynamic import QueryTaskMeasurement
 from .executor import TritonExecutorMixin
 from .flash_split_executor import FlashSplitExecutorMixin
+from .measurement import QueryTaskMeasurement
 from .protocols import DeviceOutputConsumer, DeviceOutputTransform, TaskDeviceOutputConsumer
 from .tasks import QueryTask, build_query_tasks
 from .tile_source import QKVTileSource

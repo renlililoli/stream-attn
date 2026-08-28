@@ -25,37 +25,6 @@ The figures below are regenerated from the checked-in final observations with
 They intentionally exclude contaminated runs and measurements that do not match
 the documented timing boundary or fixed experiment configuration.
 
-### NVIDIA RTX 5090: near-linear multi-GPU scaling at 524K tokens
-
-<p align="center">
-  <img src="docs/assets/latest-rtx5090-multigpu-efficiency.svg" alt="RTX 5090 static and dynamic multi-GPU speedup and parallel efficiency" width="100%">
-</p>
-
-The 524,288-token host-output path retains more than 95% parallel efficiency
-through three RTX 5090 GPUs. Static scheduling uses the Q sizes reached by the
-dynamic controller under concurrent traffic, making this a tuned comparison
-rather than holding static mode to the isolated-device Q knee.
-
-| GPUs | Schedule | Median time | Speedup | Parallel efficiency |
-|---:|---|---:|---:|---:|
-| 1 | Historical SeqAttn, 14 GiB | 36.010 s | 1.000x | 100.00% |
-| 2 | Tuned static | 18.323 s | 1.965x | 98.26% |
-| 2 | Converged dynamic | 18.431 s | 1.954x | 97.69% |
-| 3 | Tuned static | 12.431 s | 2.897x | 96.56% |
-| 3 | Converged dynamic | 12.558 s | 2.867x | 95.58% |
-
-The tuned static Q sizes are `12288/13056` on two GPUs and
-`12928/12928/13056` on three GPUs. Static is 0.59% faster on two idle GPUs and
-1.02% faster on three idle GPUs; dynamic reaches 99.41% and 98.99% of that
-throughput while adapting to the actual per-device bandwidth observed when the
-GPUs contend for PCIe and host-memory resources. The one-GPU row is historical
-context from an earlier revision. The resident FA4 baseline documented in the
-full report has a different, GPU-resident output boundary and is not used to
-compute parallel efficiency.
-
-Full protocol, device mapping, Q convergence, and raw artifact index:
-[RTX 5090 524K multi-GPU scheduling report](docs/rtx5090_dynamic_multigpu_524k_2026-08-26.md).
-
 ### NVIDIA A30: complete host-memory roofline sweep
 
 <p align="center">
@@ -247,141 +216,15 @@ See [the chunk-size calibration guide](docs/q_chunk_calibration.md) for the
 formula, bandwidth and resident-backend commands, Q sweep procedure, NUMA
 considerations, memory checks, and the validated RTX 5090 examples.
 
-For a fixed packed sequence, heterogeneous GPUs can use different resident-Q
-and streamed-K/V tile sizes. Static scheduling remains the default: the
-multi-GPU planner runs once before denoising, uses configured compute and
-transfer rates to assign one contiguous Q shard to each device, and reuses
-that immutable schedule for every block and step:
-
-```python
-from seqattn_core import (
-    MultiGpuDeviceSpec,
-    MultiGpuStreamingAttentionRunner,
-    StreamingAttentionConfig,
-    build_multi_gpu_plan,
-)
-
-devices = [
-    MultiGpuDeviceSpec(
-        device="cuda:0",
-        config=StreamingAttentionConfig(
-            q_chunk_tokens=32768,
-            kv_chunk_tokens=4096,
-            backend="triton",
-        ),
-        compute_tflops=205.0,
-        h2d_gbps=50.0,
-    ),
-    MultiGpuDeviceSpec(
-        device="cuda:1",
-        config=StreamingAttentionConfig(
-            q_chunk_tokens=24576,
-            kv_chunk_tokens=8192,
-            backend="triton",
-        ),
-        compute_tflops=150.0,
-        h2d_gbps=35.0,
-    ),
-]
-plan = build_multi_gpu_plan(
-    q_heads=56,
-    kv_heads=56,
-    head_dim=128,
-    dtype=torch.bfloat16,
-    max_q_tokens=tokens,
-    max_kv_tokens=tokens,
-    cu_seqlens_q=cu,
-    cu_seqlens_k=cu,
-    devices=devices,
-)
-runner = MultiGpuStreamingAttentionRunner(plan)
-try:
-    runner(q, k, v, cu, cu, out=out)
-finally:
-    runner.close()
-```
-
-Dynamic scheduling is explicit opt-in. It keeps one segment-aware host cursor,
-lets each GPU claim another Q task only after its previous CUDA completion
-event, and retains per-device performance EMAs across repeated calls:
-
-```python
-from seqattn_core import DynamicScheduleConfig
-
-dynamic_devices = [
-    MultiGpuDeviceSpec(
-        device="cuda:0",
-        config=StreamingAttentionConfig(
-            q_chunk_tokens=5760,
-            kv_chunk_tokens=4096,
-            backend="triton",
-        ),
-        q_min_tokens=2048,
-        q_capacity_tokens=23040,
-        compute_tflops=205.0,
-        h2d_gbps=50.0,
-    ),
-    MultiGpuDeviceSpec(
-        device="cuda:1",
-        config=StreamingAttentionConfig(
-            q_chunk_tokens=5760,
-            kv_chunk_tokens=8192,
-            backend="triton",
-        ),
-        q_min_tokens=2048,
-        q_capacity_tokens=23040,
-        compute_tflops=150.0,
-        h2d_gbps=35.0,
-    ),
-]
-dynamic_plan = build_multi_gpu_plan(
-    q_heads=56,
-    kv_heads=56,
-    head_dim=128,
-    dtype=torch.bfloat16,
-    max_q_tokens=tokens,
-    max_kv_tokens=tokens,
-    cu_seqlens_q=cu,
-    cu_seqlens_k=cu,
-    devices=dynamic_devices,
-    schedule_mode="dynamic",
-    dynamic_config=DynamicScheduleConfig(enable_task_trace=False),
-)
-```
-
-In dynamic mode, `q_chunk_tokens` is the initial controller value and
-`q_capacity_tokens` is the fixed workspace capacity. Runtime tasks only use a
-workspace prefix; increasing Q never reallocates the workspace. The 5760
-initial value above illustrates an isolated RTX 5090 knee for one deployment,
-while the larger capacity leaves preallocated headroom for the lower per-device
-bandwidth that can appear under concurrent multi-GPU traffic. Neither value is
-a portable default. Configured compute and transfer rates only bootstrap the
-first tasks: the EMAs observe each device while all workers are running, so
-shared PCIe and host-memory contention may produce rates unlike any
-isolated-device measurement. Set capacity equal to the initial Q only when the
-deployment must forbid growth; otherwise the controller can move within the
-preallocated range without a steady-state allocation. Segment or global-tail
-clamps can still produce a smaller final task.
-
-Each GPU scans the complete K/V segment for its assigned Q rows. There is no
-cross-device softmax reduction or NCCL dependency. `MultiGpuH3MaterializedRunner` uses
-only completion-driven dynamic scheduling: every GPU first claims uniform
-4,096-token hidden blocks, runs its device-local QKV projection, and writes the
-disjoint Q/K/V range into shared pinned host buffers. Exact attention starts
-after the complete K/V projection barrier. GPUs then dynamically claim Q tasks
-for attention, OutProj, FFN, and final hidden D2H. The current Q task is the FFN
-unit, with no independent MLP tile or carry across tasks. The integration
-supplies one device-local `H3MaterializedProjection` and `H3BlockOps` pair per
-GPU so projection and consumer weights remain independently resident or leased
-on that device.
+Multi-GPU planning and H3 execution are distributed separately in
+`seqattn-multigpu`. Core-only installations do not import or expose those
+APIs. See `packages/seqattn-multigpu/README.md` for installation and usage.
 
 ## Core APIs
 
 - `streaming_attn_func` and `streaming_attn_varlen_func` provide dense and
   packed CPU-backed attention entry points.
 - `StreamingAttentionRunner` reuses a planned contiguous host-memory pipeline.
-- `MultiGpuStreamingAttentionRunner` executes either a preplanned Q partition
-  or completion-driven dynamic Q tasks across device-local runners.
 - `ProjectedAttentionRunner` connects model-owned QKV and output-projection
   callbacks through sequence-sized pinned host Q/K/V without materializing raw
   attention output on the CPU.
@@ -390,8 +233,6 @@ on that device.
 - `H3MaterializedRunner` and `H3RecomputeRunner` provide explicit MiniMax-H3
   block policies with one-hidden in-place and two-hidden ping-pong contracts,
   respectively.
-- `MultiGpuH3MaterializedRunner` dynamically distributes materialized QKV projection,
-  attention, output projection, and MLP work across device-local H3 operators.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.
 - `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` provide aligned,
@@ -472,7 +313,7 @@ dependencies with `pip install -r benchmarks/requirements.txt`. Benchmark JSON
 records configuration, wall and CUDA-event timing, effective throughput,
 planned workspace, transfer volume, and memory peaks where applicable.
 
-Regenerate the three README figures from the checked-in final observations:
+Regenerate the core README figures from the checked-in final observations:
 
 ```bash
 python benchmarks/plot_latest_readme_results.py
@@ -490,10 +331,9 @@ memory-budget enforcement, and runner reuse.
 
 Current scope:
 
-- Linux, inference-only dense attention. Contiguous DRAM streaming supports
-  static and dynamic multi-GPU Q scheduling; the H3 fused path uses dynamic
-  multi-GPU QKV projection and dynamic attention/consumer scheduling.
-  Paged/NVMe execution remains single-GPU.
+- Linux, inference-only dense attention. Core contiguous DRAM, projected,
+  recompute, paged, and NVMe execution is single-GPU. Multi-GPU execution is
+  available only through the separately installed `seqattn-multigpu` plugin.
 - No backward pass, dropout, arbitrary sparse masks, model-weight paging,
   cross-request HBM residency, io_uring, or GPUDirect Storage.
 - Caller-owned complete tensors used through memory adapters are outside the

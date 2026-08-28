@@ -30,16 +30,15 @@ git tag --sort=-version:refname
 Do not discard untracked experiment notes or generated evidence. Work on a
 feature branch, then integrate through a clean `main` worktree for release.
 
-As of August 26, 2026, the latest release is `v0.3.0-alpha.3` at commit
-`86049c058a4dfb26da408e79ca2c95677ebbd250`; `main` may contain later
-documentation. Verify remote state rather than assuming these values remain
-current.
+As of August 28, 2026, `main` is preparing `v0.3.0-alpha.4`; verify the remote
+tag, GitHub prerelease, and immutable commit before updating a consumer pin.
 
 ## Package Boundaries
 
-All shipped code lives under `src/seqattn_core`. Public names are exported from
-`src/seqattn_core/__init__.py`. Do not recreate a second compatibility package
-or duplicate core logic in a consumer repository.
+Core code lives under `src/seqattn_core`. Optional multi-GPU code lives in the
+separate `packages/seqattn-multigpu` distribution and consumes the versioned
+private plugin bridge. Public core names are exported from
+`src/seqattn_core/__init__.py`; core must not export `MultiGpu*` symbols.
 
 The main execution families are:
 

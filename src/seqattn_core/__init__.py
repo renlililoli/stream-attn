@@ -19,8 +19,6 @@ from .dit import (
     H3RecomputeRunner,
     H3SequenceMeta,
     H3TileConfig,
-    MultiGpuH3DiTRunner,
-    MultiGpuH3MaterializedRunner,
     load_h3_tile_config,
 )
 from .paged import (
@@ -50,11 +48,7 @@ from .projection import (
     streaming_projected_self_attention,
 )
 from .stats import (
-    DynamicDeviceStats,
-    DynamicTaskTrace,
     H3DiTStats,
-    MultiGpuAttentionStats,
-    MultiGpuH3DiTStats,
     PagedAttentionStats,
     ProjectedAttentionStats,
     RecomputedAttentionStats,
@@ -70,19 +64,8 @@ from .storage import (
 from .streaming import (
     DeviceOutputConsumer,
     DeviceOutputTransform,
-    DeviceQuerySchedule,
-    DynamicControllerSnapshot,
-    DynamicQController,
-    DynamicQueryCursor,
-    DynamicScheduleConfig,
-    DynamicWorkloadSignature,
-    MultiGpuAttentionPlan,
-    MultiGpuDeviceSpec,
-    MultiGpuStreamingAttentionRunner,
     QueryTask,
-    QueryTaskMeasurement,
     TaskDeviceOutputConsumer,
-    build_multi_gpu_plan,
     build_query_tasks,
 )
 
@@ -92,14 +75,6 @@ __all__ = [
     "CallbackOutputSink",
     "DeviceOutputConsumer",
     "DeviceOutputTransform",
-    "DeviceQuerySchedule",
-    "DynamicControllerSnapshot",
-    "DynamicDeviceStats",
-    "DynamicQController",
-    "DynamicQueryCursor",
-    "DynamicScheduleConfig",
-    "DynamicTaskTrace",
-    "DynamicWorkloadSignature",
     "H3BlockOps",
     "H3DiTStats",
     "H3MaterializedPlan",
@@ -116,13 +91,6 @@ __all__ = [
     "KVTileProjector",
     "MemoryPageSink",
     "MemoryPageSource",
-    "MultiGpuAttentionPlan",
-    "MultiGpuAttentionStats",
-    "MultiGpuDeviceSpec",
-    "MultiGpuH3DiTRunner",
-    "MultiGpuH3DiTStats",
-    "MultiGpuH3MaterializedRunner",
-    "MultiGpuStreamingAttentionRunner",
     "NvmeOutputSink",
     "NvmeQKVStore",
     "NvmeQKVWriter",
@@ -137,7 +105,6 @@ __all__ = [
     "ProjectionPipelineConfig",
     "QTileProjector",
     "QueryTask",
-    "QueryTaskMeasurement",
     "RecomputedAttentionRunner",
     "RecomputedAttentionStats",
     "SimulatedIoDelay",
@@ -150,7 +117,6 @@ __all__ = [
     "StreamingAttentionStats",
     "TaskDeviceOutputConsumer",
     "TensorLayout",
-    "build_multi_gpu_plan",
     "build_plan",
     "build_query_tasks",
     "ephemeral_nvme_directory",
@@ -161,4 +127,4 @@ __all__ = [
     "streaming_projected_self_attention",
 ]
 
-__version__ = "0.3.0a3"
+__version__ = "0.3.0a4"
