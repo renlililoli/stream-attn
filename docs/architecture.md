@@ -1,247 +1,157 @@
-# Architecture notes
+# SeqAttn architecture
 
-## Package boundaries
+Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
 
-The repository ships one Python package: `seqattn_core`. It owns both the
-public API and all implementation modules. The former `seqattn` compatibility
-facade is intentionally not part of the core-only distribution.
+SeqAttn is an inference-only exact dense-attention runtime for workloads whose
+complete Q/K/V working set does not fit in GPU memory. The core package owns
+generic planning, execution, storage, and callback orchestration. Model
+loading, checkpoint conversion, block eviction, and UI integration remain
+consumer responsibilities.
 
-```text
-seqattn_core/        public API and implementation; no compat facades
-  api.py             functional public API
-  config.py          execution policy dataclasses
-  planner.py         workspace and budget planning
-  stats.py           statistics dataclasses
-  reference.py       FP32 online-softmax CPU reference
-  validation.py      host tensor and sequence validation
-  quantization.py    per-token-group INT8 quantization
-  streaming/         contiguous CPU-DRAM -> HBM execution
-    backend.py       config loading, SM policy, and capability checks
-    flash_backends.py explicit FA2/FA3/FA4 partial-forward adapters
-    flash_split_executor.py shared FA streaming and FP32 combine schedule
-    workspace.py     persistent CUDA buffers, streams, and events
-    executor.py      built-in Triton copy/compute/output schedule
-    runner.py        validation, reference dispatch, and public runner
-    tile_source.py   host-materialized and device-recomputed Q/K/V loaders
-  paged/             fixed-host-budget page runtime
-    layout.py        page descriptors and tensor/KV layouts
-    protocols.py     PageSource/PageSink reader/writer contracts
-    memory.py        caller-owned memory source and sinks
-    memory_budget.py host allocation accounting and enforcement
-    cache.py         bounded two-region K/V cache
-    simulation.py    in-memory NVMe timing model
-    runtime/         orchestration, staging, I/O, reference, and Triton paths
-  storage/           persistent aligned backing stores
-    direct_io.py     O_DIRECT helpers and aligned bounce buffers
-    records.py       on-disk Q/KV page record construction
-    qkv_store.py     Q/KV manifest validation and page reads
-    qkv_writer.py    streaming Q/KV store construction
-    output.py        paged output writer and loader
-  projection/        hidden-state projection attention pipeline
-    types.py         projection callback contracts
-    workspace.py     persistent projection streams and buffers
-    runner.py        materialized projected attention orchestration
-    recompute.py     large-tile Q-only/KV-only attention orchestration
-    recompute_workspace.py one hidden staging allocation for recompute
-    api.py           functional convenience API
-  dit/               MiniMax-H3 block schedulers and device output consumer
-    materialized_runner.py in-place block execution with host Q/K/V
-    recompute_runner.py two-hidden-buffer recompute and block ping-pong
-  benchmarking/      repository benchmark tools; excluded from release wheels
-    common.py        JSON, sequence bounds, RSS, and NVML sampling
-    streaming.py     DRAM-backed and full-GPU benchmark
-    paged.py         memory, simulated-NVMe, and NVMe benchmark
-    projection.py    projected pipeline benchmark
-  kernels/           Triton kernels and launch helpers
-```
-
-Public imports use `seqattn_core` directly. The release wheel excludes
-`seqattn_core.benchmarking` and does not install benchmark command-line entry
-points. Those modules remain in the source repository so experiments and
-figures stay reproducible. Compatibility-only module paths are not carried
-forward in the minimum core release.
-
-## Memory hierarchy
-
-The paged operator spans five storage levels:
+## Package boundary
 
 ```text
-NVMe aligned Q/KV records
-    -> bounded ordinary-DRAM K/V cache
-    -> pinned Q/KV/output staging rings
-    -> resident-Q and streamed-KV HBM workspace
-    -> Triton SRAM/register tiles
+src/seqattn_core/
+  api.py              functional contiguous-attention entry points
+  config.py           immutable execution policies
+  planner.py          workspace and tile planning
+  streaming/          pinned-host Q/K/V streaming
+  projection/         hidden-to-QKV and device-output pipelines
+  paged/              fixed-host-budget page runtime
+  storage/            aligned Q/K/V and output stores
+  dit/                generic MiniMax-H3 callback schedulers
+  kernels/            Triton kernels and launch profiles
+
+packages/seqattn-multigpu/
+  optional static and dynamic multi-GPU execution
 ```
 
-The GPU operator has two tiling levels:
+`seqattn_core` exports the single-GPU API. It does not export `MultiGpu*`
+symbols. The optional `seqattn-multigpu` distribution consumes the versioned
+private plugin bridge and must match the core version exactly.
 
-- `q_chunk_tokens` is an HBM-resident query super-block.  It controls the FP32
-  online-softmax accumulator and therefore most of the workspace footprint.
-- `kv_chunk_tokens` is a streamed K/V tile.  Two buffers permit copy/compute
-  overlap; a third buffer is available for systems where the copy engine needs
-  more queue depth.
+## Execution families
 
-Within a K/V tile, the built-in Triton kernel uses `BLOCK_M x BLOCK_N`
-attention tiles and never writes the score matrix to global memory. Optional
-FA2/FA3/FA4 adapters replace only this partial-forward operation; they retain
-the same host streaming schedule and merge normalized partial output with FP32
-LSE on the GPU.
+| Family | Input policy | Q/K/V policy | Output policy |
+|---|---|---|---|
+| Contiguous streaming | Caller-owned pinned CPU Q/K/V | Resident Q, streamed K/V | Pinned CPU output or device consumer |
+| Projected attention | Caller-owned pinned hidden | Complete pinned host Q/K/V produced by callback | Output projection runs before D2H |
+| Recomputed attention | Caller-owned pinned hidden | Q and K/V regenerated directly into CUDA tiles | Required device consumer |
+| Paged attention | `PageSource` and `PageSink` | Bounded staging and optional bounded K/V cache | Page sink |
+| H3 block runtime | Consumer callbacks and pinned hidden | Explicit materialized or recompute policy | Attention epilogue and MLP tiles |
 
-## Fused recurrence
+Choose a family from data ownership and capacity constraints. Paged execution
+is for bounded host memory or page-backed storage; it is not a faster wrapper
+around complete pinned Q/K/V tensors.
 
-Each K/V update maintains, per query/head, FP32 state:
+## Exact recurrence
+
+For each packed segment, SeqAttn keeps one query super-block resident and scans
+every K/V tile in that segment. Partial outputs are combined with FP32 online
+softmax state:
 
 ```text
-m = running row maximum
-l = running softmax normalizer
-a = running unnormalized output
+m_new = max(m_old, m_tile)
+l_new = exp(m_old - m_new) * l_old + exp(m_tile - m_new) * l_tile
+o_new = exp(m_old - m_new) * o_old + exp(m_tile - m_new) * o_tile
+output = o_new / l_new
 ```
 
-For a new tile with scores `S`, the kernel computes the merged maximum,
-rescales the old state, accumulates `exp(S - m) @ V`, and stores the updated
-state in one launch.  Final normalization and cast are a separate fused kernel
-executed once per query super-block.
+Running max, normalizer, and accumulator remain FP32 for BF16 and FP16 input.
+Packed `cu_seqlens` are hard boundaries: no Q or K/V tile may cross a segment.
+Exact dense attention observes all K/V for a segment before finalizing Q.
+Causal alignment uses bottom-right positions when Q and K lengths differ.
 
-## Pipeline invariants
+## Workspace ownership
 
-- H2D never overwrites a K/V slot until its compute-free event fires.
-- Q is not replaced until every K/V update using it has completed.
-- A GPU output slot is not reused until its D2H-free event fires.
-- Packed sequence boundaries are scheduler boundaries; no query super-block or
-  K/V scan crosses a segment.
-- Causal positions use bottom-right alignment for unequal Q/K lengths.
+`workspace_budget_bytes` covers only CUDA allocations owned by SeqAttn:
 
-## Host memory contract
+- resident Q;
+- FP32 max, normalizer, and accumulator state;
+- one to three K/V staging slots;
+- zero to two output slots, depending on output mode;
+- a fixed allocator and launch margin.
 
-`HostMemoryPlan` is the allocation authority for a paged run. The default 8GiB
-policy reserves category limits of 1GiB pinned staging, 512MiB direct-I/O
-bounce buffers, and 128MiB fixed metadata. Cache capacity is planned from the
-remaining bytes. All staging rings, bounce rings, cache slots, and output rings
-are created before the page loop; an allocation that would cross a category or
-total limit fails immediately.
+It excludes the CUDA context, model weights, caller tensors, callback
+temporaries, and the whole-process memory peak. The planner aligns manually
+specified tiles to the selected kernel block dimensions.
 
-Caller-owned tensors adapted by `MemoryPageSource`/`MemoryPageSink` are outside
-this accounting. They preserve the original API but do not provide a fixed
-whole-process RAM guarantee.
+Chunk axes are independent:
 
-The K/V cache is split into a deterministic low-page-id hot region and a
-rolling region. At the default 80/20 split, the hot pages remain resident across
-query passes while pages outside the cache continue as a sequential scan. Q is
-single-use and bypasses the long-lived cache. Output pages enter their sink as
-soon as the output staging slot is ready.
+| Setting | Role |
+|---|---|
+| `q_chunk_tokens` | Resident Q super-block and FP32 state bound |
+| `kv_chunk_tokens` | Streamed K/V transfer and update tile |
+| `projection_chunk_tokens` | Materialized hidden-to-QKV producer tile |
+| `mlp_chunk_tokens` | H3 post-attention MLP tile |
 
-## Direct-I/O store
+Use [`q_chunk_calibration.md`](q_chunk_calibration.md) for deployment-specific
+attention calibration. Do not infer projection or MLP tiles from the attention
+workspace budget.
 
-`NvmeQKVStore` uses one file for Q and one for paired K/V records. Pages do not
-cross packed segments. Each descriptor records global and segment-local token
-offsets, valid/padded token counts, payload size, padding, and aligned file
-location. K/V data for a page is contiguous so one `preadv` fills both staging
-tensors. INT8 records append K/V scale arrays to the same record.
+## Projection policies
 
-The runtime uses a thread-safe pool of anonymous mmap buffers. mmap base
-addresses, file offsets, and I/O lengths satisfy the 4096-byte `O_DIRECT`
-contract. A short operation is an error. Direct-I/O open/read/write failures are
-reported; the runtime never switches to buffered I/O without an explicit
-`direct_io=False` test configuration.
-
-Writers fsync temporary data files, validate their final sizes, rename them to
-their stable names, fsync the directory, and publish `manifest.json` last.
-Cancellation or an exception removes unpublished temporary/final data.
-
-## CPU and GPU pipeline
-
-The CPU thread pool only performs page I/O, cache copies, page packing, output
-writes, and optional one-time quantization. It does not compute QK or PV. K/V
-future reads are submitted up to the fixed queue depth. A pinned staging slot
-is not reused until its H2D event completes; an HBM K/V slot is not reused until
-its compute-free event completes; an output host slot is not reused until its
-sink future completes.
-
-The paged statistics include wall time, I/O time, queue wait, cache lookup,
-copy traffic, compute-stream timing, output writes, cache hit ratio, and host
-allocation peaks. End-to-end wall time includes visible I/O stalls.
-
-## INT8 K/V
-
-INT8 is an explicitly approximate storage mode. Quantization is symmetric per
-64 tokens and KV head, with FP16 scales. The Triton update kernel loads INT8 K/V
-and scales together and applies dequantization in the QK/PV path. No complete
-BF16 K/V tensor is produced. CPU reference execution dequantizes only the
-current page for auditability.
-
-## Projected inference pipelines
-
-`ProjectedAttentionRunner` is the materialized model-projection path:
+Materialized projection has a global K/V readiness barrier:
 
 ```text
-CPU hidden
-    -> double-buffered hidden H2D
-    -> GPU QKV projection callback
-    -> Q/K/V D2H into persistent pinned backing buffers
-    -> global K/V readiness barrier
-    -> Q-resident / KV-streamed Triton attention
-    -> GPU output-projection callback
-    -> projected output D2H
+pinned hidden -> chunked projection -> complete pinned host Q/K/V
+              -> exact streaming attention -> CUDA output projection
+              -> pinned host output
 ```
 
-The readiness barrier is required for exact global self-attention: an early
-query cannot be finalized until projection has produced every key/value token
-in its packed segment.  Projection H2D, projection compute, and Q/K/V D2H are
-still pipelined across chunks before that barrier.
+The raw attention tensor is not round-tripped through CPU memory, but complete
+host Q/K/V remains available for every resident Q pass.
 
-The important fusion is on the consumer side.  Raw attention output remains on
-GPU and is passed directly to output projection.  Compared with a staged
-implementation, this removes exactly one raw-attention D2H and one matching H2D
-for every query token.  The callback may also include inference-only epilogues
-such as gate/residual application.
+Recomputed attention removes complete host Q/K/V:
 
-An opt-in `output_mode="device_consumer"` finalizes into the Q buffer and removes
-the separate raw-output HBM allocation. Q is not reusable until the consumer
-has finished reading it; consumer results use `record_stream()` for D2H
-lifetime. This mode is not the latency default because the August 18, 2026
-61,312-token diagnostic measured 850.8ms with Q reuse and 828.7ms with the
-same-run separate-output GPU-consumer path.
+```text
+pinned hidden tile -> Q-only or K/V-only direct-write callback
+                   -> planned CUDA tile -> shared attention executor
+                   -> device output consumer
+```
 
-QKV and output projection are callbacks rather than hard-coded matmul kernels.
-This permits ordinary BF16/FP16 linear layers, quantized modules, model-specific
-Q/K normalization, and rotary embedding while the attention core remains
-Triton.  The caller is responsible for keeping projection weights resident for
-the duration of each phase.
+The tradeoff is repeated K/V projection for every resident Q pass. Hidden
+staging is bounded by
+`max(q_chunk_tokens, kv_chunk_tokens) * hidden_features`.
 
-Projection callbacks and device output consumers run with the planned CUDA
-device selected and the runner compute stream current. They must submit every
-operation that reads a supplied tile, and every operation that produces a
-returned tile, to that stream before returning. A callback may hand work to a
-different stream only after recording explicit CUDA dependencies. Returned
-tensors must reside on the planned device and completely cover the requested
-token range. A device consumer's completion method must not return until its
-final destination ranges are fully written and safe for the caller to read.
+See [`design_dit_runtime.md`](design_dit_runtime.md) for H3 callback and buffer
+contracts.
 
-`RecomputedAttentionRunner` is independent of the materialized projection
-pipeline. It accepts Q-only and KV-only callbacks that write one complete
-attention Q or K/V tile directly into the CUDA attention workspace. It owns one
-device hidden staging buffer sized to the larger attention tile and never
-allocates host Q/K/V. Both paths use the same internal tile-source executor and
-therefore the same online-softmax, finalize, and output-consumer schedule.
+## Paged and storage path
 
-MiniMax-H3 extends the device output consumer through output projection and the
-complete SwiGLU MLP. `H3MaterializedRunner` keeps the one-hidden in-place
-contract; `H3RecomputeRunner` requires two pinned hidden buffers and ping-pongs
-them across blocks. The detailed recompute invariants are specified in
-[`dit_qkv_recompute_architecture.md`](dit_qkv_recompute_architecture.md), and
-the complete block pipeline is specified in
-[`minimax_h3_comfyui_dit_block_pipeline.md`](minimax_h3_comfyui_dit_block_pipeline.md).
+```text
+PageSource -> reader -> bounded DRAM K/V cache -> pinned staging
+           -> CUDA attention workspace -> PageSink
+```
 
-## Planned follow-ups
+The host budget covers operator-owned staging, direct-I/O bounce buffers,
+metadata margin, and cache capacity. Caller tensors behind a
+`MemoryPageSource` are outside that budget.
 
-- Shape-specific autotuning cache for block sizes, warps, stages, and K/V ring
-  depth.
-- io_uring and GPUDirect Storage implementations under the existing
-  `PageSource`/`PageSink` contract.
-- Validate and tune the existing FA3 and FA4 adapters on SM90 and Blackwell,
-  including their lower-level preallocated-output interfaces.
-- Optional prefetched residual/epilogue buffers so model-specific residual H2D
-  overlaps the final K/V scan.
-- Model-specific fused Q-only/KV-only operators that write directly into the
-  public recompute destinations without tile-local allocator traffic.
-- Backward kernels only after the inference API and memory contract stabilize.
+Persistent stores use a manifest plus aligned data files. `direct_io=True` is
+a requirement, not a hint: unsupported filesystems, invalid alignment, short
+I/O, or rejected `O_DIRECT` operations fail explicitly. See
+[`paged_nvme_runtime.md`](paged_nvme_runtime.md).
+
+## Lifetime and concurrency
+
+Runners own persistent CUDA buffers, streams, and events and are single-flight.
+Reuse one runner for compatible serial calls; create separate runners for true
+concurrency.
+
+Callbacks must enqueue all work on the current runner stream before returning.
+Returned or direct-written tensors must remain valid until that stream has
+consumed them. Failure recovery restores runner slot and event state, but does
+not make consumer callbacks transactional.
+
+## Correctness boundaries
+
+- Execution is inference-only.
+- BF16 and FP16 storage are exact with respect to the same online-softmax
+  algorithm; INT8 K/V is explicitly approximate.
+- Asynchronous host paths require pinned tensors unless an API explicitly
+  disables that requirement.
+- Device-output transforms, projected attention, recomputed attention, and H3
+  runners require the built-in Triton backend.
+- Physical NVMe claims require a measured device. Simulated NVMe validates
+  scheduler behavior only.

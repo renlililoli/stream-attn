@@ -2,6 +2,9 @@
 
 Date: 2026-08-27
 
+Status: current calibration evidence for the H3 defaults documented in
+[`design_dit_mlp_chunk_model.md`](design_dit_mlp_chunk_model.md).
+
 ## Scope
 
 This calibration compares `C_proj=2048, C_mlp=2048` with

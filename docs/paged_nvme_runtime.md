@@ -1,78 +1,145 @@
-# Paged CPU/NVMe runtime
+# Paged CPU and NVMe runtime
 
-## Scope
+Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
 
-The paged API is Linux-only, inference-only, single-GPU dense attention. It
+The paged runtime executes exact dense attention without requiring complete
+CPU Q/K/V tensors. It is Linux-only, inference-only, and single-GPU. It
 supports packed variable-length sequences, bottom-right causal masking, MHA,
-GQA, and MQA. BF16/FP16 stores are exact with respect to the same online-softmax
-algorithm. INT8 K/V is a separate approximate mode.
+GQA, and MQA.
 
-It does not implement backward, sparse masks, model-weight paging, cross-request
-HBM residency, io_uring, or GPUDirect Storage.
+## Public contracts
 
-## Public types
+| Type | Responsibility |
+|---|---|
+| `PageSource` | Q and/or paired K/V layouts, page descriptors, and reader creation |
+| `PageReader` | Fill caller-provided Q or K/V staging buffers |
+| `PageSink` | Create a writer for output pages |
+| `PageWriter` | Consume complete output pages and publish or return the result |
+| `PagedAttentionRunner` | Validate layouts, enforce budgets, schedule I/O, cache, copy, and attention |
 
-- `PageSource`: Q and/or paired K/V page metadata plus a reader session that
-  fills caller-owned buffers.
-- `PageSink`: creates a writer session that consumes completed output pages.
-- `MemoryPageSource` and `MemoryPageSink`: adapters for existing CPU tensors.
-- `NvmeQKVStore`: validated manifest and aligned Q/KV data files.
-- `NvmeOutputSink`: aligned, atomic output store publication.
-- `CallbackOutputSink`: synchronous immediate page consumption.
-- `NvmeQKVWriter`: tensor convenience construction and page-iterator streaming
-  construction.
-- `SimulatedNvmeDevice`, `SimulatedPageSource`, and `SimulatedPageSink`:
-  in-memory page adapters with shared aggregate read/write bandwidth timelines.
-- `HostMemoryPlan`: category and total operator-memory enforcement.
-- `PagedAttentionRunner`: bounded cache, I/O, H2D/compute/D2H, and sink pipeline.
+Included adapters are:
+
+- `MemoryPageSource` and `MemoryPageSink` for existing CPU tensors;
+- `CallbackOutputSink` for synchronous page consumption;
+- `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` for persistent stores;
+- `SimulatedNvmeDevice`, `SimulatedPageSource`, and `SimulatedPageSink` for
+  scheduler experiments.
+
+Page descriptors and packed boundaries are validated before execution. A page
+may not cross a packed segment.
+
+## Host-memory budget
+
+`PagedAttentionConfig.host_memory_budget_bytes` covers allocations owned by the
+paged operator:
+
+```text
+total host budget
+  = pinned staging limit
+  + direct-I/O bounce limit
+  + metadata margin
+  + remaining bounded K/V cache
+```
+
+Default policy:
+
+| Category | Default |
+|---|---:|
+| Total operator host budget | 8 GiB |
+| Pinned staging limit | 1 GiB |
+| Direct-I/O bounce limit | 512 MiB |
+| Metadata margin | 128 MiB |
+| Target logical page size | 16 MiB |
+
+Caller-owned tensors behind memory adapters are excluded. Process RSS can
+therefore exceed the operator budget without violating the contract.
+
+The CUDA attention workspace is separately controlled by
+`config.attention.workspace_budget_bytes`; it is not part of the host budget.
+
+## Execution model
+
+```text
+validate source and sink contracts
+  -> allocate bounded staging
+  -> open readers and writer
+  -> allocate remaining K/V cache capacity
+  -> schedule page reads through a fixed worker pool
+  -> H2D resident Q and streamed K/V
+  -> exact FP32 online-softmax recurrence
+  -> D2H output page
+  -> PageWriter
+```
+
+Memory-backed K/V bypasses the operator cache because the caller already owns
+the complete backing. NVMe-backed K/V uses a bounded two-region cache under the
+remaining host budget.
+
+Runners are single-flight. Create separate runners for concurrent requests.
+
+## Storage modes
+
+| `kv_storage_dtype` | Semantics |
+|---|---|
+| `bf16` | Exact storage mode |
+| `fp16` | Exact storage mode |
+| `fp32` | Exact reference-compatible mode; not supported by paged Triton execution |
+| `int8` | Approximate symmetric K/V storage with FP16 scales per 64-token group and KV head |
+
+Exact and approximate results must be named and measured separately. INT8
+reports should include relative L2, maximum absolute error, and cosine
+similarity, and should report initial quantization time separately from reused
+store execution.
+
+## Persistent store publication
+
+An NVMe Q/K/V store contains a manifest and aligned Q and K/V data files. The
+loader validates:
+
+- format and version;
+- alignment;
+- tensor and storage layouts;
+- packed boundaries and page order;
+- file names and exact file sizes.
+
+Writers publish data before publishing the manifest, so a completed manifest
+never points to unfinished temporary files. Output writers clean up temporary
+files after failure; persistent input stores are never deleted automatically.
+
+## Direct I/O
+
+`direct_io=True` is strict. SeqAttn does not silently fall back to buffered
+I/O. Unsupported filesystems, invalid offsets or lengths, rejected `O_DIRECT`
+operations, and short reads or writes raise explicit errors.
+
+Use `direct_io=False` only when buffered I/O is intentionally part of the
+experiment or deployment. Do not compare buffered and direct-I/O results as if
+they were the same storage mode.
+
+## Simulation boundary
+
+The in-memory simulator applies fixed command latency and shared aggregate
+bandwidth timelines to page operations. It is useful for queue-depth, cache,
+read-ahead, and overlap experiments.
+
+It does not emulate filesystem behavior, alignment cost, controller firmware,
+PCIe contention, writeback, thermal throttling, or device failure. Simulated
+results are not physical NVMe performance evidence.
 
 ## Failure behavior
 
-The runtime rejects incompatible dtype/head/page layouts, segment/page overlap,
-corrupt or incomplete manifests, file-size mismatch, unaligned records, short
-reads/writes, direct-I/O rejection, and memory-budget overruns. Data-file and
-manifest publication is ordered so a manifest never advertises an unfinished
-temporary file.
+The runtime rejects incompatible dtype, head, page, segment, and direct-I/O
+contracts before or during execution. Disk-full, cancellation, callback, and
+I/O errors propagate to the caller after worker shutdown and temporary output
+cleanup.
 
-Disk-full and cancellation errors propagate to the caller after temporary
-output cleanup. Persistent stores are never deleted automatically.
+No current path implements backward, sparse masks, model-weight paging,
+cross-request HBM residency, `io_uring`, or GPUDirect Storage.
 
 ## Measurement policy
 
-Exact BF16/FP16 and INT8 results must be separate. Numerical reports should
-include relative L2, maximum absolute error, and cosine similarity. Preparation
-time includes initial INT8 quantization; reused-store runs report it separately.
-
-NVMe acceptance requires a separately verified local device with at least
-7GB/s sequential throughput and a working set larger than the configured DRAM
-cache. The target is paged exact end-to-end latency no greater than 2x the
-DRAM-only path. A result that misses this target remains a valid measured result
-and must identify I/O, queue, copy, or kernel stalls rather than reporting only
-kernel time.
-
-This repository's current node is not an NVMe performance reference. Publish
-only correctness and memory-cap results from it.
-
-## In-memory NVMe simulation
-
-`seqattn_core.paged.simulation` is intentionally separate from the real file-format
-and `O_DIRECT` implementation. It wraps any `PageSource` or `PageSink`, leaves
-page contents unchanged, and delays each actual page operation. For one
-direction, the model is:
-
-```text
-command ready = arrival + fixed latency
-transfer time = physical page bytes / aggregate bandwidth
-```
-
-Command latency may overlap across workers, while transfer reservations share
-one device timeline. A semaphore separately bounds in-flight reads and writes.
-Using the same `SimulatedNvmeDevice` for Q, K/V, and output makes all reads
-share the configured read limit while preserving independent full-duplex write
-timing.
-
-This is useful for queue-depth, cache, read-ahead, and GPU-overlap experiments.
-It does not emulate a filesystem, direct-I/O alignment cost, controller
-firmware, PCIe contention, writeback behavior, thermal throttling, or device
-failure. Simulated benchmark output is never valid evidence for the physical
-NVMe latency acceptance target.
+Physical storage claims require a separately verified local device and a
+working set larger than the configured DRAM cache. Record physical and logical
+bytes, cache hit ratio, read and write service time, queue depth, host-memory
+peak, CUDA workspace, and full wall latency. Treat emitted JSON as the source
+of truth and retain failures and timeouts.

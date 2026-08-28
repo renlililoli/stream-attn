@@ -12,13 +12,15 @@ compatibility facade is not shipped.
 SeqAttn is integrated into ComfyUI through
 [MiniMax H3 SeqAttn for ComfyUI](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
 
+The documentation map is in [`docs/README.md`](docs/README.md).
+
 SeqAttn is under active development. Interfaces, performance characteristics,
 and supported integrations may continue to change. If you encounter incorrect
 results, crashes, installation failures, or hardware-specific regressions,
 please open a [GitHub issue](https://github.com/renlililoli/stream-attn/issues)
 with the GPU, software versions, configuration, and a minimal reproduction.
 
-## Latest validation: 2026-08-26
+## Host-memory validation: 2026-08-26
 
 The figures below are regenerated from the checked-in final observations with
 [`benchmarks/plot_latest_readme_results.py`](benchmarks/plot_latest_readme_results.py).
@@ -51,8 +53,8 @@ The low-Q points follow the independently frozen bandwidth branch within about
 the complete resident FA2 roof. Each Q point used one warmup and three measured
 executions in one randomized process.
 
-Full protocol and observations:
-[A30 host-memory roofline report](docs/a30_host_memory_roofline_experiment0_2026-08-24.md).
+Full protocol, observations, and raw-data links are in the
+[consolidated host-memory roofline report](docs/benchmark_host_memory_roofline_2026-08.md#nvidia-a30).
 
 ### NVIDIA RTX 5090: distinct knees for two host-memory policies
 
@@ -78,8 +80,8 @@ balanced reruns use `q=5888,6272,6784` for the single-node policy and
 process with one warmup and three measured executions; contaminated runs are
 excluded from the final observations.
 
-Full protocol and observations:
-[RTX 5090 host-memory roofline report](docs/rtx5090_host_memory_roofline_experiment0_2026-08-24.md).
+Full protocol, observations, and raw-data links are in the
+[consolidated host-memory roofline report](docs/benchmark_host_memory_roofline_2026-08.md#nvidia-rtx-5090).
 
 Both experiments currently have one independent process per Q point. The knee
 agreement supports the host-memory roofline model, but additional independent
@@ -247,7 +249,7 @@ alignment for unequal Q/K lengths.
 See [architecture notes](docs/architecture.md) for package boundaries, memory
 hierarchy, recurrence details, and pipeline invariants. The split DiT storage
 policies and direct-write projector contracts are documented in
-[DiT QKV recompute architecture](docs/dit_qkv_recompute_architecture.md).
+[H3 DiT runtime contracts](docs/design_dit_runtime.md).
 
 ## Paging and NVMe
 
