@@ -5,14 +5,16 @@ from itertools import pairwise
 import pytest
 import torch
 from seqattn_core import (
-    H3BlockOps,
-    H3DiTStats,
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     build_plan,
 )
-from seqattn_core.dit.consumer import H3DeviceOutputConsumer
-from seqattn_core.dit.workspace import H3BlockWorkspace
+from seqattn_core._plugin_api import (
+    H3BlockOps,
+    H3BlockWorkspace,
+    H3DeviceOutputConsumer,
+    H3DiTStats,
+)
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
 from seqattn_core.streaming.tasks import QueryTask
@@ -518,7 +520,7 @@ def test_h3_consumer_runs_ffn_once_per_dynamic_q_task():
     hidden = torch.zeros(32, hidden_features, dtype=dtype, pin_memory=True)
     workspace = H3BlockWorkspace(
         hidden_features=hidden_features,
-        mlp_chunk_tokens=4,
+        ffn_tile_tokens=4,
         dtype=dtype,
         device=torch.device("cuda:0"),
         final_output_chunk_tokens=8,
@@ -526,7 +528,7 @@ def test_h3_consumer_runs_ffn_once_per_dynamic_q_task():
     stats = H3DiTStats()
     ops = H3BlockOps(
         attention_epilogue=lambda attention, residual, start, stop: attention,
-        mlp=lambda tile, start, stop: tile.add(1),
+        ffn=lambda tile, start, stop: tile.add(1),
     )
     consumer = H3DeviceOutputConsumer(workspace)
     consumer.reset(
@@ -556,6 +558,6 @@ def test_h3_consumer_runs_ffn_once_per_dynamic_q_task():
     assert torch.count_nonzero(hidden[24:]) == 0
     torch.testing.assert_close(hidden[0:7], torch.full_like(hidden[0:7], 3.0))
     torch.testing.assert_close(hidden[17:24], torch.full_like(hidden[17:24], 6.0))
-    assert stats.mlp_cross_q_boundaries == 0
-    assert stats.mlp_chunks == 2
+    assert stats.ffn_cross_q_boundaries == 0
+    assert stats.ffn_tiles == 2
     assert consumer.task_d2h_bytes() == 7 * hidden_features * hidden.element_size()

@@ -18,8 +18,9 @@ projection_tile_tokens = 2048
 ffn_tile_tokens = 2048
 
 [ltx2]
-# LTX2 is materialized-only. One projection tile applies to all self, text,
-# and audio/video cross-attention projection runners.
+# LTX2 supports materialized and recompute execution. One projection tile
+# applies to all materialized self, text, and audio/video projection runners.
+execution_mode = "materialized"
 projection_tile_tokens = 2048
 video_ffn_tile_tokens = 2048
 audio_ffn_tile_tokens = 2048

@@ -8,24 +8,24 @@ class H3BlockWorkspace:
         self,
         *,
         hidden_features: int,
-        mlp_chunk_tokens: int,
+        ffn_tile_tokens: int,
         dtype: torch.dtype,
         device: torch.device,
         num_final_output_buffers: int = 2,
         final_output_chunk_tokens: int | None = None,
     ) -> None:
         final_output_chunk_tokens = (
-            mlp_chunk_tokens if final_output_chunk_tokens is None else final_output_chunk_tokens
+            ffn_tile_tokens if final_output_chunk_tokens is None else final_output_chunk_tokens
         )
         if final_output_chunk_tokens <= 0:
             raise ValueError("final_output_chunk_tokens must be positive")
         self.hidden_features = hidden_features
-        self.mlp_chunk_tokens = mlp_chunk_tokens
+        self.ffn_tile_tokens = ffn_tile_tokens
         self.final_output_chunk_tokens = final_output_chunk_tokens
         self.dtype = dtype
         self.device = device
         self.carry = torch.empty(
-            (mlp_chunk_tokens, hidden_features),
+            (ffn_tile_tokens, hidden_features),
             dtype=dtype,
             device=device,
         )

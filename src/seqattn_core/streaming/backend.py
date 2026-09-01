@@ -5,7 +5,7 @@ from collections.abc import Collection
 
 import torch
 
-from .._config_file import load_config_table
+from .._config_file import load_config_table, reject_unknown_keys
 from ..kernels import triton_is_available
 from .flash_backends import flash_backend_is_available
 
@@ -28,6 +28,7 @@ def canonical_backend_name(name: str) -> str:
 
 def _backend_from_config_file() -> str | None:
     section = load_config_table("attention")
+    reject_unknown_keys(section, "attention", {"backend"})
     backend = section.get("backend")
     if backend is None:
         return None

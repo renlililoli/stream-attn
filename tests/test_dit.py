@@ -1,5 +1,4 @@
 import math
-from dataclasses import fields
 from itertools import pairwise
 
 import pytest
@@ -34,9 +33,9 @@ def test_h3_workspace_estimates_and_sequence_validation():
         estimate_h3_materialized_aux_workspace_bytes(
             hidden_features=48,
             dtype=torch.bfloat16,
-            projection_chunk_tokens=31,
+            projection_tile_tokens=31,
             num_projection_buffers=2,
-            mlp_chunk_tokens=43,
+            ffn_tile_tokens=43,
         )
         == materialized
     )
@@ -47,13 +46,12 @@ def test_h3_workspace_estimates_and_sequence_validation():
             hidden_features=48,
             dtype=torch.bfloat16,
             hidden_staging_tokens=41,
-            mlp_chunk_tokens=43,
+            ffn_tile_tokens=43,
         )
         == recompute
     )
 
     meta = H3SequenceMeta(torch.tensor([0, 3, 3, 7], dtype=torch.int32))
-    assert [field.name for field in fields(H3SequenceMeta)] == ["cu_seqlens"]
     meta.validate(7)
     with pytest.raises(ValueError, match="span"):
         meta.validate(8)
@@ -173,7 +171,7 @@ def test_h3_materialized_runner_matches_full_gpu():
         output_mode="device_consumer",
     )
     projection_config = ProjectionPipelineConfig(
-        projection_chunk_tokens=31,
+        projection_tile_tokens=31,
         num_projection_buffers=2,
     )
     plan = build_plan(
@@ -189,7 +187,7 @@ def test_h3_materialized_runner_matches_full_gpu():
     runner = H3MaterializedRunner(
         ProjectedAttentionRunner(plan, attention_config, projection_config),
         hidden_features=hidden_features,
-        mlp_chunk_tokens=43,
+        ffn_tile_tokens=43,
     )
 
     def project_qkv(tile, start, stop):
@@ -229,11 +227,11 @@ def test_h3_materialized_runner_matches_full_gpu():
 
     assert result.data_ptr() == pointer
     torch.testing.assert_close(hidden, expected.cpu(), atol=7e-2, rtol=1e-2)
-    assert runner.plan.projection_chunk_tokens == 31
+    assert runner.plan.projection_tile_tokens == 31
     assert stats.qkv_storage_policy == "materialized"
     assert stats.blocks == 1
-    assert stats.mlp_chunks == math.ceil(tokens / 43)
-    assert stats.mlp_cross_q_boundaries >= 1
+    assert stats.ffn_tiles == math.ceil(tokens / 43)
+    assert stats.ffn_cross_q_boundaries >= 1
     assert stats.projection.attention.d2h_bytes == 0
     assert stats.qkv_host_bytes_peak == 3 * tokens * heads * head_dim * hidden.element_size()
 
@@ -287,7 +285,7 @@ def test_h3_recompute_large_tiles_match_full_gpu_and_ping_pong():
         hidden_features=hidden_features,
         attention_config=attention_config,
     )
-    runner = H3RecomputeRunner(recomputed, mlp_chunk_tokens=19)
+    runner = H3RecomputeRunner(recomputed, ffn_tile_tokens=19)
     q_ranges = []
     kv_ranges = []
 
@@ -342,7 +340,7 @@ def test_h3_recompute_large_tiles_match_full_gpu_and_ping_pong():
     assert result.data_ptr() == destination.data_ptr()
     torch.testing.assert_close(source, source_before)
     torch.testing.assert_close(destination, expected.cpu(), atol=7e-2, rtol=1e-2)
-    assert not hasattr(runner.plan, "projection_chunk_tokens")
+    assert not hasattr(runner.plan, "projection_tile_tokens")
     assert runner.plan.hidden_staging_tokens == max(
         runner.plan.q_chunk_tokens,
         runner.plan.kv_chunk_tokens,
@@ -533,7 +531,7 @@ def test_h3_recompute_runner_reuse_has_bounded_allocator_growth():
             hidden_features=hidden_features,
             attention_config=attention_config,
         ),
-        mlp_chunk_tokens=19,
+        ffn_tile_tokens=19,
     )
 
     def project_q(tile, destination, start, stop):
@@ -552,6 +550,20 @@ def test_h3_recompute_runner_reuse_has_bounded_allocator_growth():
     projection = H3RecomputeProjection(project_q, project_kv)
     ops = H3BlockOps(attention_epilogue, lambda tile, start, stop: tile)
     meta = H3SequenceMeta(torch.tensor([0, tokens], dtype=torch.int32))
+
+    def fail_project_q(tile, destination, start, stop):
+        del tile, destination, start, stop
+        raise RuntimeError("injected recompute projection failure")
+
+    with pytest.raises(RuntimeError, match="injected recompute projection failure"):
+        runner.run_block(
+            source,
+            destination,
+            meta,
+            H3RecomputeProjection(fail_project_q, project_kv),
+            ops,
+        )
+
     runner.run_block(source, destination, meta, projection, ops)
     torch.cuda.synchronize()
     baseline = torch.cuda.memory_allocated()

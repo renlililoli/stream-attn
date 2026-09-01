@@ -99,7 +99,7 @@ seqattn-bench --mode seqattn --tokens 61312 \
 
 seqattn-pipeline-bench --mode pipeline --tokens 61312 \
   --hidden-size 5376 --heads 56 --head-dim 128 \
-  --projection-chunk 2048 --workspace-mib 2048 --kv-chunk 4096 \
+  --projection-tile-tokens 2048 --workspace-mib 2048 --kv-chunk 4096 \
   --target-vram-mib 8192 --repeats 2 \
   --output benchmark-results/pipeline_61312.json
 

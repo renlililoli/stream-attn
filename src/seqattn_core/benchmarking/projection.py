@@ -36,7 +36,7 @@ def main() -> None:
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--dtype", choices=("float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--causal", action="store_true")
-    parser.add_argument("--projection-chunk", type=int, default=2048)
+    parser.add_argument("--projection-tile-tokens", type=int, default=2048)
     parser.add_argument("--q-chunk", type=int)
     parser.add_argument("--kv-chunk", type=int, default=4096)
     parser.add_argument("--workspace-mib", type=int, default=4096)
@@ -100,7 +100,7 @@ def main() -> None:
             enable_nvtx=args.nvtx,
         )
         pipeline_config = ProjectionPipelineConfig(
-            projection_chunk_tokens=args.projection_chunk,
+            projection_tile_tokens=args.projection_tile_tokens,
             num_projection_buffers=2,
             enable_nvtx=args.nvtx,
         )
@@ -143,7 +143,7 @@ def main() -> None:
         result["plan"] = {
             "q_chunk_tokens": plan.q_chunk_tokens,
             "kv_chunk_tokens": plan.kv_chunk_tokens,
-            "projection_chunk_tokens": args.projection_chunk,
+            "projection_tile_tokens": args.projection_tile_tokens,
             "estimated_attention_workspace_mib": plan.estimated_workspace_bytes / 2**20,
         }
         latest_stats: dict[str, object] | None = None

@@ -1,4 +1,5 @@
 from .api import streaming_projected_cross_attention, streaming_projected_self_attention
+from .arena import MaterializedQKVArena
 from .cross import ProjectedCrossAttentionRunner
 from .cross_recompute import RecomputedCrossAttentionRunner
 from .recompute import RecomputedAttentionRunner
@@ -21,6 +22,7 @@ __all__ = [
     "CrossRecomputeProjection",
     "KVProjector",
     "KVTileProjector",
+    "MaterializedQKVArena",
     "OutputProjector",
     "ProjectedAttentionRunner",
     "ProjectedCrossAttentionRunner",

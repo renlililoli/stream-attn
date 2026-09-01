@@ -5,6 +5,7 @@ from collections.abc import Iterable
 
 import torch
 
+from ..._single_flight import init_single_flight, single_flight
 from ...projection import ProjectedAttentionRunner
 from ..common.validation import validate_hidden_host
 from .consumer import H3DeviceOutputConsumer
@@ -27,13 +28,14 @@ class H3MaterializedRunner:
         projected_attention: ProjectedAttentionRunner,
         *,
         hidden_features: int,
-        mlp_chunk_tokens: int,
+        ffn_tile_tokens: int,
         num_final_output_buffers: int = 2,
     ) -> None:
+        init_single_flight(self)
         if hidden_features <= 0:
             raise ValueError("hidden_features must be positive")
-        if mlp_chunk_tokens <= 0:
-            raise ValueError("mlp_chunk_tokens must be positive")
+        if ffn_tile_tokens <= 0:
+            raise ValueError("ffn_tile_tokens must be positive")
         if num_final_output_buffers not in {1, 2}:
             raise ValueError("num_final_output_buffers must be 1 or 2")
         if projected_attention.attention.backend != "triton":
@@ -43,28 +45,28 @@ class H3MaterializedRunner:
 
         self.projected_attention = projected_attention
         self.hidden_features = hidden_features
-        self.mlp_chunk_tokens = mlp_chunk_tokens
+        self.ffn_tile_tokens = ffn_tile_tokens
         attention_plan = projected_attention.plan
         pipeline_config = projected_attention.pipeline_config
         aux_workspace = estimate_h3_materialized_aux_workspace_bytes(
             hidden_features=hidden_features,
             dtype=attention_plan.dtype,
-            projection_chunk_tokens=pipeline_config.projection_chunk_tokens,
+            projection_tile_tokens=pipeline_config.projection_tile_tokens,
             num_projection_buffers=pipeline_config.num_projection_buffers,
-            mlp_chunk_tokens=mlp_chunk_tokens,
+            ffn_tile_tokens=ffn_tile_tokens,
             num_final_output_buffers=num_final_output_buffers,
         )
         self.plan = H3MaterializedPlan(
-            projection_chunk_tokens=pipeline_config.projection_chunk_tokens,
+            projection_tile_tokens=pipeline_config.projection_tile_tokens,
             q_chunk_tokens=attention_plan.q_chunk_tokens,
             kv_chunk_tokens=attention_plan.kv_chunk_tokens,
-            mlp_chunk_tokens=mlp_chunk_tokens,
+            ffn_tile_tokens=ffn_tile_tokens,
             estimated_workspace_bytes=attention_plan.estimated_workspace_bytes + aux_workspace,
         )
         self.plan.validate()
         self.workspace = H3BlockWorkspace(
             hidden_features=hidden_features,
-            mlp_chunk_tokens=mlp_chunk_tokens,
+            ffn_tile_tokens=ffn_tile_tokens,
             dtype=attention_plan.dtype,
             device=attention_plan.device,
             num_final_output_buffers=num_final_output_buffers,
@@ -79,6 +81,7 @@ class H3MaterializedRunner:
             require_pinned=self.projected_attention.pipeline_config.require_pinned_hidden,
         )
 
+    @single_flight
     @torch.inference_mode()
     def run_block_(
         self,
@@ -105,9 +108,7 @@ class H3MaterializedRunner:
                 projection.project_qkv,
                 stats=stats.projection,
             )
-        qkv_host_bytes = sum(
-            tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
-        )
+        qkv_host_bytes = self.projected_attention.arena.allocated_bytes
         stats.qkv_host_bytes_peak = max(stats.qkv_host_bytes_peak, qkv_host_bytes)
         hidden_bytes = hidden_host.numel() * hidden_host.element_size()
         stats.hidden_host_bytes_peak = max(stats.hidden_host_bytes_peak, hidden_bytes)
@@ -142,6 +143,7 @@ class H3MaterializedRunner:
         stats.projection.wall_seconds += elapsed
         return hidden_host
 
+    @single_flight
     @torch.inference_mode()
     def run_blocks_(
         self,

@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from ...stats import ProjectedAttentionStats, ProjectedCrossAttentionStats
+from ...stats import (
+    ProjectedAttentionStats,
+    ProjectedCrossAttentionStats,
+    RecomputedAttentionStats,
+    RecomputedCrossAttentionStats,
+)
 from ..common import TiledStageStats
 
 
 @dataclass
 class LTX2DiTStats:
     backend: str = ""
+    qkv_storage_policy: str = ""
     wall_seconds: float = 0.0
     blocks: int = 0
     hidden_host_bytes_peak: int = 0
@@ -26,6 +32,20 @@ class LTX2DiTStats:
     )
     audio_from_video_attention: ProjectedCrossAttentionStats = field(
         default_factory=ProjectedCrossAttentionStats
+    )
+    video_self_recompute: RecomputedAttentionStats = field(default_factory=RecomputedAttentionStats)
+    audio_self_recompute: RecomputedAttentionStats = field(default_factory=RecomputedAttentionStats)
+    video_text_recompute: RecomputedCrossAttentionStats = field(
+        default_factory=RecomputedCrossAttentionStats
+    )
+    audio_text_recompute: RecomputedCrossAttentionStats = field(
+        default_factory=RecomputedCrossAttentionStats
+    )
+    video_from_audio_recompute: RecomputedCrossAttentionStats = field(
+        default_factory=RecomputedCrossAttentionStats
+    )
+    audio_from_video_recompute: RecomputedCrossAttentionStats = field(
+        default_factory=RecomputedCrossAttentionStats
     )
     video_ffn: TiledStageStats = field(default_factory=TiledStageStats)
     audio_ffn: TiledStageStats = field(default_factory=TiledStageStats)

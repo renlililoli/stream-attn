@@ -5,6 +5,7 @@ from collections.abc import Iterable
 
 import torch
 
+from ..._single_flight import init_single_flight, single_flight
 from ...projection import RecomputedAttentionRunner
 from ..common.validation import require_distinct_storage, validate_hidden_host
 from .consumer import H3DeviceOutputConsumer
@@ -26,11 +27,12 @@ class H3RecomputeRunner:
         self,
         recomputed_attention: RecomputedAttentionRunner,
         *,
-        mlp_chunk_tokens: int,
+        ffn_tile_tokens: int,
         num_final_output_buffers: int = 2,
     ) -> None:
-        if mlp_chunk_tokens <= 0:
-            raise ValueError("mlp_chunk_tokens must be positive")
+        init_single_flight(self)
+        if ffn_tile_tokens <= 0:
+            raise ValueError("ffn_tile_tokens must be positive")
         if num_final_output_buffers not in {1, 2}:
             raise ValueError("num_final_output_buffers must be 1 or 2")
         if recomputed_attention.attention.backend != "triton":
@@ -38,27 +40,27 @@ class H3RecomputeRunner:
 
         self.recomputed_attention = recomputed_attention
         self.hidden_features = recomputed_attention.hidden_features
-        self.mlp_chunk_tokens = mlp_chunk_tokens
+        self.ffn_tile_tokens = ffn_tile_tokens
         attention_plan = recomputed_attention.plan
         hidden_staging_tokens = recomputed_attention.workspace.staging_tokens
         aux_workspace = estimate_h3_recompute_aux_workspace_bytes(
             hidden_features=self.hidden_features,
             dtype=attention_plan.dtype,
             hidden_staging_tokens=hidden_staging_tokens,
-            mlp_chunk_tokens=mlp_chunk_tokens,
+            ffn_tile_tokens=ffn_tile_tokens,
             num_final_output_buffers=num_final_output_buffers,
         )
         self.plan = H3RecomputePlan(
             q_chunk_tokens=attention_plan.q_chunk_tokens,
             kv_chunk_tokens=attention_plan.kv_chunk_tokens,
-            mlp_chunk_tokens=mlp_chunk_tokens,
+            ffn_tile_tokens=ffn_tile_tokens,
             hidden_staging_tokens=hidden_staging_tokens,
             estimated_workspace_bytes=attention_plan.estimated_workspace_bytes + aux_workspace,
         )
         self.plan.validate()
         self.workspace = H3BlockWorkspace(
             hidden_features=self.hidden_features,
-            mlp_chunk_tokens=mlp_chunk_tokens,
+            ffn_tile_tokens=ffn_tile_tokens,
             dtype=attention_plan.dtype,
             device=attention_plan.device,
             num_final_output_buffers=num_final_output_buffers,
@@ -74,6 +76,7 @@ class H3RecomputeRunner:
             name=name,
         )
 
+    @single_flight
     @torch.inference_mode()
     def run_block(
         self,
@@ -133,6 +136,7 @@ class H3RecomputeRunner:
         stats.recompute.raw_attention_roundtrip_bytes_avoided += 2 * attention_bytes
         return destination_hidden_host
 
+    @single_flight
     @torch.inference_mode()
     def run_blocks_(
         self,

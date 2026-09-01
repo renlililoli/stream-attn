@@ -5,6 +5,7 @@ from collections.abc import Iterable
 
 import torch
 
+from ..._single_flight import init_single_flight, single_flight
 from ...projection import ProjectedAttentionRunner, ProjectedCrossAttentionRunner
 from ..common import (
     AttentionOutputConsumer,
@@ -30,10 +31,11 @@ class LTX2MaterializedRunner:
         audio_from_video_attention: ProjectedCrossAttentionRunner,
         video_hidden_features: int,
         audio_hidden_features: int,
-        video_ffn_chunk_tokens: int,
-        audio_ffn_chunk_tokens: int,
+        video_ffn_tile_tokens: int,
+        audio_ffn_tile_tokens: int,
         num_output_buffers: int = 2,
     ) -> None:
+        init_single_flight(self)
         self.video_self_attention = video_self_attention
         self.audio_self_attention = audio_self_attention
         self.video_text_attention = video_text_attention
@@ -74,14 +76,14 @@ class LTX2MaterializedRunner:
         require_pinned = video_self_attention.pipeline_config.require_pinned_hidden
         self.video_ffn = TiledHostStageRunner(
             hidden_features=video_hidden_features,
-            chunk_tokens=video_ffn_chunk_tokens,
+            chunk_tokens=video_ffn_tile_tokens,
             dtype=video_plan.dtype,
             device=video_plan.device,
             require_pinned_hidden=require_pinned,
         )
         self.audio_ffn = TiledHostStageRunner(
             hidden_features=audio_hidden_features,
-            chunk_tokens=audio_ffn_chunk_tokens,
+            chunk_tokens=audio_ffn_tile_tokens,
             dtype=audio_plan.dtype,
             device=audio_plan.device,
             require_pinned_hidden=require_pinned,
@@ -159,10 +161,6 @@ class LTX2MaterializedRunner:
             text_hidden_host.shape[0],
         )
 
-    @staticmethod
-    def _qkv_bytes(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> int:
-        return sum(tensor.numel() * tensor.element_size() for tensor in (q, k, v))
-
     def _run_self_attention(
         self,
         runner: ProjectedAttentionRunner,
@@ -173,18 +171,22 @@ class LTX2MaterializedRunner:
         consumer: AttentionOutputConsumer,
         stats,
         softmax_scale: float | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> None:
+        started = time.perf_counter()
         with projection.context():
             q, k, v = runner.project_qkv_to_host(
                 hidden_host,
                 projection.project_qkv,
                 stats=stats,
             )
+        raw_output_bytes = q.numel() * q.element_size()
+        stats.raw_attention_roundtrip_bytes_avoided += 2 * raw_output_bytes
         consumer.reset(
             destination_hidden_host=hidden_host,
             residual_hidden_host=hidden_host,
             epilogue=ops.epilogue,
         )
+        attention_started = time.perf_counter()
         with ops.context():
             runner.attention.run_with_device_consumer(
                 q,
@@ -196,7 +198,8 @@ class LTX2MaterializedRunner:
                 softmax_scale=softmax_scale,
                 stats=stats.attention,
             )
-        return q, k, v
+        stats.attention_output_seconds += time.perf_counter() - attention_started
+        stats.wall_seconds += time.perf_counter() - started
 
     def _run_cross_attention(
         self,
@@ -210,7 +213,8 @@ class LTX2MaterializedRunner:
         consumer: AttentionOutputConsumer,
         stats,
         softmax_scale: float | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> None:
+        started = time.perf_counter()
         with projection.context():
             q, k, v = runner.project_to_host(
                 query_hidden_host,
@@ -219,11 +223,14 @@ class LTX2MaterializedRunner:
                 project_kv=projection.project_kv,
                 stats=stats,
             )
+        raw_output_bytes = q.numel() * q.element_size()
+        stats.raw_attention_roundtrip_bytes_avoided += 2 * raw_output_bytes
         consumer.reset(
             destination_hidden_host=query_hidden_host,
             residual_hidden_host=query_hidden_host,
             epilogue=ops.epilogue,
         )
+        attention_started = time.perf_counter()
         with ops.context():
             runner.attention.run_with_device_consumer(
                 q,
@@ -235,8 +242,10 @@ class LTX2MaterializedRunner:
                 softmax_scale=softmax_scale,
                 stats=stats.attention,
             )
-        return q, k, v
+        stats.attention_output_seconds += time.perf_counter() - attention_started
+        stats.wall_seconds += time.perf_counter() - started
 
+    @single_flight
     @torch.inference_mode()
     def run_block_(
         self,
@@ -259,56 +268,56 @@ class LTX2MaterializedRunner:
         )
         stats = LTX2DiTStats() if stats is None else stats
         stats.backend = self.video_self_attention.attention.backend
+        stats.qkv_storage_policy = "materialized"
         started = time.perf_counter()
 
-        qkv_sets = [
-            self._run_self_attention(
-                self.video_self_attention,
-                video_hidden_host,
-                sequence_meta.video_cu_seqlens,
-                projections.video_self_attention,
-                ops.video_self_attention,
-                self.video_consumer,
-                stats.video_self_attention,
-                self_softmax_scale,
-            ),
-            self._run_self_attention(
-                self.audio_self_attention,
-                audio_hidden_host,
-                sequence_meta.audio_cu_seqlens,
-                projections.audio_self_attention,
-                ops.audio_self_attention,
-                self.audio_consumer,
-                stats.audio_self_attention,
-                self_softmax_scale,
-            ),
-            self._run_cross_attention(
-                self.video_text_attention,
-                video_hidden_host,
-                text_hidden_host,
-                sequence_meta.video_cu_seqlens,
-                sequence_meta.text_cu_seqlens,
-                projections.video_text_attention,
-                ops.video_text_attention,
-                self.video_consumer,
-                stats.video_text_attention,
-                cross_softmax_scale,
-            ),
-            self._run_cross_attention(
-                self.audio_text_attention,
-                audio_hidden_host,
-                text_hidden_host,
-                sequence_meta.audio_cu_seqlens,
-                sequence_meta.text_cu_seqlens,
-                projections.audio_text_attention,
-                ops.audio_text_attention,
-                self.audio_consumer,
-                stats.audio_text_attention,
-                cross_softmax_scale,
-            ),
-        ]
+        self._run_self_attention(
+            self.video_self_attention,
+            video_hidden_host,
+            sequence_meta.video_cu_seqlens,
+            projections.video_self_attention,
+            ops.video_self_attention,
+            self.video_consumer,
+            stats.video_self_attention,
+            self_softmax_scale,
+        )
+        self._run_self_attention(
+            self.audio_self_attention,
+            audio_hidden_host,
+            sequence_meta.audio_cu_seqlens,
+            projections.audio_self_attention,
+            ops.audio_self_attention,
+            self.audio_consumer,
+            stats.audio_self_attention,
+            self_softmax_scale,
+        )
+        self._run_cross_attention(
+            self.video_text_attention,
+            video_hidden_host,
+            text_hidden_host,
+            sequence_meta.video_cu_seqlens,
+            sequence_meta.text_cu_seqlens,
+            projections.video_text_attention,
+            ops.video_text_attention,
+            self.video_consumer,
+            stats.video_text_attention,
+            cross_softmax_scale,
+        )
+        self._run_cross_attention(
+            self.audio_text_attention,
+            audio_hidden_host,
+            text_hidden_host,
+            sequence_meta.audio_cu_seqlens,
+            sequence_meta.text_cu_seqlens,
+            projections.audio_text_attention,
+            ops.audio_text_attention,
+            self.audio_consumer,
+            stats.audio_text_attention,
+            cross_softmax_scale,
+        )
 
         # Materialize both directions from the same pre-cross host snapshots.
+        video_projection_before = stats.video_from_audio_attention.projection_seconds
         with projections.video_from_audio_attention.context():
             video_q, audio_k, audio_v = self.video_from_audio_attention.project_to_host(
                 video_hidden_host,
@@ -317,6 +326,10 @@ class LTX2MaterializedRunner:
                 project_kv=projections.video_from_audio_attention.project_kv,
                 stats=stats.video_from_audio_attention,
             )
+        video_projection_seconds = (
+            stats.video_from_audio_attention.projection_seconds - video_projection_before
+        )
+        audio_projection_before = stats.audio_from_video_attention.projection_seconds
         with projections.audio_from_video_attention.context():
             audio_q, video_k, video_v = self.audio_from_video_attention.project_to_host(
                 audio_hidden_host,
@@ -325,13 +338,25 @@ class LTX2MaterializedRunner:
                 project_kv=projections.audio_from_video_attention.project_kv,
                 stats=stats.audio_from_video_attention,
             )
-        qkv_sets.extend([(video_q, audio_k, audio_v), (audio_q, video_k, video_v)])
+
+        audio_projection_seconds = (
+            stats.audio_from_video_attention.projection_seconds - audio_projection_before
+        )
+        video_raw_output_bytes = video_q.numel() * video_q.element_size()
+        audio_raw_output_bytes = audio_q.numel() * audio_q.element_size()
+        stats.video_from_audio_attention.raw_attention_roundtrip_bytes_avoided += (
+            2 * video_raw_output_bytes
+        )
+        stats.audio_from_video_attention.raw_attention_roundtrip_bytes_avoided += (
+            2 * audio_raw_output_bytes
+        )
 
         self.video_consumer.reset(
             destination_hidden_host=video_hidden_host,
             residual_hidden_host=video_hidden_host,
             epilogue=ops.video_from_audio_attention.epilogue,
         )
+        video_attention_started = time.perf_counter()
         with ops.video_from_audio_attention.context():
             self.video_from_audio_attention.attention.run_with_device_consumer(
                 video_q,
@@ -343,11 +368,17 @@ class LTX2MaterializedRunner:
                 softmax_scale=cross_softmax_scale,
                 stats=stats.video_from_audio_attention.attention,
             )
+        video_attention_seconds = time.perf_counter() - video_attention_started
+        stats.video_from_audio_attention.attention_output_seconds += video_attention_seconds
+        stats.video_from_audio_attention.wall_seconds += (
+            video_projection_seconds + video_attention_seconds
+        )
         self.audio_consumer.reset(
             destination_hidden_host=audio_hidden_host,
             residual_hidden_host=audio_hidden_host,
             epilogue=ops.audio_from_video_attention.epilogue,
         )
+        audio_attention_started = time.perf_counter()
         with ops.audio_from_video_attention.context():
             self.audio_from_video_attention.attention.run_with_device_consumer(
                 audio_q,
@@ -359,6 +390,11 @@ class LTX2MaterializedRunner:
                 softmax_scale=cross_softmax_scale,
                 stats=stats.audio_from_video_attention.attention,
             )
+        audio_attention_seconds = time.perf_counter() - audio_attention_started
+        stats.audio_from_video_attention.attention_output_seconds += audio_attention_seconds
+        stats.audio_from_video_attention.wall_seconds += (
+            audio_projection_seconds + audio_attention_seconds
+        )
 
         with ops.video_ffn.context():
             self.video_ffn.run(
@@ -375,19 +411,29 @@ class LTX2MaterializedRunner:
                 stats=stats.audio_ffn,
             )
 
+        runners = (
+            self.video_self_attention,
+            self.audio_self_attention,
+            self.video_text_attention,
+            self.audio_text_attention,
+            self.video_from_audio_attention,
+            self.audio_from_video_attention,
+        )
+        arenas = {id(runner.arena): runner.arena for runner in runners}
         stats.qkv_host_bytes_peak = max(
             stats.qkv_host_bytes_peak,
-            sum(self._qkv_bytes(*qkv) for qkv in qkv_sets),
+            sum(arena.allocated_bytes for arena in arenas.values()),
         )
         stats.hidden_host_bytes_peak = max(
             stats.hidden_host_bytes_peak,
-            (video_hidden_host.numel() + audio_hidden_host.numel())
+            (video_hidden_host.numel() + audio_hidden_host.numel() + text_hidden_host.numel())
             * video_hidden_host.element_size(),
         )
         stats.blocks += 1
         stats.wall_seconds += time.perf_counter() - started
         return video_hidden_host, audio_hidden_host
 
+    @single_flight
     @torch.inference_mode()
     def run_blocks_(
         self,

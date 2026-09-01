@@ -38,8 +38,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--tokens", type=int, default=262_720)
     parser.add_argument("--q-chunk-tokens", type=int, default=16_384)
     parser.add_argument("--kv-chunk-tokens", type=int, default=4_096)
-    parser.add_argument("--qkv-tile-tokens", type=int, default=4_096)
-    parser.add_argument("--mlp-tile-tokens", type=int, default=4_096)
+    parser.add_argument("--projection-tile-tokens", type=int, default=4_096)
+    parser.add_argument("--ffn-tile-tokens", type=int, default=4_096)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--validation-tokens", type=int, default=16)
@@ -81,10 +81,10 @@ def _mode_command(args: argparse.Namespace, mode: str, output: Path) -> list[str
         str(args.q_chunk_tokens),
         "--kv-chunk-tokens",
         str(args.kv_chunk_tokens),
-        "--qkv-tile-tokens",
-        str(args.qkv_tile_tokens),
-        "--mlp-tile-tokens",
-        str(args.mlp_tile_tokens),
+        "--projection-tile-tokens",
+        str(args.projection_tile_tokens),
+        "--ffn-tile-tokens",
+        str(args.ffn_tile_tokens),
         "--warmup",
         str(args.warmup),
         "--repeats",
@@ -199,8 +199,8 @@ def _run_mode(args: argparse.Namespace) -> None:
             min(
                 args.q_chunk_tokens,
                 args.kv_chunk_tokens,
-                args.qkv_tile_tokens,
-                args.mlp_tile_tokens,
+                args.projection_tile_tokens,
+                args.ffn_tile_tokens,
                 args.validation_tokens,
             )
             <= 0
@@ -229,13 +229,6 @@ def _run_mode(args: argparse.Namespace) -> None:
         from comfy import ops as comfy_ops
 
         from seqattn_core import (
-            H3BlockOps,
-            H3DiTStats,
-            H3MaterializedProjection,
-            H3MaterializedRunner,
-            H3RecomputeProjection,
-            H3RecomputeRunner,
-            H3SequenceMeta,
             ProjectedAttentionRunner,
             ProjectionPipelineConfig,
             RecomputedAttentionRunner,
@@ -243,6 +236,15 @@ def _run_mode(args: argparse.Namespace) -> None:
             build_plan,
         )
         from seqattn_core.benchmarking.common import ProcessMemorySampler
+        from seqattn_core.dit.minimax_h3 import (
+            H3BlockOps,
+            H3DiTStats,
+            H3MaterializedProjection,
+            H3MaterializedRunner,
+            H3RecomputeProjection,
+            H3RecomputeRunner,
+            H3SequenceMeta,
+        )
 
         if not torch.cuda.is_available():
             raise RuntimeError("a visible CUDA GPU is required")
@@ -459,14 +461,14 @@ def _run_mode(args: argparse.Namespace) -> None:
                 residual = residual_host[start:stop].to(device, non_blocking=True)
                 return residual.add_(update)
 
-        def mlp(post_attention, start, stop):
+        def ffn(post_attention, start, stop):
             del start, stop
-            with torch.cuda.nvtx.range("seqattn:h3_mlp") if args.nvtx else nullcontext():
+            with torch.cuda.nvtx.range("seqattn:h3_ffn") if args.nvtx else nullcontext():
                 return post_attention.add_(block.mlp(block.norm2(post_attention)))
 
         ops = H3BlockOps(
             attention_epilogue=attention_epilogue,
-            mlp=mlp,
+            ffn=ffn,
             consumer_lease=consumer_lease,
         )
         if args.mode == "materialized":
@@ -474,7 +476,7 @@ def _run_mode(args: argparse.Namespace) -> None:
                 attention_plan,
                 attention_config,
                 ProjectionPipelineConfig(
-                    projection_chunk_tokens=args.qkv_tile_tokens,
+                    projection_tile_tokens=args.projection_tile_tokens,
                     num_projection_buffers=2,
                     enable_nvtx=args.nvtx,
                 ),
@@ -482,7 +484,7 @@ def _run_mode(args: argparse.Namespace) -> None:
             runner = H3MaterializedRunner(
                 projected_attention,
                 hidden_features=hidden_features,
-                mlp_chunk_tokens=args.mlp_tile_tokens,
+                ffn_tile_tokens=args.ffn_tile_tokens,
             )
             projection = H3MaterializedProjection(project_qkv, weight_lease=qkv_lease)
 
@@ -512,7 +514,7 @@ def _run_mode(args: argparse.Namespace) -> None:
             )
             runner = H3RecomputeRunner(
                 recomputed_attention,
-                mlp_chunk_tokens=args.mlp_tile_tokens,
+                ffn_tile_tokens=args.ffn_tile_tokens,
             )
             projection = H3RecomputeProjection(
                 project_q,

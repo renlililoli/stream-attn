@@ -163,16 +163,17 @@ projection_tile_tokens = 2048
 ffn_tile_tokens = 2048
 
 [ltx2]
+execution_mode = "materialized" # or "recompute"
 projection_tile_tokens = 2048
 video_ffn_tile_tokens = 2048
 audio_ffn_tile_tokens = 2048
 ```
 
-H3 and Wan expose an execution policy because both materialized and recompute
-runners exist. LTX2 is materialized-only and rejects `execution_mode` rather
-than silently ignoring it. Its single projection tile applies to all six
-self/text/audio-video projection runners; video and audio retain separate FFN
-tiles because their stream dimensions differ.
+H3, Wan, and LTX2 use the same `execution_mode`, `projection_tile_tokens`,
+and FFN tile naming rules. LTX2 keeps separate video/audio FFN tiles because
+the stream dimensions differ. Its materialized mode shares two QKV arenas,
+one for video-query stages and one for audio-query stages; recompute mode uses
+video/audio hidden-state ping-pong buffers and no sequence-sized host Q/K/V.
 
 The H3 `4096` values are measured defaults for the documented RTX 5090
 integration. Wan and LTX2 use conservative `2048` starting values and require
@@ -279,9 +280,9 @@ APIs. See `packages/seqattn-multigpu/README.md` for installation and usage.
 - `seqattn_core.dit.wan` provides fixed-order self-attention, text
   cross-attention, and FFN materialized/recompute block policies plus
   `WanConfig`.
-- `seqattn_core.dit.ltx2` provides materialized video/audio self-attention,
-  text cross-attention, snapshot-safe bidirectional audio/video cross-attention,
-  separate stream FFNs, and materialized-only `LTX2Config`.
+- `seqattn_core.dit.ltx2` provides materialized and recompute video/audio
+  self-attention, text cross-attention, snapshot-safe bidirectional audio/video
+  cross-attention, separate stream FFNs, and `LTX2Config`.
 - `H3MaterializedRunner` and `H3RecomputeRunner` keep the MiniMax-H3
   block policies with one-hidden in-place and two-hidden ping-pong contracts,
   respectively.

@@ -16,17 +16,27 @@ from seqattn_core.benchmarking.paged import main as paged_benchmark_main
 from seqattn_core.benchmarking.projection import main as projection_benchmark_main
 from seqattn_core.benchmarking.streaming import main as streaming_benchmark_main
 from seqattn_core.dit import minimax_h3
-from seqattn_core.dit.ltx2 import LTX2Config, LTX2MaterializedRunner, load_ltx2_config
+from seqattn_core.dit.ltx2 import (
+    LTX2AttentionPlans,
+    LTX2Config,
+    LTX2MaterializedRunner,
+    LTX2RecomputeRunner,
+    build_ltx2_runner,
+    load_ltx2_config,
+)
 from seqattn_core.dit.minimax_h3 import (
     H3Config,
     H3MaterializedRunner,
     H3RecomputeRunner,
+    build_h3_runner,
     load_h3_config,
 )
 from seqattn_core.dit.wan import (
+    WanAttentionPlans,
     WanConfig,
     WanMaterializedRunner,
     WanRecomputeRunner,
+    build_wan_runner,
     load_wan_config,
 )
 from seqattn_core.paged import MemoryPageSource as PagedMemoryPageSource
@@ -55,12 +65,18 @@ def test_subpackages_export_the_canonical_implementations():
     assert WanMaterializedRunner.__name__ == "WanMaterializedRunner"
     assert WanRecomputeRunner.__name__ == "WanRecomputeRunner"
     assert LTX2MaterializedRunner.__name__ == "LTX2MaterializedRunner"
+    assert LTX2RecomputeRunner.__name__ == "LTX2RecomputeRunner"
+    assert LTX2AttentionPlans.__name__ == "LTX2AttentionPlans"
+    assert WanAttentionPlans.__name__ == "WanAttentionPlans"
     assert H3Config.__name__ == "H3Config"
     assert WanConfig.__name__ == "WanConfig"
     assert LTX2Config.__name__ == "LTX2Config"
     assert callable(load_h3_config)
     assert callable(load_wan_config)
     assert callable(load_ltx2_config)
+    assert callable(build_h3_runner)
+    assert callable(build_wan_runner)
+    assert callable(build_ltx2_runner)
     assert not hasattr(minimax_h3, "H3TileConfig")
     assert not hasattr(minimax_h3, "load_h3_tile_config")
     for name in (
@@ -70,6 +86,7 @@ def test_subpackages_export_the_canonical_implementations():
         "H3RecomputeRunner",
         "LTX2Config",
         "LTX2MaterializedRunner",
+        "LTX2RecomputeRunner",
         "WanConfig",
         "WanMaterializedRunner",
         "WanRecomputeRunner",

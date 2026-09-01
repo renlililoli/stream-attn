@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import fields
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 
 try:
     import tomllib
@@ -11,6 +12,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
 ExecutionMode = Literal["materialized", "recompute"]
+ConfigT = TypeVar("ConfigT")
 
 
 def default_config_path() -> Path:
@@ -77,11 +79,45 @@ def reject_unknown_keys(
         raise ValueError(f"seqattn config [{table_name}] has unknown keys: {keys}")
 
 
+def validate_model_config(config: object, table_name: str) -> None:
+    for field in fields(config):
+        value = getattr(config, field.name)
+        if field.name == "execution_mode":
+            execution_mode({field.name: value}, table_name)
+        else:
+            positive_int({field.name: value}, table_name, field.name, field.default)
+
+
+def load_model_config(
+    config_type: type[ConfigT],
+    table_name: str,
+    path: str | os.PathLike[str] | None = None,
+) -> ConfigT:
+    section = load_config_table(table_name, path)
+    config_fields = fields(config_type)
+    allowed = {field.name for field in config_fields}
+    reject_unknown_keys(section, table_name, allowed)
+    values: dict[str, object] = {}
+    for field in config_fields:
+        if field.name == "execution_mode":
+            values[field.name] = execution_mode(section, table_name, field.default)
+        else:
+            values[field.name] = positive_int(
+                section,
+                table_name,
+                field.name,
+                field.default,
+            )
+    return config_type(**values)
+
+
 __all__ = [
     "ExecutionMode",
     "default_config_path",
     "execution_mode",
     "load_config_table",
+    "load_model_config",
     "positive_int",
     "reject_unknown_keys",
+    "validate_model_config",
 ]

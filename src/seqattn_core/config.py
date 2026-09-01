@@ -137,12 +137,12 @@ class PagedAttentionConfig:
 class ProjectionPipelineConfig:
     """Execution policy for CPU-hidden -> QKV -> attention -> output projection.
 
-    Exact self-attention has a global K/V readiness barrier.  Projection chunks
+    Exact self-attention has a global K/V readiness barrier. Projection tiles
     are pipelined internally, then attention and output projection run as a
     second pipeline without materializing raw attention output on the CPU.
     """
 
-    projection_chunk_tokens: int = 2048
+    projection_tile_tokens: int = 2048
     num_projection_buffers: int = 2
     require_pinned_hidden: bool = True
     pin_qkv: bool = True
@@ -150,7 +150,7 @@ class ProjectionPipelineConfig:
     enable_nvtx: bool = False
 
     def validate(self) -> None:
-        if self.projection_chunk_tokens <= 0:
-            raise ValueError("projection_chunk_tokens must be positive")
+        if self.projection_tile_tokens <= 0:
+            raise ValueError("projection_tile_tokens must be positive")
         if self.num_projection_buffers not in {1, 2, 3}:
             raise ValueError("num_projection_buffers must be 1, 2, or 3")

@@ -67,6 +67,61 @@ class AttentionPlan:
         return self.q_heads // self.kv_heads
 
 
+def resolve_runtime_config(
+    plan: AttentionPlan,
+    config: StreamingAttentionConfig | None = None,
+) -> StreamingAttentionConfig:
+    """Bind runtime-only options to an already resolved attention plan."""
+
+    if config is None:
+        config = StreamingAttentionConfig(
+            workspace_budget_bytes=plan.workspace_budget_bytes,
+            num_kv_buffers=plan.num_kv_buffers,
+            num_output_buffers=plan.num_output_buffers,
+            output_mode=plan.output_mode,
+        )
+    config.validate()
+    required = {
+        "num_kv_buffers": plan.num_kv_buffers,
+        "num_output_buffers": plan.num_output_buffers,
+        "output_mode": plan.output_mode,
+        "workspace_budget_bytes": plan.workspace_budget_bytes,
+    }
+    structural = {
+        "q_chunk_tokens": plan.q_chunk_tokens,
+        "kv_chunk_tokens": plan.kv_chunk_tokens,
+        "block_m": plan.block_m,
+        "block_n": plan.block_n,
+        "num_warps": plan.num_warps,
+        "num_stages": plan.num_stages,
+    }
+    for name, expected in required.items():
+        if getattr(config, name) != expected:
+            raise ValueError(f"runtime config {name} does not match the attention plan")
+    for name in ("block_m", "block_n", "num_warps", "num_stages"):
+        value = getattr(config, name)
+        if value is not None and value != structural[name]:
+            raise ValueError(f"runtime config {name} does not match the attention plan")
+
+    requested_q = config.q_chunk_tokens
+    if requested_q is not None:
+        normalized_q = min(requested_q, plan.max_q_tokens)
+        normalized_q = max(
+            min(plan.block_m, plan.max_q_tokens),
+            _align_down(normalized_q, plan.block_m),
+        )
+        if normalized_q != plan.q_chunk_tokens:
+            raise ValueError("runtime config q_chunk_tokens does not match the attention plan")
+    requested_kv = config.kv_chunk_tokens
+    if requested_kv is not None:
+        normalized_kv = min(requested_kv, plan.max_kv_tokens)
+        normalized_kv = max(plan.block_n, _align_down(normalized_kv, plan.block_n))
+        normalized_kv = min(normalized_kv, plan.max_kv_tokens)
+        if normalized_kv != plan.kv_chunk_tokens:
+            raise ValueError("runtime config kv_chunk_tokens does not match the attention plan")
+    return replace(config, **structural)
+
+
 def estimate_workspace_bytes(
     *,
     q_tokens: int,

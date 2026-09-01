@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 
 import torch
 
+from .._single_flight import init_single_flight, single_flight
 from ..config import StreamingAttentionConfig
-from ..planner import AttentionPlan, build_plan
+from ..planner import AttentionPlan
 from ..stats import RecomputedCrossAttentionStats
 from ..streaming import StreamingAttentionRunner
 from ..streaming.tile_source import RecomputedCrossQKVTileSource
@@ -27,29 +28,16 @@ class RecomputedCrossAttentionRunner:
         require_pinned_hidden: bool = True,
         enable_nvtx: bool = False,
     ) -> None:
+        init_single_flight(self)
         if query_hidden_features <= 0 or context_hidden_features <= 0:
             raise ValueError("query and context hidden feature sizes must be positive")
-        self.attention_config = (
-            StreamingAttentionConfig(output_mode="device_consumer")
-            if attention_config is None
-            else attention_config
-        )
-        self.attention_config.validate()
-        if self.attention_config.output_mode != "device_consumer":
+        if plan.output_mode != "device_consumer":
             raise ValueError("recomputed cross-attention requires device_consumer output mode")
-        self.plan = build_plan(
-            q_heads=plan.q_heads,
-            kv_heads=plan.kv_heads,
-            head_dim=plan.head_dim,
-            dtype=plan.dtype,
-            device=plan.device,
-            max_q_tokens=plan.max_q_tokens,
-            max_kv_tokens=plan.max_kv_tokens,
-            config=self.attention_config,
-        )
+        self.plan = plan
         if self.plan.device.type != "cuda":
             raise ValueError("recomputed cross-attention requires a CUDA device")
-        self.attention = StreamingAttentionRunner(self.plan, self.attention_config)
+        self.attention = StreamingAttentionRunner(self.plan, attention_config)
+        self.attention_config = self.attention.config
         if self.attention.backend != "triton":
             raise RuntimeError("Triton is not available for recomputed cross-attention")
         self.query_hidden_features = query_hidden_features
@@ -73,7 +61,13 @@ class RecomputedCrossAttentionRunner:
     def _range(self, name: str):
         return torch.cuda.nvtx.range(name) if self.enable_nvtx else nullcontext()
 
-    def _validate_hidden(
+    def _recover_after_failure(self) -> None:
+        with suppress(Exception):
+            torch.cuda.synchronize(self.plan.device)
+        self.workspace.query.hidden_has_pending_compute = False
+        self.workspace.context.hidden_has_pending_compute = False
+
+    def validate_hidden(
         self,
         hidden_host: torch.Tensor,
         *,
@@ -94,6 +88,25 @@ class RecomputedCrossAttentionRunner:
         if self.require_pinned_hidden and not hidden_host.is_pinned():
             raise ValueError(f"asynchronous recompute requires pinned {name}")
 
+    def validate_inputs(
+        self,
+        query_hidden_host: torch.Tensor,
+        context_hidden_host: torch.Tensor,
+    ) -> None:
+        self.validate_hidden(
+            query_hidden_host,
+            hidden_features=self.query_hidden_features,
+            max_tokens=self.plan.max_q_tokens,
+            name="query_hidden_host",
+        )
+        self.validate_hidden(
+            context_hidden_host,
+            hidden_features=self.context_hidden_features,
+            max_tokens=self.plan.max_kv_tokens,
+            name="context_hidden_host",
+        )
+
+    @single_flight
     @torch.inference_mode()
     def run_with_device_consumer(
         self,
@@ -109,18 +122,7 @@ class RecomputedCrossAttentionRunner:
         causal: bool = False,
         stats: RecomputedCrossAttentionStats | None = None,
     ) -> None:
-        self._validate_hidden(
-            query_hidden_host,
-            hidden_features=self.query_hidden_features,
-            max_tokens=self.plan.max_q_tokens,
-            name="query_hidden_host",
-        )
-        self._validate_hidden(
-            context_hidden_host,
-            hidden_features=self.context_hidden_features,
-            max_tokens=self.plan.max_kv_tokens,
-            name="context_hidden_host",
-        )
+        self.validate_inputs(query_hidden_host, context_hidden_host)
         stats = RecomputedCrossAttentionStats() if stats is None else stats
         stats.backend = self.attention.backend
         stats.qkv_host_bytes = 0
@@ -141,18 +143,22 @@ class RecomputedCrossAttentionRunner:
             enable_nvtx=self.enable_nvtx,
         )
         started = time.perf_counter()
-        with self._range("seqattn:recomputed_cross_attention"):
-            self.attention._run_with_qkv_source(
-                source,
-                query_hidden_host.shape[0],
-                context_hidden_host.shape[0],
-                cu_seqlens_q,
-                cu_seqlens_kv,
-                output_consumer=output_consumer,
-                softmax_scale=softmax_scale,
-                causal=causal,
-                stats=stats.attention,
-            )
+        try:
+            with self._range("seqattn:recomputed_cross_attention"):
+                self.attention.run_with_qkv_source(
+                    source,
+                    query_hidden_host.shape[0],
+                    context_hidden_host.shape[0],
+                    cu_seqlens_q,
+                    cu_seqlens_kv,
+                    output_consumer=output_consumer,
+                    softmax_scale=softmax_scale,
+                    causal=causal,
+                    stats=stats.attention,
+                )
+        except Exception:
+            self._recover_after_failure()
+            raise
         stats.wall_seconds += time.perf_counter() - started
 
 

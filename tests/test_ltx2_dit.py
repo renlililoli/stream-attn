@@ -7,6 +7,8 @@ from seqattn_core import (
     ProjectedAttentionRunner,
     ProjectedCrossAttentionRunner,
     ProjectionPipelineConfig,
+    RecomputedAttentionRunner,
+    RecomputedCrossAttentionRunner,
     StreamingAttentionConfig,
     build_plan,
 )
@@ -16,10 +18,17 @@ from seqattn_core.dit.ltx2 import (
     LTX2BlockOps,
     LTX2MaterializedProjections,
     LTX2MaterializedRunner,
+    LTX2RecomputeProjections,
+    LTX2RecomputeRunner,
     LTX2SequenceMeta,
 )
 from seqattn_core.kernels import triton_is_available
-from seqattn_core.projection import CrossProjection, SelfProjection
+from seqattn_core.projection import (
+    CrossProjection,
+    CrossRecomputeProjection,
+    SelfProjection,
+    SelfRecomputeProjection,
+)
 
 
 def _attention(q, k, v, q_bounds, k_bounds, scale):
@@ -88,7 +97,7 @@ def _ffn(hidden, input_linear, output_linear):
     return hidden + output_linear(torch.nn.functional.silu(gate) * up)
 
 
-def _reference(video, audio, text, modules, bounds, shape):
+def _reference_post_text(video, audio, text, modules, bounds, shape):
     heads, _, dim = shape
     video_bounds, audio_bounds, text_bounds = bounds
     video = _self_stage(
@@ -127,8 +136,14 @@ def _reference(video, audio, text, modules, bounds, shape):
         text_bounds,
         shape,
     )
-    video_snapshot = video
-    audio_snapshot = audio
+    return video, audio
+
+
+def _reference(video, audio, text, modules, bounds, shape):
+    video_bounds, audio_bounds, _ = bounds
+    video_snapshot, audio_snapshot = _reference_post_text(
+        video, audio, text, modules, bounds, shape
+    )
     video = _cross_stage(
         video_snapshot,
         audio_snapshot,
@@ -166,6 +181,16 @@ def _config():
     )
 
 
+def _runtime_config(plan):
+    return StreamingAttentionConfig(
+        backend="triton",
+        workspace_budget_bytes=plan.workspace_budget_bytes,
+        num_kv_buffers=plan.num_kv_buffers,
+        num_output_buffers=plan.num_output_buffers,
+        output_mode=plan.output_mode,
+    )
+
+
 def _self_runner(tokens, heads, dim, dtype):
     config = _config()
     plan = build_plan(
@@ -180,8 +205,56 @@ def _self_runner(tokens, heads, dim, dtype):
     )
     return ProjectedAttentionRunner(
         plan,
-        config,
-        ProjectionPipelineConfig(projection_chunk_tokens=13),
+        _runtime_config(plan),
+        ProjectionPipelineConfig(projection_tile_tokens=13),
+    )
+
+
+def _recompute_self_runner(tokens, hidden_features, heads, dim, dtype):
+    config = _config()
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=dim,
+        dtype=dtype,
+        device="cuda",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=config,
+    )
+    return RecomputedAttentionRunner(
+        plan,
+        hidden_features=hidden_features,
+        attention_config=_runtime_config(plan),
+    )
+
+
+def _recompute_cross_runner(
+    q_tokens,
+    kv_tokens,
+    query_features,
+    context_features,
+    heads,
+    kv_heads,
+    dim,
+    dtype,
+):
+    config = _config()
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=kv_heads,
+        head_dim=dim,
+        dtype=dtype,
+        device="cuda",
+        max_q_tokens=q_tokens,
+        max_kv_tokens=kv_tokens,
+        config=config,
+    )
+    return RecomputedCrossAttentionRunner(
+        plan,
+        query_hidden_features=query_features,
+        context_hidden_features=context_features,
+        attention_config=_runtime_config(plan),
     )
 
 
@@ -199,8 +272,8 @@ def _cross_runner(q_tokens, kv_tokens, heads, kv_heads, dim, dtype):
     )
     return ProjectedCrossAttentionRunner(
         plan,
-        config,
-        ProjectionPipelineConfig(projection_chunk_tokens=13),
+        _runtime_config(plan),
+        ProjectionPipelineConfig(projection_tile_tokens=13),
     )
 
 
@@ -276,8 +349,8 @@ def test_ltx2_materialized_block_matches_reference_and_preserves_cross_snapshot(
         ),
         video_hidden_features=video_features,
         audio_hidden_features=audio_features,
-        video_ffn_chunk_tokens=17,
-        audio_ffn_chunk_tokens=13,
+        video_ffn_tile_tokens=17,
+        audio_ffn_tile_tokens=13,
     )
     captures = {}
 
@@ -380,3 +453,278 @@ def test_ltx2_materialized_block_matches_reference_and_preserves_cross_snapshot(
         atol=0,
         rtol=0,
     )
+
+
+def _captured_snapshot(captures, name, tokens):
+    result = None
+    covered = torch.zeros(tokens, dtype=torch.bool)
+    for start, stop, tile in captures[name]:
+        if result is None:
+            result = torch.empty((tokens, tile.shape[1]), dtype=tile.dtype)
+        overlap = covered[start:stop]
+        if overlap.any():
+            torch.testing.assert_close(result[start:stop][overlap], tile[overlap], atol=0, rtol=0)
+        result[start:stop].copy_(tile)
+        covered[start:stop] = True
+    assert result is not None and covered.all()
+    return result
+
+
+@pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
+@torch.inference_mode()
+def test_ltx2_recompute_matches_reference_preserves_snapshots_and_ping_pongs():
+    torch.manual_seed(709)
+    dtype = torch.bfloat16
+    device = torch.device("cuda")
+    video_tokens, audio_tokens, text_tokens = 43, 29, 19
+    video_features, audio_features, text_features = 32, 24, 20
+    heads, kv_heads, dim = 2, 1, 16
+    video_bounds = [0, 17, video_tokens]
+    audio_bounds = [0, 11, audio_tokens]
+    text_bounds = [0, 7, text_tokens]
+    bounds = (video_bounds, audio_bounds, text_bounds)
+    shape = (heads, kv_heads, dim)
+    video_initial = torch.randn(video_tokens, video_features, dtype=dtype, pin_memory=True)
+    audio_initial = torch.randn(audio_tokens, audio_features, dtype=dtype, pin_memory=True)
+    text = torch.randn(text_tokens, text_features, dtype=dtype, pin_memory=True)
+    modules = _build_modules(
+        video_features,
+        audio_features,
+        text_features,
+        heads,
+        kv_heads,
+        dim,
+        dtype,
+    )
+    runner = LTX2RecomputeRunner(
+        video_self_attention=_recompute_self_runner(
+            video_tokens, video_features, heads, dim, dtype
+        ),
+        audio_self_attention=_recompute_self_runner(
+            audio_tokens, audio_features, heads, dim, dtype
+        ),
+        video_text_attention=_recompute_cross_runner(
+            video_tokens,
+            text_tokens,
+            video_features,
+            text_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
+        ),
+        audio_text_attention=_recompute_cross_runner(
+            audio_tokens,
+            text_tokens,
+            audio_features,
+            text_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
+        ),
+        video_from_audio_attention=_recompute_cross_runner(
+            video_tokens,
+            audio_tokens,
+            video_features,
+            audio_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
+        ),
+        audio_from_video_attention=_recompute_cross_runner(
+            audio_tokens,
+            video_tokens,
+            audio_features,
+            video_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
+        ),
+        video_ffn_tile_tokens=17,
+        audio_ffn_tile_tokens=13,
+    )
+    captures = {}
+
+    def self_projection(name):
+        linear = modules[f"{name}_self_qkv"]
+
+        def project_q(tile, destination, start, stop):
+            del start, stop
+            qkv = linear(tile).view(-1, 3, heads, dim)
+            destination.copy_(qkv[:, 0])
+
+        def project_kv(tile, destination_k, destination_v, start, stop):
+            del start, stop
+            qkv = linear(tile).view(-1, 3, heads, dim)
+            destination_k.copy_(qkv[:, 1])
+            destination_v.copy_(qkv[:, 2])
+
+        return SelfRecomputeProjection(project_q, project_kv)
+
+    def cross_projection(prefix, query_capture=None, context_capture=None):
+        q_linear = modules[f"{prefix}_q"]
+        kv_linear = modules[f"{prefix}_kv"]
+
+        def project_q(tile, destination, start, stop):
+            if query_capture is not None:
+                _capture(captures, query_capture, tile, start, stop)
+            destination.copy_(q_linear(tile).view(-1, heads, dim))
+
+        def project_kv(tile, destination_k, destination_v, start, stop):
+            if context_capture is not None:
+                _capture(captures, context_capture, tile, start, stop)
+            kv = kv_linear(tile).view(-1, 2, kv_heads, dim)
+            destination_k.copy_(kv[:, 0])
+            destination_v.copy_(kv[:, 1])
+
+        return CrossRecomputeProjection(project_q, project_kv)
+
+    def attention_ops(output_name):
+        output = modules[output_name]
+
+        def epilogue(attention, residual_host, start, stop):
+            return output(attention) + residual_host[start:stop].to(device, non_blocking=True)
+
+        return LTX2AttentionOps(epilogue)
+
+    def ffn_op(prefix):
+        input_linear = modules[f"{prefix}_ffn_in"]
+        output_linear = modules[f"{prefix}_ffn_out"]
+
+        def operation(tile, start, stop):
+            del start, stop
+            gate, up = input_linear(tile).chunk(2, dim=-1)
+            return tile + output_linear(torch.nn.functional.silu(gate) * up)
+
+        return TiledStageOp(operation)
+
+    projections = LTX2RecomputeProjections(
+        self_projection("video"),
+        self_projection("audio"),
+        cross_projection("video_text"),
+        cross_projection("audio_text"),
+        cross_projection("video_audio", "video_as_query", "audio_as_context"),
+        cross_projection("audio_video", "audio_as_query", "video_as_context"),
+    )
+    ops = LTX2BlockOps(
+        attention_ops("video_self_out"),
+        attention_ops("audio_self_out"),
+        attention_ops("video_text_out"),
+        attention_ops("audio_text_out"),
+        attention_ops("video_audio_out"),
+        attention_ops("audio_video_out"),
+        ffn_op("video"),
+        ffn_op("audio"),
+    )
+    meta = LTX2SequenceMeta(
+        torch.tensor(video_bounds, dtype=torch.int32),
+        torch.tensor(audio_bounds, dtype=torch.int32),
+        torch.tensor(text_bounds, dtype=torch.int32),
+    )
+    video_source = video_initial.clone().pin_memory()
+    audio_source = audio_initial.clone().pin_memory()
+    video_destination = torch.empty_like(video_source, pin_memory=True)
+    audio_destination = torch.empty_like(audio_source, pin_memory=True)
+    result_video, result_audio = runner.run_block(
+        video_source,
+        video_destination,
+        audio_source,
+        audio_destination,
+        text,
+        meta,
+        projections,
+        ops,
+    )
+    post_text_video, post_text_audio = _reference_post_text(
+        video_initial.to(device),
+        audio_initial.to(device),
+        text.to(device),
+        modules,
+        bounds,
+        shape,
+    )
+    expected_video, expected_audio = _reference(
+        video_initial.to(device),
+        audio_initial.to(device),
+        text.to(device),
+        modules,
+        bounds,
+        shape,
+    )
+
+    assert result_video.data_ptr() == video_destination.data_ptr()
+    assert result_audio.data_ptr() == audio_destination.data_ptr()
+    torch.testing.assert_close(video_source, post_text_video.cpu(), atol=9e-2, rtol=1e-2)
+    torch.testing.assert_close(audio_source, post_text_audio.cpu(), atol=9e-2, rtol=1e-2)
+    torch.testing.assert_close(result_video, expected_video.cpu(), atol=1e-1, rtol=2e-2)
+    torch.testing.assert_close(result_audio, expected_audio.cpu(), atol=1e-1, rtol=2e-2)
+    torch.testing.assert_close(
+        _captured_snapshot(captures, "video_as_query", video_tokens),
+        _captured_snapshot(captures, "video_as_context", video_tokens),
+        atol=0,
+        rtol=0,
+    )
+    torch.testing.assert_close(
+        _captured_snapshot(captures, "audio_as_query", audio_tokens),
+        _captured_snapshot(captures, "audio_as_context", audio_tokens),
+        atol=0,
+        rtol=0,
+    )
+    attention_runners = (
+        runner.video_self_attention,
+        runner.audio_self_attention,
+        runner.video_text_attention,
+        runner.audio_text_attention,
+        runner.video_from_audio_attention,
+        runner.audio_from_video_attention,
+    )
+    assert not any(
+        hasattr(attention_runner, name)
+        for attention_runner in attention_runners
+        for name in ("q_cpu", "k_cpu", "v_cpu", "arena")
+    )
+
+    one_video = video_initial.clone().pin_memory()
+    one_audio = audio_initial.clone().pin_memory()
+    one_video_scratch = torch.empty_like(one_video, pin_memory=True)
+    one_audio_scratch = torch.empty_like(one_audio, pin_memory=True)
+    odd_video, odd_audio = runner.run_blocks_(
+        one_video,
+        one_video_scratch,
+        one_audio,
+        one_audio_scratch,
+        text,
+        meta,
+        [(projections, ops)],
+    )
+    assert odd_video.data_ptr() == one_video_scratch.data_ptr()
+    assert odd_audio.data_ptr() == one_audio_scratch.data_ptr()
+
+    two_video = video_initial.clone().pin_memory()
+    two_audio = audio_initial.clone().pin_memory()
+    two_video_scratch = torch.empty_like(two_video, pin_memory=True)
+    two_audio_scratch = torch.empty_like(two_audio, pin_memory=True)
+    even_video, even_audio = runner.run_blocks_(
+        two_video,
+        two_video_scratch,
+        two_audio,
+        two_audio_scratch,
+        text,
+        meta,
+        [(projections, ops), (projections, ops)],
+    )
+    expected_two_video, expected_two_audio = _reference(
+        expected_video,
+        expected_audio,
+        text.to(device),
+        modules,
+        bounds,
+        shape,
+    )
+    assert even_video.data_ptr() == two_video.data_ptr()
+    assert even_audio.data_ptr() == two_audio.data_ptr()
+    torch.testing.assert_close(even_video, expected_two_video.cpu(), atol=1.2e-1, rtol=2e-2)
+    torch.testing.assert_close(even_audio, expected_two_audio.cpu(), atol=1.2e-1, rtol=2e-2)

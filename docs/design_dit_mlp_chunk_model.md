@@ -3,7 +3,7 @@
 Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
 
 This guide covers the secondary H3 tile settings
-`projection_chunk_tokens` and `mlp_chunk_tokens`. Calibrate attention Q and K/V
+`projection_tile_tokens` and `ffn_tile_tokens`. Calibrate attention Q and K/V
 chunks first with [`q_chunk_calibration.md`](q_chunk_calibration.md).
 
 ## Why the axes are separate
@@ -15,7 +15,7 @@ does not determine the smallest efficient projection or MLP tile.
 
 Recompute execution has no materialized projection subtile: its Q and K/V
 callback ranges are fixed by `q_chunk_tokens` and `kv_chunk_tokens`.
-`qkv_tile_tokens` therefore affects materialized execution only.
+`projection_tile_tokens` therefore affects materialized execution only.
 
 ## MLP work model
 
@@ -49,7 +49,7 @@ latency and the measured `P(C)` saturation curve.
 
 ## Workspace bound
 
-Increasing `mlp_chunk_tokens` grows H3 auxiliary CUDA storage approximately
+Increasing `ffn_tile_tokens` grows H3 auxiliary CUDA storage approximately
 linearly with hidden width and element size. The current estimator includes
 one MLP device tile and one or two final-output buffers:
 
@@ -113,8 +113,9 @@ therefore:
 
 ```toml
 [minimax_h3]
-qkv_tile_tokens = 4096
-mlp_tile_tokens = 4096
+execution_mode = "materialized"
+projection_tile_tokens = 4096
+ffn_tile_tokens = 4096
 ```
 
 This is an H3 integration default, not a generic device default. Recalibrate

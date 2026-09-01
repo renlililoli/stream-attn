@@ -11,8 +11,8 @@ FlashAttention backend, dtype, head layout, or system load changes.
 |---|---|---|
 | `q_chunk_tokens` | HBM-resident query super-block | Calibrate from the host-memory roofline on each deployment topology |
 | `kv_chunk_tokens` | Streamed K/V transfer and update tile | Hold at `4096` during Q calibration; sweep only after Q is fixed |
-| `projection_chunk_tokens` | QKV projection tile | Use the integration default first; tune with a real block microbenchmark |
-| `mlp_chunk_tokens` | MLP activation tile | Use the integration default first; increase only when measured gains justify the extra HBM |
+| `projection_tile_tokens` | QKV projection tile | Use the integration default first; tune with a real block microbenchmark |
+| `ffn_tile_tokens` | MLP activation tile | Use the integration default first; increase only when measured gains justify the extra HBM |
 
 `q_chunk_tokens` is normally the important performance choice. It controls how
 many times the complete K/V sequence must be streamed from pinned host memory.

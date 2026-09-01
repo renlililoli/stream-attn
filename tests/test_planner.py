@@ -1,9 +1,11 @@
+from dataclasses import replace
+
 import pytest
 import torch
 
 from seqattn_core import StreamingAttentionConfig, build_plan
 from seqattn_core.kernels import profiles as kernel_profiles
-from seqattn_core.planner import estimate_workspace_bytes
+from seqattn_core.planner import estimate_workspace_bytes, resolve_runtime_config
 
 
 def test_planner_uses_largest_query_chunk_that_fits_budget():
@@ -190,3 +192,51 @@ def test_explicit_kernel_parameter_uses_portable_defaults_for_the_rest():
         config=StreamingAttentionConfig(block_m=32),
     )
     assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == (32, 64, 4, 2)
+
+
+def test_runtime_config_accepts_requests_that_resolve_to_the_plan():
+    requested = StreamingAttentionConfig(
+        backend="reference",
+        q_chunk_tokens=23,
+        kv_chunk_tokens=19,
+        block_m=32,
+        block_n=32,
+    )
+    plan = build_plan(
+        q_heads=4,
+        kv_heads=2,
+        head_dim=64,
+        dtype=torch.float32,
+        device="cpu",
+        max_q_tokens=73,
+        max_kv_tokens=89,
+        config=requested,
+    )
+
+    resolved = resolve_runtime_config(plan, requested)
+
+    assert resolved.q_chunk_tokens == plan.q_chunk_tokens == 32
+    assert resolved.kv_chunk_tokens == plan.kv_chunk_tokens == 32
+
+
+def test_runtime_config_rejects_a_different_resolved_structure():
+    requested = StreamingAttentionConfig(
+        backend="reference",
+        q_chunk_tokens=64,
+        kv_chunk_tokens=64,
+        block_m=32,
+        block_n=32,
+    )
+    plan = build_plan(
+        q_heads=4,
+        kv_heads=2,
+        head_dim=64,
+        dtype=torch.float32,
+        device="cpu",
+        max_q_tokens=128,
+        max_kv_tokens=128,
+        config=requested,
+    )
+
+    with pytest.raises(ValueError, match="q_chunk_tokens does not match"):
+        resolve_runtime_config(plan, replace(requested, q_chunk_tokens=96))

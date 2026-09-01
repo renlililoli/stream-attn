@@ -20,6 +20,7 @@ def test_all_model_sections_can_share_one_config_file(tmp_path):
         "projection_tile_tokens = 1536\n"
         "ffn_tile_tokens = 1024\n\n"
         "[ltx2]\n"
+        "execution_mode = 'recompute'\n"
         "projection_tile_tokens = 1024\n"
         "video_ffn_tile_tokens = 2048\n"
         "audio_ffn_tile_tokens = 768\n\n"
@@ -38,6 +39,7 @@ def test_all_model_sections_can_share_one_config_file(tmp_path):
         ffn_tile_tokens=1024,
     )
     assert load_ltx2_config(path) == LTX2Config(
+        execution_mode="recompute",
         projection_tile_tokens=1024,
         video_ffn_tile_tokens=2048,
         audio_ffn_tile_tokens=768,
@@ -119,7 +121,12 @@ def test_model_tile_values_must_be_positive_integers(tmp_path, table, key, value
 
 
 @pytest.mark.parametrize(
-    ("table", "loader"), [("minimax_h3", load_h3_config), ("wan", load_wan_config)]
+    ("table", "loader"),
+    [
+        ("minimax_h3", load_h3_config),
+        ("wan", load_wan_config),
+        ("ltx2", load_ltx2_config),
+    ],
 )
 @pytest.mark.parametrize("value", ["'fallback'", "true", "['recompute']"])
 def test_execution_mode_is_strict(tmp_path, table, loader, value):
@@ -130,12 +137,12 @@ def test_execution_mode_is_strict(tmp_path, table, loader, value):
         loader(path)
 
 
-def test_ltx2_rejects_execution_mode_until_recompute_exists(tmp_path):
+@pytest.mark.parametrize("mode", ["materialized", "recompute"])
+def test_ltx2_supports_both_execution_modes(tmp_path, mode):
     path = tmp_path / "seqattn.toml"
-    path.write_text("[ltx2]\nexecution_mode = 'materialized'\n", encoding="utf-8")
+    path.write_text(f"[ltx2]\nexecution_mode = '{mode}'\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="materialized execution only"):
-        load_ltx2_config(path)
+    assert load_ltx2_config(path).execution_mode == mode
 
 
 @pytest.mark.parametrize(
@@ -143,7 +150,7 @@ def test_ltx2_rejects_execution_mode_until_recompute_exists(tmp_path):
     [
         ("minimax_h3", "qkv_tile_tokens", load_h3_config),
         ("minimax_h3", "mlp_tile_tokens", load_h3_config),
-        ("wan", "projection_chunk_tokens", load_wan_config),
+        ("wan", "qkv_tile_tokens", load_wan_config),
         ("ltx2", "ffn_tile_tokens", load_ltx2_config),
     ],
 )
@@ -157,8 +164,8 @@ def test_model_sections_reject_unknown_or_legacy_keys(tmp_path, table, key, load
 
 def test_dataclass_validation_rejects_invalid_direct_construction():
     with pytest.raises(ValueError, match="minimax_h3.execution_mode"):
-        H3Config(execution_mode="fallback").validate()
+        H3Config(execution_mode="fallback")
     with pytest.raises(ValueError, match="wan.projection_tile_tokens"):
-        WanConfig(projection_tile_tokens=True).validate()
+        WanConfig(projection_tile_tokens=True)
     with pytest.raises(ValueError, match="ltx2.audio_ffn_tile_tokens"):
-        LTX2Config(audio_ffn_tile_tokens=0).validate()
+        LTX2Config(audio_ffn_tile_tokens=0)

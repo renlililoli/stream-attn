@@ -107,7 +107,7 @@ def test_projected_cross_attention_matches_full_gpu_gqa_and_packed_batch():
     runner = ProjectedCrossAttentionRunner(
         plan,
         config,
-        ProjectionPipelineConfig(projection_chunk_tokens=23),
+        ProjectionPipelineConfig(projection_tile_tokens=23),
     )
     stats = ProjectedCrossAttentionStats()
     actual = runner(
@@ -247,3 +247,76 @@ def test_recomputed_cross_attention_matches_materialized_reference_without_host_
     assert stats.attention.h2d_bytes == 0
     assert runner.workspace.query.hidden.shape[0] == plan.q_chunk_tokens
     assert runner.workspace.context.hidden.shape[0] == plan.kv_chunk_tokens
+
+
+@pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
+def test_projected_cross_runner_recovers_after_projection_callback_failure():
+    dtype = torch.bfloat16
+    query_tokens, context_tokens = 31, 23
+    query_features, context_features = 24, 20
+    q_heads, kv_heads, head_dim = 2, 1, 16
+    query = torch.randn(query_tokens, query_features, dtype=dtype, pin_memory=True)
+    context = torch.randn(context_tokens, context_features, dtype=dtype, pin_memory=True)
+    q_linear, kv_linear, _ = _cross_modules(
+        query_features=query_features,
+        context_features=context_features,
+        q_heads=q_heads,
+        kv_heads=kv_heads,
+        head_dim=head_dim,
+        dtype=dtype,
+    )
+    config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=16,
+        kv_chunk_tokens=16,
+        block_m=16,
+        block_n=16,
+    )
+    plan = build_plan(
+        q_heads=q_heads,
+        kv_heads=kv_heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda",
+        max_q_tokens=query_tokens,
+        max_kv_tokens=context_tokens,
+        config=config,
+    )
+    runner = ProjectedCrossAttentionRunner(
+        plan,
+        config,
+        ProjectionPipelineConfig(projection_tile_tokens=11),
+    )
+
+    def fail_query(tile, start, stop):
+        del tile, start, stop
+        raise RuntimeError("injected cross projection failure")
+
+    def project_kv(tile, start, stop):
+        del start, stop
+        projected = kv_linear(tile).view(-1, 2, kv_heads, head_dim)
+        return projected[:, 0].contiguous(), projected[:, 1].contiguous()
+
+    with pytest.raises(RuntimeError, match="injected cross projection failure"):
+        runner.project_to_host(
+            query,
+            context,
+            project_q=fail_query,
+            project_kv=project_kv,
+        )
+
+    def project_q(tile, start, stop):
+        del start, stop
+        return q_linear(tile).view(-1, q_heads, head_dim)
+
+    q, k, v = runner.project_to_host(
+        query,
+        context,
+        project_q=project_q,
+        project_kv=project_kv,
+    )
+    expected_q = q_linear(query.to("cuda")).view_as(q).cpu()
+    expected_kv = kv_linear(context.to("cuda")).view(-1, 2, kv_heads, head_dim).cpu()
+    torch.testing.assert_close(q, expected_q, atol=0, rtol=0)
+    torch.testing.assert_close(k, expected_kv[:, 0], atol=0, rtol=0)
+    torch.testing.assert_close(v, expected_kv[:, 1], atol=0, rtol=0)

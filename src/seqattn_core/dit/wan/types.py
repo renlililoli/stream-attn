@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from itertools import pairwise
 
 import torch
 
@@ -12,6 +11,7 @@ from ...projection import (
     SelfProjection,
     SelfRecomputeProjection,
 )
+from ...validation import validate_cu_seqlens
 from ..common import AttentionEpilogue, DeviceTileOp, LeaseFactory
 
 
@@ -22,13 +22,12 @@ class WanSequenceMeta:
 
     @staticmethod
     def _validate_bounds(name: str, bounds: torch.Tensor, tokens: int) -> None:
-        if bounds.device.type != "cpu" or bounds.dtype != torch.int32 or bounds.ndim != 1:
-            raise ValueError(f"{name} must be a one-dimensional CPU int32 tensor")
-        if bounds.numel() < 2 or int(bounds[0]) != 0 or int(bounds[-1]) != tokens:
-            raise ValueError(f"{name} must span the complete token tensor")
-        values = bounds.to(dtype=torch.int64).tolist()
-        if any(stop < start for start, stop in pairwise(values)):
-            raise ValueError(f"{name} must be non-decreasing")
+        validate_cu_seqlens(
+            bounds,
+            tokens,
+            name,
+            expected_dtype=torch.int32,
+        )
 
     def validate(self, hidden_tokens: int, text_tokens: int) -> None:
         self._validate_bounds("hidden_cu_seqlens", self.hidden_cu_seqlens, hidden_tokens)

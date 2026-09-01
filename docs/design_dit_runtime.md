@@ -60,7 +60,7 @@ project_kv(hidden_tile, destination_k, destination_v, start, stop) -> None
 
 These callbacks direct-write complete attention tiles. Q ranges follow planned
 `q_chunk_tokens`; K/V ranges follow planned `kv_chunk_tokens`. The materialized
-`projection_chunk_tokens` setting does not affect recompute callback ranges.
+`projection_tile_tokens` setting does not affect recompute callback ranges.
 
 Both policies consume `H3BlockOps`:
 
@@ -150,21 +150,22 @@ respect every boundary.
 
 | Axis | Used by | Selection basis |
 |---|---|---|
-| `projection_chunk_tokens` | Materialized QKV producer | Projection kernel saturation and producer workspace |
+| `projection_tile_tokens` | Materialized QKV producer | Projection kernel saturation and producer workspace |
 | `q_chunk_tokens` | Attention resident Q | Measured host-memory roofline and CUDA workspace |
 | `kv_chunk_tokens` | Attention K/V tile | Copy/update overlap after Q is calibrated |
-| `mlp_chunk_tokens` | Attention consumer and MLP | Consumer kernel saturation and auxiliary workspace |
+| `ffn_tile_tokens` | Attention consumer and FFN | Consumer kernel saturation and auxiliary workspace |
 
 No equality relationship is required. The default H3 consumer configuration
 is:
 
 ```toml
 [minimax_h3]
-qkv_tile_tokens = 4096
-mlp_tile_tokens = 4096
+execution_mode = "materialized"
+projection_tile_tokens = 4096
+ffn_tile_tokens = 4096
 ```
 
-`load_h3_tile_config()` reads `SEQATTN_CONFIG` or the default SeqAttn TOML
+`load_h3_config()` reads `SEQATTN_CONFIG` or the default SeqAttn TOML
 file. These defaults do not replace topology-specific attention calibration.
 
 See [`design_dit_mlp_chunk_model.md`](design_dit_mlp_chunk_model.md) for

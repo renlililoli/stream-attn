@@ -19,7 +19,7 @@ class ProjectionWorkspace:
         self.hidden_features = hidden_features
         self.hidden = [
             torch.empty(
-                (config.projection_chunk_tokens, hidden_features),
+                (config.projection_tile_tokens, hidden_features),
                 dtype=dtype,
                 device=device,
             )

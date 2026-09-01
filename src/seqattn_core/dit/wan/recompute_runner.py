@@ -5,6 +5,7 @@ from collections.abc import Iterable
 
 import torch
 
+from ..._single_flight import init_single_flight, single_flight
 from ...projection import RecomputedAttentionRunner, RecomputedCrossAttentionRunner
 from ..common import (
     AttentionOutputConsumer,
@@ -25,9 +26,10 @@ class WanRecomputeRunner:
         self_attention: RecomputedAttentionRunner,
         cross_attention: RecomputedCrossAttentionRunner,
         *,
-        ffn_chunk_tokens: int,
+        ffn_tile_tokens: int,
         num_output_buffers: int = 2,
     ) -> None:
+        init_single_flight(self)
         self.self_attention = self_attention
         self.cross_attention = cross_attention
         self.hidden_features = self_attention.hidden_features
@@ -44,7 +46,7 @@ class WanRecomputeRunner:
         self.consumer = AttentionOutputConsumer(self.output_workspace)
         self.ffn = TiledHostStageRunner(
             hidden_features=self.hidden_features,
-            chunk_tokens=ffn_chunk_tokens,
+            chunk_tokens=ffn_tile_tokens,
             dtype=plan.dtype,
             device=plan.device,
             require_pinned_hidden=self_attention.require_pinned_hidden,
@@ -81,7 +83,7 @@ class WanRecomputeRunner:
                 name=name,
             )
         require_distinct_storage(source_hidden_host, destination_hidden_host)
-        self.cross_attention._validate_hidden(
+        self.cross_attention.validate_hidden(
             text_hidden_host,
             hidden_features=self.cross_attention.context_hidden_features,
             max_tokens=self.cross_attention.plan.max_kv_tokens,
@@ -89,6 +91,7 @@ class WanRecomputeRunner:
         )
         sequence_meta.validate(source_hidden_host.shape[0], text_hidden_host.shape[0])
 
+    @single_flight
     @torch.inference_mode()
     def run_block(
         self,
@@ -157,12 +160,15 @@ class WanRecomputeRunner:
                 ops.ffn,
                 stats=stats.ffn,
             )
-        hidden_bytes = source_hidden_host.numel() * source_hidden_host.element_size()
-        stats.hidden_host_bytes_peak = max(stats.hidden_host_bytes_peak, 2 * hidden_bytes)
+        hidden_bytes = (
+            source_hidden_host.numel() + destination_hidden_host.numel() + text_hidden_host.numel()
+        ) * source_hidden_host.element_size()
+        stats.hidden_host_bytes_peak = max(stats.hidden_host_bytes_peak, hidden_bytes)
         stats.blocks += 1
         stats.wall_seconds += time.perf_counter() - started
         return destination_hidden_host
 
+    @single_flight
     @torch.inference_mode()
     def run_blocks_(
         self,

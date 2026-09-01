@@ -5,10 +5,12 @@ from contextlib import nullcontext
 
 import torch
 
+from .._single_flight import init_single_flight, single_flight
 from ..config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ..planner import AttentionPlan, build_plan
+from ..planner import AttentionPlan
 from ..stats import ProjectedAttentionStats
 from ..streaming import StreamingAttentionRunner
+from .arena import MaterializedQKVArena
 from .types import OutputProjector, QKVProjector
 from .validation import validate_projected_qkv, validate_projection_hidden
 from .workspace import ProjectionWorkspace
@@ -22,55 +24,33 @@ class ProjectedAttentionRunner:
         plan: AttentionPlan,
         attention_config: StreamingAttentionConfig | None = None,
         pipeline_config: ProjectionPipelineConfig | None = None,
+        *,
+        arena: MaterializedQKVArena | None = None,
     ) -> None:
-        self.attention_config = (
-            StreamingAttentionConfig() if attention_config is None else attention_config
-        )
+        init_single_flight(self)
         self.pipeline_config = (
             ProjectionPipelineConfig() if pipeline_config is None else pipeline_config
         )
-        self.attention_config.validate()
         self.pipeline_config.validate()
-        self.plan = build_plan(
-            q_heads=plan.q_heads,
-            kv_heads=plan.kv_heads,
-            head_dim=plan.head_dim,
-            dtype=plan.dtype,
-            device=plan.device,
-            max_q_tokens=plan.max_q_tokens,
-            max_kv_tokens=plan.max_kv_tokens,
-            config=self.attention_config,
-        )
-        plan = self.plan
+        self.plan = plan
         if plan.device.type != "cuda":
             raise ValueError("the projected pipeline requires a CUDA device")
+        self.attention = StreamingAttentionRunner(plan, attention_config)
+        self.attention_config = self.attention.config
         if self.attention_config.backend not in {None, "auto", "builtin", "triton"}:
             raise ValueError("the projected pipeline requires the Triton attention backend")
         if self.attention_config.require_pinned and not self.pipeline_config.pin_qkv:
             raise ValueError("Triton attention requires pinned Q/K/V backing buffers")
 
-        self.attention = StreamingAttentionRunner(plan, self.attention_config)
         if self.attention.backend != "triton":
             raise RuntimeError("Triton is not available for the projected pipeline")
         pin_qkv = self.pipeline_config.pin_qkv
-        self.q_cpu = torch.empty(
-            (plan.max_q_tokens, plan.q_heads, plan.head_dim),
-            dtype=plan.dtype,
-            device="cpu",
-            pin_memory=pin_qkv,
+        self.arena = (
+            MaterializedQKVArena.for_plans((plan,), pin_memory=pin_qkv) if arena is None else arena
         )
-        self.k_cpu = torch.empty(
-            (plan.max_kv_tokens, plan.kv_heads, plan.head_dim),
-            dtype=plan.dtype,
-            device="cpu",
-            pin_memory=pin_qkv,
-        )
-        self.v_cpu = torch.empty(
-            (plan.max_kv_tokens, plan.kv_heads, plan.head_dim),
-            dtype=plan.dtype,
-            device="cpu",
-            pin_memory=pin_qkv,
-        )
+        self.arena.validate_plan(plan)
+        if self.arena.pin_memory != pin_qkv:
+            raise ValueError("QKV arena pinning must match the projection pipeline")
         self._projection_workspace: ProjectionWorkspace | None = None
 
     def _range(self, name: str):
@@ -92,6 +72,7 @@ class ProjectedAttentionRunner:
             )
         return self._projection_workspace
 
+    @single_flight
     def project_qkv_to_host(
         self,
         hidden_cpu: torch.Tensor,
@@ -109,7 +90,7 @@ class ProjectedAttentionRunner:
         stats.backend = self.attention.backend
         tokens, hidden_features = hidden_cpu.shape
         workspace = self._workspace_for(hidden_features)
-        chunk = self.pipeline_config.projection_chunk_tokens
+        chunk = self.pipeline_config.projection_tile_tokens
         started = time.perf_counter()
         try:
             for chunk_index, start in enumerate(range(0, tokens, chunk)):
@@ -141,9 +122,9 @@ class ProjectedAttentionRunner:
                     torch.cuda.stream(workspace.d2h_stream),
                 ):
                     workspace.d2h_stream.wait_event(workspace.projected_ready[slot])
-                    self.q_cpu[start:stop].copy_(q, non_blocking=self.q_cpu.is_pinned())
-                    self.k_cpu[start:stop].copy_(k, non_blocking=self.k_cpu.is_pinned())
-                    self.v_cpu[start:stop].copy_(v, non_blocking=self.v_cpu.is_pinned())
+                    self.arena.q[start:stop].copy_(q, non_blocking=self.arena.q.is_pinned())
+                    self.arena.k[start:stop].copy_(k, non_blocking=self.arena.k.is_pinned())
+                    self.arena.v[start:stop].copy_(v, non_blocking=self.arena.v.is_pinned())
                     workspace.copy_done[slot].record(workspace.d2h_stream)
 
                 workspace.keepalive[slot] = (q, k, v)
@@ -164,14 +145,11 @@ class ProjectedAttentionRunner:
         else:
             workspace.reset_slots()
         stats.projection_seconds += time.perf_counter() - started
-        q_cpu = self.q_cpu[:tokens]
-        k_cpu = self.k_cpu[:tokens]
-        v_cpu = self.v_cpu[:tokens]
-        stats.qkv_host_bytes = sum(
-            tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
-        )
+        q_cpu, k_cpu, v_cpu = self.arena.views(tokens, tokens)
+        stats.qkv_host_bytes = self.arena.allocated_bytes
         return q_cpu, k_cpu, v_cpu
 
+    @single_flight
     @torch.inference_mode()
     def __call__(
         self,

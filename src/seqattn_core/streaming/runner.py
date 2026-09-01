@@ -4,8 +4,9 @@ import time
 
 import torch
 
+from .._single_flight import init_single_flight, single_flight
 from ..config import StreamingAttentionConfig
-from ..planner import AttentionPlan
+from ..planner import AttentionPlan, resolve_runtime_config
 from ..reference import streaming_attention_reference
 from ..stats import StreamingAttentionStats
 from ..validation import require_pinned_inputs, validate_cu_seqlens, validate_host_qkv
@@ -31,11 +32,9 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         plan: AttentionPlan,
         config: StreamingAttentionConfig | None = None,
     ) -> None:
+        init_single_flight(self)
         self.plan = plan
-        self.config = StreamingAttentionConfig() if config is None else config
-        self.config.validate()
-        if plan.output_mode != self.config.output_mode:
-            raise ValueError("attention plan output_mode does not match runner config")
+        self.config = resolve_runtime_config(plan, config)
         self._backend_request = configured_backend_name(self.config.backend)
         allowed = (
             {"triton", "reference"}
@@ -208,6 +207,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             )
         raise ValueError("scheduled query tasks require a CUDA backend")
 
+    @single_flight
     @torch.inference_mode()
     def run_query_tasks(
         self,
@@ -252,6 +252,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         stats.wall_seconds += time.perf_counter() - started
         return result
 
+    @single_flight
     @torch.inference_mode()
     def run_query_tasks_with_device_consumer(
         self,
@@ -325,6 +326,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         )
         stats.wall_seconds += time.perf_counter() - started
 
+    @single_flight
     @torch.inference_mode()
     def __call__(
         self,
@@ -407,6 +409,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         stats.wall_seconds += time.perf_counter() - started
         return result
 
+    @single_flight
     @torch.inference_mode()
     def run_with_device_output(
         self,
@@ -452,6 +455,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         stats.wall_seconds += time.perf_counter() - started
         return result
 
+    @single_flight
     @torch.inference_mode()
     def run_with_device_consumer(
         self,
@@ -493,7 +497,8 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         )
         stats.wall_seconds += time.perf_counter() - started
 
-    def _run_with_qkv_source(
+    @single_flight
+    def run_with_qkv_source(
         self,
         source: QKVTileSource,
         q_tokens: int,

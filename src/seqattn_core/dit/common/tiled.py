@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
+from ..._single_flight import init_single_flight, single_flight
 from .types import DeviceTileOp
 
 
@@ -63,6 +64,7 @@ class TiledHostStageRunner:
         num_buffers: int = 2,
         require_pinned_hidden: bool = True,
     ) -> None:
+        init_single_flight(self)
         self.device = torch.device(device)
         if self.device.type != "cuda":
             raise ValueError("tiled host stages require a CUDA device")
@@ -75,7 +77,7 @@ class TiledHostStageRunner:
             num_buffers=num_buffers,
         )
 
-    def _validate(self, tensor: torch.Tensor, *, name: str) -> None:
+    def validate(self, tensor: torch.Tensor, *, name: str) -> None:
         workspace = self.workspace
         if tensor.device.type != "cpu" or tensor.ndim != 2:
             raise ValueError(f"{name} must use CPU [tokens, hidden_features] layout")
@@ -147,6 +149,7 @@ class TiledHostStageRunner:
         self.workspace.keepalive[:] = [None] * len(self.workspace.keepalive)
         self.workspace.busy[:] = [False] * len(self.workspace.busy)
 
+    @single_flight
     @torch.inference_mode()
     def run(
         self,
@@ -156,8 +159,8 @@ class TiledHostStageRunner:
         *,
         stats: TiledStageStats | None = None,
     ) -> torch.Tensor:
-        self._validate(source_hidden_host, name="source_hidden_host")
-        self._validate(destination_hidden_host, name="destination_hidden_host")
+        self.validate(source_hidden_host, name="source_hidden_host")
+        self.validate(destination_hidden_host, name="destination_hidden_host")
         if source_hidden_host.shape != destination_hidden_host.shape:
             raise ValueError("source and destination hidden tensors must have identical shapes")
         stats = TiledStageStats() if stats is None else stats
@@ -176,6 +179,8 @@ class TiledHostStageRunner:
             raise
         stats.wall_seconds += time.perf_counter() - started
         return destination_hidden_host
+
+
 __all__ = [
     "TiledHostStageRunner",
     "TiledStageStats",

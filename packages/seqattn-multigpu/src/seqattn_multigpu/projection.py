@@ -83,7 +83,7 @@ class MultiGpuQKVProjectionRunner:
         self.chunk_tokens = chunk_tokens
         projection_config = replace(
             projected_attention.pipeline_config,
-            projection_chunk_tokens=chunk_tokens,
+            projection_tile_tokens=chunk_tokens,
             num_projection_buffers=1,
         )
         self.workspaces: dict[str, ProjectionWorkspace] = {}
@@ -106,9 +106,20 @@ class MultiGpuQKVProjectionRunner:
             thread_name_prefix="seqattn-qkv-projection",
         )
         self._run_lock = threading.Lock()
+        self._closed = False
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self._executor.shutdown(wait=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        del exc_type, exc_value, traceback
+        self.close()
 
     def _run_task(
         self,
@@ -147,17 +158,17 @@ class MultiGpuQKVProjectionRunner:
 
         with torch.cuda.stream(workspace.d2h_stream):
             workspace.d2h_stream.wait_event(workspace.projected_ready[0])
-            self.projected_attention.q_cpu[task.start : task.stop].copy_(
+            self.projected_attention.arena.q[task.start : task.stop].copy_(
                 q,
-                non_blocking=self.projected_attention.q_cpu.is_pinned(),
+                non_blocking=self.projected_attention.arena.q.is_pinned(),
             )
-            self.projected_attention.k_cpu[task.start : task.stop].copy_(
+            self.projected_attention.arena.k[task.start : task.stop].copy_(
                 k,
-                non_blocking=self.projected_attention.k_cpu.is_pinned(),
+                non_blocking=self.projected_attention.arena.k.is_pinned(),
             )
-            self.projected_attention.v_cpu[task.start : task.stop].copy_(
+            self.projected_attention.arena.v[task.start : task.stop].copy_(
                 v,
-                non_blocking=self.projected_attention.v_cpu.is_pinned(),
+                non_blocking=self.projected_attention.arena.v.is_pinned(),
             )
             workspace.copy_done[0].record(workspace.d2h_stream)
 
@@ -246,9 +257,9 @@ class MultiGpuQKVProjectionRunner:
             if failures:
                 raise failures[0]
 
-            q_cpu = self.projected_attention.q_cpu[:tokens]
-            k_cpu = self.projected_attention.k_cpu[:tokens]
-            v_cpu = self.projected_attention.v_cpu[:tokens]
+            q_cpu = self.projected_attention.arena.q[:tokens]
+            k_cpu = self.projected_attention.arena.k[:tokens]
+            v_cpu = self.projected_attention.arena.v[:tokens]
             stats.backend = "triton"
             stats.projection_seconds += elapsed
             stats.projection_chunks += (tokens + self.chunk_tokens - 1) // self.chunk_tokens
@@ -259,9 +270,7 @@ class MultiGpuQKVProjectionRunner:
             stats.projection_qkv_d2h_bytes += sum(
                 tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
             )
-            stats.qkv_host_bytes = sum(
-                tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
-            )
+            stats.qkv_host_bytes = self.projected_attention.arena.allocated_bytes
             return q_cpu, k_cpu, v_cpu
         finally:
             self._run_lock.release()

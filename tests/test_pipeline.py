@@ -16,8 +16,8 @@ from seqattn_core.reference import streaming_attention_reference
 
 
 def test_projection_pipeline_config_validation():
-    with pytest.raises(ValueError, match="projection_chunk_tokens"):
-        ProjectionPipelineConfig(projection_chunk_tokens=0).validate()
+    with pytest.raises(ValueError, match="projection_tile_tokens"):
+        ProjectionPipelineConfig(projection_tile_tokens=0).validate()
     with pytest.raises(ValueError, match="num_projection_buffers"):
         ProjectionPipelineConfig(num_projection_buffers=4).validate()
 
@@ -60,7 +60,7 @@ def test_projected_pipeline_matches_full_gpu(dtype):
         num_output_buffers=2,
     )
     pipeline_config = ProjectionPipelineConfig(
-        projection_chunk_tokens=31,
+        projection_tile_tokens=31,
         num_projection_buffers=2,
     )
     plan = build_plan(
@@ -114,6 +114,57 @@ def test_projected_pipeline_matches_full_gpu(dtype):
 
 
 @pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
+def test_projected_runner_recovers_after_projection_callback_failure():
+    dtype = torch.bfloat16
+    tokens = 37
+    hidden_features = 32
+    heads = 2
+    head_dim = 16
+    hidden = torch.randn(tokens, hidden_features, dtype=dtype, pin_memory=True)
+    linear = torch.nn.Linear(hidden_features, 3 * heads * head_dim, bias=False).to("cuda", dtype)
+    config = StreamingAttentionConfig(
+        backend="triton",
+        q_chunk_tokens=16,
+        kv_chunk_tokens=16,
+        block_m=16,
+        block_n=16,
+    )
+    plan = build_plan(
+        q_heads=heads,
+        kv_heads=heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device="cuda",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=config,
+    )
+    runner = ProjectedAttentionRunner(
+        plan,
+        config,
+        ProjectionPipelineConfig(projection_tile_tokens=13),
+    )
+
+    def fail_projection(tile, start, stop):
+        del tile, start, stop
+        raise RuntimeError("injected projection failure")
+
+    with pytest.raises(RuntimeError, match="injected projection failure"):
+        runner.project_qkv_to_host(hidden, fail_projection)
+
+    def project_qkv(tile, start, stop):
+        del start, stop
+        projected = linear(tile).view(-1, 3, heads, head_dim)
+        return tuple(projected[:, index].contiguous() for index in range(3))
+
+    q, k, v = runner.project_qkv_to_host(hidden, project_qkv)
+    expected = linear(hidden.to("cuda")).view(-1, 3, heads, head_dim).cpu()
+    torch.testing.assert_close(q, expected[:, 0], atol=0, rtol=0)
+    torch.testing.assert_close(k, expected[:, 1], atol=0, rtol=0)
+    torch.testing.assert_close(v, expected[:, 2], atol=0, rtol=0)
+
+
+@pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
 def test_projected_runner_reuse_has_bounded_allocator_growth():
     torch.manual_seed(103)
     dtype = torch.bfloat16
@@ -159,7 +210,7 @@ def test_projected_runner_reuse_has_bounded_allocator_growth():
     runner = ProjectedAttentionRunner(
         plan,
         attention_config,
-        ProjectionPipelineConfig(projection_chunk_tokens=96),
+        ProjectionPipelineConfig(projection_tile_tokens=96),
     )
     out = torch.empty((tokens, hidden_features), dtype=dtype, pin_memory=True)
     runner(
@@ -213,7 +264,7 @@ def test_projection_workspace_resets_without_device_wide_synchronization(monkeyp
         plan,
         config,
         ProjectionPipelineConfig(
-            projection_chunk_tokens=7,
+            projection_tile_tokens=7,
             num_projection_buffers=2,
         ),
     )

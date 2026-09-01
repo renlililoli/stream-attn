@@ -12,17 +12,19 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from seqattn_core import (
-    H3BlockOps,
-    H3DiTStats,
-    H3MaterializedProjection,
-    H3MaterializedRunner,
-    H3SequenceMeta,
     ProjectedAttentionRunner,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
     build_plan,
 )
+from seqattn_core._plugin_api import (
+    H3BlockOps,
+    H3DiTStats,
+    H3MaterializedProjection,
+    H3SequenceMeta,
+)
 from seqattn_core.benchmarking.common import atomic_json
+from seqattn_core.dit.minimax_h3 import H3MaterializedRunner
 
 from seqattn_multigpu import (
     DynamicScheduleConfig,
@@ -232,17 +234,17 @@ def main() -> None:
             projected = ProjectedAttentionRunner(
                 attention_plan,
                 attention_config,
-                ProjectionPipelineConfig(projection_chunk_tokens=args.projection_chunk),
+                ProjectionPipelineConfig(projection_tile_tokens=args.projection_chunk),
             )
             runner = H3MaterializedRunner(
                 projected,
                 hidden_features=args.hidden_features,
-                mlp_chunk_tokens=attention_plan.q_chunk_tokens,
+                ffn_tile_tokens=attention_plan.q_chunk_tokens,
             )
             result["plan"] = {
                 "q_chunk_tokens": attention_plan.q_chunk_tokens,
                 "kv_chunk_tokens": attention_plan.kv_chunk_tokens,
-                "projection_chunk_tokens": args.projection_chunk,
+                "projection_tile_tokens": args.projection_chunk,
                 "estimated_workspace_bytes": runner.plan.estimated_workspace_bytes,
             }
 
@@ -295,20 +297,20 @@ def main() -> None:
             projected = ProjectedAttentionRunner(
                 primary_schedule.attention_plan,
                 primary_schedule.config,
-                ProjectionPipelineConfig(projection_chunk_tokens=args.projection_chunk),
+                ProjectionPipelineConfig(projection_tile_tokens=args.projection_chunk),
             )
             runner = MultiGpuH3MaterializedRunner(
                 projected,
                 multi_plan,
                 hidden_features=args.hidden_features,
-                projection_chunk_tokens=args.projection_chunk,
+                projection_tile_tokens=args.projection_chunk,
                 dynamic_config=dynamic_config,
             )
             result["plan"] = {
                 "initial_q_chunk_tokens": args.q_chunk,
                 "q_capacity_tokens": args.q_capacity,
                 "kv_chunk_tokens": args.kv_chunk,
-                "projection_chunk_tokens": args.projection_chunk,
+                "projection_tile_tokens": args.projection_chunk,
                 "per_device_estimated_workspace_bytes": runner.per_device_estimated_workspace_bytes,
             }
 

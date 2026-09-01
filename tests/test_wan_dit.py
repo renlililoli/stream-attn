@@ -163,15 +163,15 @@ def test_wan_materialized_block_matches_full_gpu_order():
         ProjectedAttentionRunner(
             self_plan,
             config,
-            ProjectionPipelineConfig(projection_chunk_tokens=23),
+            ProjectionPipelineConfig(projection_tile_tokens=23),
         ),
         ProjectedCrossAttentionRunner(
             cross_plan,
             config,
-            ProjectionPipelineConfig(projection_chunk_tokens=17),
+            ProjectionPipelineConfig(projection_tile_tokens=17),
         ),
         hidden_features=hidden_features,
-        ffn_chunk_tokens=29,
+        ffn_tile_tokens=29,
     )
 
     def project_self(tile, start, stop):
@@ -248,7 +248,7 @@ def test_wan_recompute_block_matches_full_gpu_without_host_qkv():
         context_hidden_features=text_features,
         attention_config=config,
     )
-    runner = WanRecomputeRunner(self_runner, cross_runner, ffn_chunk_tokens=23)
+    runner = WanRecomputeRunner(self_runner, cross_runner, ffn_tile_tokens=23)
 
     def self_q(tile, out, start, stop):
         del start, stop

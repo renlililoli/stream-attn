@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from seqattn_core.streaming import backend as backend_module
@@ -81,6 +82,19 @@ def test_toml_is_used_when_no_environment_override(monkeypatch, tmp_path):
     monkeypatch.setenv("SEQATTN_CONFIG", str(config_path))
     monkeypatch.delenv("SEQATTN_BACKEND", raising=False)
     assert configured_backend_name(None) == "fa2"
+
+
+def test_attention_config_rejects_unknown_keys(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[attention]\nbackend = "auto"\nbacked = "triton"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SEQATTN_CONFIG", str(config_path))
+    monkeypatch.delenv("SEQATTN_BACKEND", raising=False)
+
+    with pytest.raises(ValueError, match=r"\[attention\].*unknown keys.*backed"):
+        configured_backend_name(None)
 
 
 def test_runtime_can_limit_auto_to_builtin(monkeypatch):

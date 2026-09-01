@@ -520,6 +520,7 @@ class MultiGpuStreamingAttentionRunner:
             thread_name_prefix="seqattn-gpu",
         )
         self._run_lock = threading.Lock()
+        self._closed = False
 
     def _workload_signature(
         self,
@@ -544,7 +545,17 @@ class MultiGpuStreamingAttentionRunner:
         )
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self._executor.shutdown(wait=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        del exc_type, exc_value, traceback
+        self.close()
 
     def _validate_runtime_inputs(
         self,

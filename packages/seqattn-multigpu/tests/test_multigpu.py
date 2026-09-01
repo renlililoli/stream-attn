@@ -5,9 +5,6 @@ from itertools import pairwise
 import pytest
 import torch
 from seqattn_core import (
-    H3BlockOps,
-    H3MaterializedProjection,
-    H3SequenceMeta,
     ProjectedAttentionRunner,
     ProjectedAttentionStats,
     ProjectionPipelineConfig,
@@ -15,6 +12,7 @@ from seqattn_core import (
     build_plan,
     build_query_tasks,
 )
+from seqattn_core._plugin_api import H3BlockOps, H3MaterializedProjection, H3SequenceMeta
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
 
@@ -524,7 +522,7 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
     projected = ProjectedAttentionRunner(
         primary_plan,
         primary_config,
-        ProjectionPipelineConfig(projection_chunk_tokens=31),
+        ProjectionPipelineConfig(projection_tile_tokens=31),
     )
     multi_plan = build_multi_gpu_plan(
         q_heads=heads,
@@ -556,7 +554,7 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
         projected,
         multi_plan,
         hidden_features=hidden_features,
-        projection_chunk_tokens=31,
+        projection_tile_tokens=31,
     )
 
     projection_ranges = {device: [] for device in modules}
@@ -694,7 +692,7 @@ def test_two_gpu_h3_projection_failure_stops_before_attention():
         projected,
         multi_plan,
         hidden_features=hidden_features,
-        projection_chunk_tokens=16,
+        projection_tile_tokens=16,
     )
 
     def fail_projection(*_args):

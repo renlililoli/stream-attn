@@ -130,8 +130,8 @@ Chunk axes are independent:
 |---|---|
 | `q_chunk_tokens` | Resident Q super-block and FP32 state bound |
 | `kv_chunk_tokens` | Streamed K/V transfer and update tile |
-| `projection_chunk_tokens` | Materialized hidden-to-QKV producer tile |
-| `mlp_chunk_tokens` | H3 post-attention MLP tile |
+| `projection_tile_tokens` | Materialized hidden-to-QKV producer tile |
+| `ffn_tile_tokens` | H3/Wan post-attention FFN tile |
 
 Use [`q_chunk_calibration.md`](q_chunk_calibration.md) for deployment-specific
 attention calibration. Do not infer projection or MLP tiles from the attention
@@ -149,6 +149,15 @@ pinned hidden -> chunked projection -> complete pinned host Q/K/V
 
 The raw attention tensor is not round-tripped through CPU memory, but complete
 host Q/K/V remains available for every resident Q pass.
+
+The readiness barrier is required for exact global self-attention: an early
+query cannot be finalized until projection has produced every key/value token
+in its packed segment. Projection H2D, projection compute, and Q/K/V D2H remain
+pipelined across tiles before that barrier. Compatible projected runners may
+share a `MaterializedQKVArena`; allocation statistics report the persistent
+arena capacity rather than only the current tensor views. Wan shares one arena
+across self/text attention. LTX2 shares one video-query arena and one
+audio-query arena across its six materialized attention stages.
 
 Recomputed attention removes complete host Q/K/V:
 
@@ -197,13 +206,13 @@ DiT block order is owned by architecture subpackages, while attention,
 projection, output consumers, tiled host stages, and structured mask conversion
 remain shared mechanisms. MiniMax-H3 keeps one-hidden materialized and
 two-hidden recompute contracts. Wan runs self-attention, text cross-attention,
-and FFN in that order. LTX2 runs separate video/audio self and text attention,
-materializes both audio/video cross directions before either stream is updated,
-then runs separate FFNs. Wan and LTX2 are single-GPU integrations in this
-revision.
-
-The detailed MiniMax-H3 recompute invariants are specified in
-[`dit_qkv_recompute_architecture.md`](dit_qkv_recompute_architecture.md).
+and FFN in that order. LTX2 materialized mode runs separate video/audio self
+and text attention, materializes both audio/video cross directions before
+either stream is updated, then runs separate FFNs. LTX2 recompute mode uses two
+hidden buffers per modality: self-attention writes alternate buffers, text
+cross-attention writes the original buffers, both bidirectional cross stages
+read those same post-text snapshots and write the alternate buffers, and the
+FFNs finish in place. Wan and LTX2 remain single-GPU integrations.
 
 ## Lifetime and concurrency
 

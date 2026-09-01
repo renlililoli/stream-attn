@@ -97,8 +97,8 @@ class H3DeviceOutputConsumer:
         if workspace.output_pending[slot_index]:
             compute_stream.wait_event(workspace.output_free[slot_index])
 
-        result = self.ops.mlp(tile, start, stop)
-        self._validate_device_tile(result, tokens=tokens, name="mlp")
+        result = self.ops.ffn(tile, start, stop)
+        self._validate_device_tile(result, tokens=tokens, name="ffn")
         final_slot = workspace.final_output[slot_index][:tokens]
         final_slot.copy_(result)
         workspace.output_ready[slot_index].record(compute_stream)
@@ -115,7 +115,7 @@ class H3DeviceOutputConsumer:
             workspace.output_free[slot_index].record(workspace.d2h_stream)
         workspace.output_pending[slot_index] = True
         self.output_index += 1
-        self.stats.mlp_chunks += 1
+        self.stats.ffn_tiles += 1
         self.stats.final_hidden_d2h_bytes += (
             tokens * workspace.hidden_features * tile.element_size()
         )
@@ -149,10 +149,10 @@ class H3DeviceOutputConsumer:
             self.next_token = stop
             return
 
-        chunk = self.workspace.mlp_chunk_tokens
+        chunk = self.workspace.ffn_tile_tokens
         cursor = 0
         if self.carry_tokens:
-            self.stats.mlp_cross_q_boundaries += 1
+            self.stats.ffn_cross_q_boundaries += 1
             take = min(chunk - self.carry_tokens, tokens)
             self.workspace.carry[self.carry_tokens : self.carry_tokens + take].copy_(
                 post_attention[:take]

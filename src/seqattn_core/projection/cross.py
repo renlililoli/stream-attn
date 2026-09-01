@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import time
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 
 import torch
 
+from .._single_flight import init_single_flight, single_flight
 from ..config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ..planner import AttentionPlan, build_plan
+from ..planner import AttentionPlan
 from ..stats import ProjectedCrossAttentionStats
 from ..streaming import StreamingAttentionRunner
+from .arena import MaterializedQKVArena
 from .types import KVProjector, OutputProjector, QProjector
 from .workspace import ProjectionWorkspace
 
@@ -21,54 +23,33 @@ class ProjectedCrossAttentionRunner:
         plan: AttentionPlan,
         attention_config: StreamingAttentionConfig | None = None,
         pipeline_config: ProjectionPipelineConfig | None = None,
+        *,
+        arena: MaterializedQKVArena | None = None,
     ) -> None:
-        self.attention_config = (
-            StreamingAttentionConfig() if attention_config is None else attention_config
-        )
+        init_single_flight(self)
         self.pipeline_config = (
             ProjectionPipelineConfig() if pipeline_config is None else pipeline_config
         )
-        self.attention_config.validate()
         self.pipeline_config.validate()
-        self.plan = build_plan(
-            q_heads=plan.q_heads,
-            kv_heads=plan.kv_heads,
-            head_dim=plan.head_dim,
-            dtype=plan.dtype,
-            device=plan.device,
-            max_q_tokens=plan.max_q_tokens,
-            max_kv_tokens=plan.max_kv_tokens,
-            config=self.attention_config,
-        )
+        self.plan = plan
         if self.plan.device.type != "cuda":
             raise ValueError("the projected cross-attention pipeline requires a CUDA device")
+        self.attention = StreamingAttentionRunner(self.plan, attention_config)
+        self.attention_config = self.attention.config
         if self.attention_config.backend not in {None, "auto", "builtin", "triton"}:
             raise ValueError("projected cross-attention requires the Triton attention backend")
         if self.attention_config.require_pinned and not self.pipeline_config.pin_qkv:
             raise ValueError("Triton attention requires pinned Q/K/V backing buffers")
 
-        self.attention = StreamingAttentionRunner(self.plan, self.attention_config)
         if self.attention.backend != "triton":
             raise RuntimeError("Triton is not available for projected cross-attention")
         pin_qkv = self.pipeline_config.pin_qkv
-        self.q_cpu = torch.empty(
-            (self.plan.max_q_tokens, self.plan.q_heads, self.plan.head_dim),
-            dtype=self.plan.dtype,
-            device="cpu",
-            pin_memory=pin_qkv,
+        self.arena = (
+            MaterializedQKVArena.for_plans((plan,), pin_memory=pin_qkv) if arena is None else arena
         )
-        self.k_cpu = torch.empty(
-            (self.plan.max_kv_tokens, self.plan.kv_heads, self.plan.head_dim),
-            dtype=self.plan.dtype,
-            device="cpu",
-            pin_memory=pin_qkv,
-        )
-        self.v_cpu = torch.empty(
-            self.k_cpu.shape,
-            dtype=self.plan.dtype,
-            device="cpu",
-            pin_memory=pin_qkv,
-        )
+        self.arena.validate_plan(plan)
+        if self.arena.pin_memory != pin_qkv:
+            raise ValueError("QKV arena pinning must match the projection pipeline")
         self._query_workspace: ProjectionWorkspace | None = None
         self._context_workspace: ProjectionWorkspace | None = None
 
@@ -93,7 +74,13 @@ class ProjectedCrossAttentionRunner:
             raise ValueError(f"{source} hidden feature size changed for a persistent runner")
         return workspace
 
-    def _validate_hidden(
+    def _recover_projection_workspace(self, workspace: ProjectionWorkspace) -> None:
+        with suppress(Exception):
+            torch.cuda.synchronize(self.plan.device)
+        workspace.keepalive[:] = [None] * len(workspace.keepalive)
+        workspace.busy[:] = [False] * len(workspace.busy)
+
+    def validate_hidden(
         self,
         hidden_host: torch.Tensor,
         *,
@@ -116,12 +103,12 @@ class ProjectedCrossAttentionRunner:
         query_hidden_host: torch.Tensor,
         context_hidden_host: torch.Tensor,
     ) -> None:
-        self._validate_hidden(
+        self.validate_hidden(
             query_hidden_host,
             max_tokens=self.plan.max_q_tokens,
             name="query_hidden_host",
         )
-        self._validate_hidden(
+        self.validate_hidden(
             context_hidden_host,
             max_tokens=self.plan.max_kv_tokens,
             name="context_hidden_host",
@@ -135,7 +122,7 @@ class ProjectedCrossAttentionRunner:
     ) -> torch.Tensor:
         tokens, hidden_features = hidden_host.shape
         workspace = self._workspace_for(query=True, hidden_features=hidden_features)
-        chunk = self.pipeline_config.projection_chunk_tokens
+        chunk = self.pipeline_config.projection_tile_tokens
         started = time.perf_counter()
         for chunk_index, start in enumerate(range(0, tokens, chunk)):
             stop = min(start + chunk, tokens)
@@ -156,7 +143,11 @@ class ProjectedCrossAttentionRunner:
             with torch.cuda.stream(workspace.compute_stream):
                 workspace.compute_stream.wait_event(workspace.input_ready[slot])
                 with self._range("seqattn:cross_q_projection"):
-                    q = project_q(workspace.hidden[slot][:tile_tokens], start, stop)
+                    try:
+                        q = project_q(workspace.hidden[slot][:tile_tokens], start, stop)
+                    except Exception:
+                        self._recover_projection_workspace(workspace)
+                        raise
                     expected = (tile_tokens, self.plan.q_heads, self.plan.head_dim)
                     if q.shape != expected:
                         raise ValueError(
@@ -167,7 +158,7 @@ class ProjectedCrossAttentionRunner:
                 workspace.projected_ready[slot].record(workspace.compute_stream)
             with self._range("seqattn:cross_q_d2h"), torch.cuda.stream(workspace.d2h_stream):
                 workspace.d2h_stream.wait_event(workspace.projected_ready[slot])
-                self.q_cpu[start:stop].copy_(q, non_blocking=self.q_cpu.is_pinned())
+                self.arena.q[start:stop].copy_(q, non_blocking=self.arena.q.is_pinned())
                 workspace.copy_done[slot].record(workspace.d2h_stream)
             workspace.keepalive[slot] = q
             workspace.busy[slot] = True
@@ -179,8 +170,9 @@ class ProjectedCrossAttentionRunner:
             stats.projection_qkv_d2h_bytes += q.numel() * q.element_size()
         workspace.d2h_stream.synchronize()
         workspace.keepalive[:] = [None] * len(workspace.keepalive)
+        workspace.busy[:] = [False] * len(workspace.busy)
         stats.projection_seconds += time.perf_counter() - started
-        return self.q_cpu[:tokens]
+        return self.arena.q[:tokens]
 
     def _project_kv_to_host(
         self,
@@ -190,7 +182,7 @@ class ProjectedCrossAttentionRunner:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         tokens, hidden_features = hidden_host.shape
         workspace = self._workspace_for(query=False, hidden_features=hidden_features)
-        chunk = self.pipeline_config.projection_chunk_tokens
+        chunk = self.pipeline_config.projection_tile_tokens
         started = time.perf_counter()
         for chunk_index, start in enumerate(range(0, tokens, chunk)):
             stop = min(start + chunk, tokens)
@@ -211,7 +203,11 @@ class ProjectedCrossAttentionRunner:
             with torch.cuda.stream(workspace.compute_stream):
                 workspace.compute_stream.wait_event(workspace.input_ready[slot])
                 with self._range("seqattn:cross_kv_projection"):
-                    k, v = project_kv(workspace.hidden[slot][:tile_tokens], start, stop)
+                    try:
+                        k, v = project_kv(workspace.hidden[slot][:tile_tokens], start, stop)
+                    except Exception:
+                        self._recover_projection_workspace(workspace)
+                        raise
                     expected = (tile_tokens, self.plan.kv_heads, self.plan.head_dim)
                     if k.shape != expected or v.shape != expected:
                         raise ValueError(
@@ -225,8 +221,8 @@ class ProjectedCrossAttentionRunner:
                 workspace.projected_ready[slot].record(workspace.compute_stream)
             with self._range("seqattn:cross_kv_d2h"), torch.cuda.stream(workspace.d2h_stream):
                 workspace.d2h_stream.wait_event(workspace.projected_ready[slot])
-                self.k_cpu[start:stop].copy_(k, non_blocking=self.k_cpu.is_pinned())
-                self.v_cpu[start:stop].copy_(v, non_blocking=self.v_cpu.is_pinned())
+                self.arena.k[start:stop].copy_(k, non_blocking=self.arena.k.is_pinned())
+                self.arena.v[start:stop].copy_(v, non_blocking=self.arena.v.is_pinned())
                 workspace.copy_done[slot].record(workspace.d2h_stream)
             workspace.keepalive[slot] = (k, v)
             workspace.busy[slot] = True
@@ -238,9 +234,11 @@ class ProjectedCrossAttentionRunner:
             stats.projection_qkv_d2h_bytes += (k.numel() + v.numel()) * k.element_size()
         workspace.d2h_stream.synchronize()
         workspace.keepalive[:] = [None] * len(workspace.keepalive)
+        workspace.busy[:] = [False] * len(workspace.busy)
         stats.projection_seconds += time.perf_counter() - started
-        return self.k_cpu[:tokens], self.v_cpu[:tokens]
+        return self.arena.k[:tokens], self.arena.v[:tokens]
 
+    @single_flight
     def project_to_host(
         self,
         query_hidden_host: torch.Tensor,
@@ -255,11 +253,10 @@ class ProjectedCrossAttentionRunner:
         stats.backend = self.attention.backend
         q_cpu = self._project_q_to_host(query_hidden_host, project_q, stats)
         k_cpu, v_cpu = self._project_kv_to_host(context_hidden_host, project_kv, stats)
-        stats.qkv_host_bytes = sum(
-            tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
-        )
+        stats.qkv_host_bytes = self.arena.allocated_bytes
         return q_cpu, k_cpu, v_cpu
 
+    @single_flight
     @torch.inference_mode()
     def run_with_device_consumer(
         self,
@@ -301,6 +298,7 @@ class ProjectedCrossAttentionRunner:
         stats.attention_output_seconds += time.perf_counter() - attention_started
         stats.wall_seconds += time.perf_counter() - started
 
+    @single_flight
     @torch.inference_mode()
     def __call__(
         self,

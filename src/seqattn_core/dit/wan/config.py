@@ -5,10 +5,8 @@ from dataclasses import dataclass
 
 from ..._config_file import (
     ExecutionMode,
-    execution_mode,
-    load_config_table,
-    positive_int,
-    reject_unknown_keys,
+    load_model_config,
+    validate_model_config,
 )
 
 
@@ -18,24 +16,12 @@ class WanConfig:
     projection_tile_tokens: int = 2048
     ffn_tile_tokens: int = 2048
 
-    def validate(self) -> None:
-        execution_mode(self.__dict__, "wan")
-        positive_int(self.__dict__, "wan", "projection_tile_tokens", 2048)
-        positive_int(self.__dict__, "wan", "ffn_tile_tokens", 2048)
+    def __post_init__(self) -> None:
+        validate_model_config(self, "wan")
 
 
 def load_wan_config(path: str | os.PathLike[str] | None = None) -> WanConfig:
-    section = load_config_table("wan", path)
-    reject_unknown_keys(
-        section,
-        "wan",
-        {"execution_mode", "projection_tile_tokens", "ffn_tile_tokens"},
-    )
-    return WanConfig(
-        execution_mode=execution_mode(section, "wan"),
-        projection_tile_tokens=positive_int(section, "wan", "projection_tile_tokens", 2048),
-        ffn_tile_tokens=positive_int(section, "wan", "ffn_tile_tokens", 2048),
-    )
+    return load_model_config(WanConfig, "wan", path)
 
 
 __all__ = ["WanConfig", "load_wan_config"]

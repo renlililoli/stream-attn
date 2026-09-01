@@ -9,9 +9,13 @@ def validate_cu_seqlens(
     cu_seqlens: torch.Tensor,
     total_tokens: int,
     name: str,
+    *,
+    expected_dtype: torch.dtype | None = None,
 ) -> list[int]:
     if cu_seqlens.device.type != "cpu" or cu_seqlens.ndim != 1 or cu_seqlens.numel() < 2:
         raise ValueError(f"{name} must be a one-dimensional CPU tensor")
+    if expected_dtype is not None and cu_seqlens.dtype != expected_dtype:
+        raise ValueError(f"{name} must use {expected_dtype}")
     bounds = cu_seqlens.to(dtype=torch.int64).tolist()
     if bounds[0] != 0 or bounds[-1] != total_tokens:
         raise ValueError(f"{name} must span [0, {total_tokens}], got {bounds}")

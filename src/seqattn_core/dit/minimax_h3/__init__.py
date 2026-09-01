@@ -1,4 +1,5 @@
 from .config import H3Config, load_h3_config
+from .factory import H3Runner, build_h3_runner
 from .materialized_runner import H3MaterializedRunner
 from .recompute_runner import H3RecomputeRunner
 from .stats import H3DiTStats
@@ -29,8 +30,10 @@ __all__ = [
     "H3RecomputePlan",
     "H3RecomputeProjection",
     "H3RecomputeRunner",
+    "H3Runner",
     "H3SequenceMeta",
     "LeaseFactory",
+    "build_h3_runner",
     "estimate_h3_consumer_workspace_bytes",
     "estimate_h3_materialized_aux_workspace_bytes",
     "estimate_h3_recompute_aux_workspace_bytes",

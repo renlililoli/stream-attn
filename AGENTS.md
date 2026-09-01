@@ -49,9 +49,9 @@ The main execution families are:
 - `dit/`: generic H3 block orchestration through `H3BlockOps` callbacks;
 - `kernels/`: Triton kernels and launch profiles.
 
-Keep H3 integration generic. `H3DiTRunner` may schedule callback operations,
-but the consumer owns model-specific normalization, projection, residual, MLP,
-and weight lifecycle behavior.
+Keep H3 integration generic. `H3MaterializedRunner` and `H3RecomputeRunner` may
+schedule callback operations, but the consumer owns model-specific normalization,
+projection, residual, MLP, and weight lifecycle behavior.
 
 ## Correctness and Memory Invariants
 
@@ -94,16 +94,16 @@ projection_tile_tokens = 2048
 ffn_tile_tokens = 2048
 
 [ltx2]
+execution_mode = "materialized" # or "recompute"
 projection_tile_tokens = 2048
 video_ffn_tile_tokens = 2048
 audio_ffn_tile_tokens = 2048
 ```
 
 `SEQATTN_CONFIG` may point to a shared deployment file. Do not put ComfyUI-only
-environment variables into the core configuration. LTX2 is materialized-only;
-do not add an `execution_mode` key until a recompute runner exists. Wan and
-LTX2 defaults are conservative starting values, not calibrated performance
-defaults.
+environment variables into the core configuration. H3, Wan, and LTX2 use the
+same execution-mode and projection-tile naming rules. Wan and LTX2 defaults are
+conservative starting values, not calibrated performance defaults.
 
 `q_chunk_tokens` is normally calibrated from measured host-memory bandwidth
 and resident attention throughput. Do not select it from nominal PCIe bandwidth

@@ -34,8 +34,9 @@ GPU capability is incompatible; it never silently changes to another backend.
 backend = "auto"
 
 [minimax_h3]
-qkv_tile_tokens = 4096
-mlp_tile_tokens = 4096
+execution_mode = "materialized"
+projection_tile_tokens = 4096
+ffn_tile_tokens = 4096
 ```
 
 `SEQATTN_CONFIG` may point to a shared deployment file containing both tables.

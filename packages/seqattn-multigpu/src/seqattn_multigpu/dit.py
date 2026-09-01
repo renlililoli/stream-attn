@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Iterable, Mapping
 
@@ -52,14 +53,14 @@ class MultiGpuH3MaterializedRunner:
         attention_plan: MultiGpuAttentionPlan,
         *,
         hidden_features: int,
-        projection_chunk_tokens: int = 4096,
+        projection_tile_tokens: int = 4096,
         num_final_output_buffers: int | Mapping[torch.device | str, int] = 2,
         dynamic_config: DynamicScheduleConfig | None = None,
     ) -> None:
         if hidden_features <= 0:
             raise ValueError("hidden_features must be positive")
-        if projection_chunk_tokens <= 0:
-            raise ValueError("projection_chunk_tokens must be positive")
+        if projection_tile_tokens <= 0:
+            raise ValueError("projection_tile_tokens must be positive")
         if attention_plan.output_mode != "device_consumer":
             raise ValueError("the multi-GPU H3 runner requires device_consumer plans")
         if projected_attention.attention.backend != "triton":
@@ -106,7 +107,7 @@ class MultiGpuH3MaterializedRunner:
             projected_attention,
             attention_plan,
             hidden_features=hidden_features,
-            chunk_tokens=projection_chunk_tokens,
+            chunk_tokens=projection_tile_tokens,
         )
         try:
             self.attention = MultiGpuStreamingAttentionRunner(
@@ -125,7 +126,7 @@ class MultiGpuH3MaterializedRunner:
             device = str(schedule.device)
             workspace = H3BlockWorkspace(
                 hidden_features=hidden_features,
-                mlp_chunk_tokens=1,
+                ffn_tile_tokens=1,
                 dtype=attention_plan.dtype,
                 device=schedule.device,
                 num_final_output_buffers=output_buffers[device],
@@ -136,7 +137,7 @@ class MultiGpuH3MaterializedRunner:
             consumer_bytes = estimate_h3_consumer_workspace_bytes(
                 hidden_features=hidden_features,
                 dtype=attention_plan.dtype,
-                mlp_chunk_tokens=1,
+                ffn_tile_tokens=1,
                 num_final_output_buffers=output_buffers[device],
                 final_output_chunk_tokens=schedule.q_capacity_tokens,
             )
@@ -145,10 +146,26 @@ class MultiGpuH3MaterializedRunner:
                 + consumer_bytes
                 + self.projection.estimated_workspace_bytes[device]
             )
+        self._run_lock = threading.RLock()
+        self._closed = False
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.projection.close()
         self.attention.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        del exc_type, exc_value, traceback
+        self.close()
+
+    def _acquire_run(self) -> None:
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("MultiGpuH3MaterializedRunner is single-flight")
 
     def _normalize_ops(
         self,
@@ -203,6 +220,31 @@ class MultiGpuH3MaterializedRunner:
         causal: bool = False,
         stats: MultiGpuH3DiTStats | None = None,
     ) -> torch.Tensor:
+        self._acquire_run()
+        try:
+            return self._run_block_impl(
+                hidden_host,
+                sequence_meta,
+                projections_by_device,
+                ops_by_device,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                stats=stats,
+            )
+        finally:
+            self._run_lock.release()
+
+    def _run_block_impl(
+        self,
+        hidden_host: torch.Tensor,
+        sequence_meta: H3SequenceMeta,
+        projections_by_device: Mapping[torch.device | str, H3MaterializedProjection],
+        ops_by_device: Mapping[torch.device | str, H3BlockOps],
+        *,
+        softmax_scale: float | None,
+        causal: bool,
+        stats: MultiGpuH3DiTStats | None,
+    ) -> torch.Tensor:
         self._validate_inputs(hidden_host, sequence_meta)
         projections = self._normalize_projections(projections_by_device)
         ops = self._normalize_ops(ops_by_device)
@@ -228,9 +270,7 @@ class MultiGpuH3MaterializedRunner:
                 for schedule in self.attention_plan.schedules
             },
         )
-        qkv_host_bytes = sum(
-            tensor.numel() * tensor.element_size() for tensor in (q_cpu, k_cpu, v_cpu)
-        )
+        qkv_host_bytes = self.projected_attention.arena.allocated_bytes
         stats.qkv_host_bytes_peak = max(stats.qkv_host_bytes_peak, qkv_host_bytes)
         raw_attention_bytes = q_cpu.numel() * q_cpu.element_size()
         stats.projection.raw_attention_roundtrip_bytes_avoided += 2 * raw_attention_bytes
@@ -292,18 +332,22 @@ class MultiGpuH3MaterializedRunner:
         causal: bool = False,
         stats: MultiGpuH3DiTStats | None = None,
     ) -> torch.Tensor:
-        stats = MultiGpuH3DiTStats() if stats is None else stats
-        for projections_by_device, ops_by_device in blocks:
-            self.run_block_(
-                hidden_host,
-                sequence_meta,
-                projections_by_device,
-                ops_by_device,
-                softmax_scale=softmax_scale,
-                causal=causal,
-                stats=stats,
-            )
-        return hidden_host
+        self._acquire_run()
+        try:
+            stats = MultiGpuH3DiTStats() if stats is None else stats
+            for projections_by_device, ops_by_device in blocks:
+                self._run_block_impl(
+                    hidden_host,
+                    sequence_meta,
+                    projections_by_device,
+                    ops_by_device,
+                    softmax_scale=softmax_scale,
+                    causal=causal,
+                    stats=stats,
+                )
+            return hidden_host
+        finally:
+            self._run_lock.release()
 
 
 __all__ = ["MultiGpuH3MaterializedRunner"]
