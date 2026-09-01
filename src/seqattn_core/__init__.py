@@ -8,19 +8,6 @@ from .config import (
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
 )
-from .dit import (
-    AttentionEpilogue,
-    H3BlockOps,
-    H3MaterializedPlan,
-    H3MaterializedProjection,
-    H3MaterializedRunner,
-    H3RecomputePlan,
-    H3RecomputeProjection,
-    H3RecomputeRunner,
-    H3SequenceMeta,
-    H3TileConfig,
-    load_h3_tile_config,
-)
 from .paged import (
     CallbackOutputSink,
     HostMemoryPlan,
@@ -41,17 +28,27 @@ from .paged import (
 )
 from .planner import AttentionPlan, build_plan
 from .projection import (
+    CrossProjection,
+    CrossRecomputeProjection,
+    KVProjector,
     KVTileProjector,
     ProjectedAttentionRunner,
+    ProjectedCrossAttentionRunner,
+    QProjector,
     QTileProjector,
     RecomputedAttentionRunner,
+    RecomputedCrossAttentionRunner,
+    SelfProjection,
+    SelfRecomputeProjection,
+    streaming_projected_cross_attention,
     streaming_projected_self_attention,
 )
 from .stats import (
-    H3DiTStats,
     PagedAttentionStats,
     ProjectedAttentionStats,
+    ProjectedCrossAttentionStats,
     RecomputedAttentionStats,
+    RecomputedCrossAttentionStats,
     StreamingAttentionStats,
 )
 from .storage import (
@@ -70,24 +67,16 @@ from .streaming import (
 )
 
 __all__ = [
-    "AttentionEpilogue",
     "AttentionPlan",
     "CallbackOutputSink",
+    "CrossProjection",
+    "CrossRecomputeProjection",
     "DeviceOutputConsumer",
     "DeviceOutputTransform",
-    "H3BlockOps",
-    "H3DiTStats",
-    "H3MaterializedPlan",
-    "H3MaterializedProjection",
-    "H3MaterializedRunner",
-    "H3RecomputePlan",
-    "H3RecomputeProjection",
-    "H3RecomputeRunner",
-    "H3SequenceMeta",
-    "H3TileConfig",
     "HostMemoryPlan",
     "HostMemorySnapshot",
     "KVLayout",
+    "KVProjector",
     "KVTileProjector",
     "MemoryPageSink",
     "MemoryPageSource",
@@ -102,11 +91,18 @@ __all__ = [
     "PagedAttentionStats",
     "ProjectedAttentionRunner",
     "ProjectedAttentionStats",
+    "ProjectedCrossAttentionRunner",
+    "ProjectedCrossAttentionStats",
     "ProjectionPipelineConfig",
+    "QProjector",
     "QTileProjector",
     "QueryTask",
     "RecomputedAttentionRunner",
     "RecomputedAttentionStats",
+    "RecomputedCrossAttentionRunner",
+    "RecomputedCrossAttentionStats",
+    "SelfProjection",
+    "SelfRecomputeProjection",
     "SimulatedIoDelay",
     "SimulatedNvmeConfig",
     "SimulatedNvmeDevice",
@@ -120,10 +116,10 @@ __all__ = [
     "build_plan",
     "build_query_tasks",
     "ephemeral_nvme_directory",
-    "load_h3_tile_config",
     "load_nvme_output",
     "streaming_attn_func",
     "streaming_attn_varlen_func",
+    "streaming_projected_cross_attention",
     "streaming_projected_self_attention",
 ]
 

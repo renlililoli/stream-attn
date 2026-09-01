@@ -1,19 +1,20 @@
 """Versioned private bridge for separately distributed SeqAttn plugins."""
 
 from .config import StreamingAttentionConfig
-from .dit.consumer import H3DeviceOutputConsumer
-from .dit.types import (
+from .dit.minimax_h3.consumer import H3DeviceOutputConsumer
+from .dit.minimax_h3.stats import H3DiTStats
+from .dit.minimax_h3.types import (
     H3BlockOps,
     H3MaterializedProjection,
     H3SequenceMeta,
     estimate_h3_consumer_workspace_bytes,
 )
-from .dit.workspace import H3BlockWorkspace
+from .dit.minimax_h3.workspace import H3BlockWorkspace
 from .planner import AttentionPlan, build_plan
 from .projection import ProjectedAttentionRunner
 from .projection.validation import validate_projected_qkv, validate_projection_hidden
 from .projection.workspace import ProjectionWorkspace
-from .stats import H3DiTStats, ProjectedAttentionStats, StreamingAttentionStats
+from .stats import ProjectedAttentionStats, StreamingAttentionStats
 from .streaming.measurement import QueryTaskMeasurement
 from .streaming.protocols import DeviceOutputConsumer, TaskDeviceOutputConsumer
 from .streaming.runner import StreamingAttentionRunner

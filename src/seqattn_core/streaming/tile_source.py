@@ -5,11 +5,15 @@ from typing import TYPE_CHECKING, Protocol
 
 import torch
 
-from ..stats import RecomputedAttentionStats, StreamingAttentionStats
+from ..stats import (
+    RecomputedAttentionStats,
+    RecomputedCrossAttentionStats,
+    StreamingAttentionStats,
+)
 from .workspace import CudaWorkspace
 
 if TYPE_CHECKING:
-    from ..projection.recompute_workspace import RecomputeWorkspace
+    from ..projection.recompute_workspace import CrossRecomputeWorkspace, RecomputeWorkspace
     from ..projection.types import KVTileProjector, QTileProjector
 
 
@@ -213,4 +217,118 @@ class RecomputedQKVTileSource:
         self.workspace.recover()
 
 
-__all__ = ["HostQKVTileSource", "QKVTileSource", "RecomputedQKVTileSource"]
+class RecomputedCrossQKVTileSource:
+    """Project Q and K/V from independent pinned host tensors on demand."""
+
+    def __init__(
+        self,
+        query_hidden_cpu: torch.Tensor,
+        context_hidden_cpu: torch.Tensor,
+        workspace: CrossRecomputeWorkspace,
+        *,
+        project_q: QTileProjector,
+        project_kv: KVTileProjector,
+        stats: RecomputedCrossAttentionStats,
+        enable_nvtx: bool,
+    ) -> None:
+        self.query_hidden_cpu = query_hidden_cpu
+        self.context_hidden_cpu = context_hidden_cpu
+        self.workspace = workspace
+        self.project_q = project_q
+        self.project_kv = project_kv
+        self.stats = stats
+        self.enable_nvtx = enable_nvtx
+
+    def _range(self, name: str):
+        return torch.cuda.nvtx.range(name) if self.enable_nvtx else nullcontext()
+
+    def _stage_hidden(
+        self,
+        hidden_cpu: torch.Tensor,
+        workspace: RecomputeWorkspace,
+        start: int,
+        stop: int,
+        compute_stream: torch.cuda.Stream,
+    ) -> torch.Tensor:
+        tokens = stop - start
+        with (
+            self._range("seqattn:cross_recompute_hidden_h2d"),
+            torch.cuda.stream(workspace.h2d_stream),
+        ):
+            if workspace.hidden_has_pending_compute:
+                workspace.h2d_stream.wait_event(workspace.hidden_free)
+            workspace.hidden[:tokens].copy_(
+                hidden_cpu[start:stop],
+                non_blocking=hidden_cpu.is_pinned(),
+            )
+            workspace.hidden_ready.record(workspace.h2d_stream)
+        compute_stream.wait_event(workspace.hidden_ready)
+        return workspace.hidden[:tokens]
+
+    @staticmethod
+    def _release_hidden(
+        workspace: RecomputeWorkspace,
+        compute_stream: torch.cuda.Stream,
+    ) -> None:
+        workspace.hidden_free.record(compute_stream)
+        workspace.hidden_has_pending_compute = True
+
+    def load_q(
+        self,
+        destination: torch.Tensor,
+        start: int,
+        stop: int,
+        compute_stream: torch.cuda.Stream,
+        stats: StreamingAttentionStats,
+    ) -> None:
+        del stats
+        hidden = self._stage_hidden(
+            self.query_hidden_cpu,
+            self.workspace.query,
+            start,
+            stop,
+            compute_stream,
+        )
+        with self._range("seqattn:cross_recompute_q_projection"):
+            self.project_q(hidden, destination, start, stop)
+        self._release_hidden(self.workspace.query, compute_stream)
+        self.stats.q_projection_chunks += 1
+        self.stats.query_hidden_h2d_bytes += hidden.numel() * hidden.element_size()
+
+    def load_kv(
+        self,
+        destination_k: torch.Tensor,
+        destination_v: torch.Tensor,
+        buffer_index: int,
+        start: int,
+        stop: int,
+        compute_stream: torch.cuda.Stream,
+        stats: StreamingAttentionStats,
+    ) -> None:
+        del buffer_index, stats
+        hidden = self._stage_hidden(
+            self.context_hidden_cpu,
+            self.workspace.context,
+            start,
+            stop,
+            compute_stream,
+        )
+        with self._range("seqattn:cross_recompute_kv_projection"):
+            self.project_kv(hidden, destination_k, destination_v, start, stop)
+        self._release_hidden(self.workspace.context, compute_stream)
+        self.stats.kv_projection_chunks += 1
+        self.stats.context_hidden_h2d_bytes += hidden.numel() * hidden.element_size()
+
+    def release_q(self, compute_stream: torch.cuda.Stream) -> None:
+        del compute_stream
+
+    def release_kv(self, buffer_index: int, compute_stream: torch.cuda.Stream) -> None:
+        del buffer_index, compute_stream
+
+
+__all__ = [
+    "HostQKVTileSource",
+    "QKVTileSource",
+    "RecomputedCrossQKVTileSource",
+    "RecomputedQKVTileSource",
+]

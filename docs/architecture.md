@@ -11,16 +11,56 @@ consumer responsibilities.
 ## Package boundary
 
 ```text
-src/seqattn_core/
-  api.py              functional contiguous-attention entry points
-  config.py           immutable execution policies
-  planner.py          workspace and tile planning
-  streaming/          pinned-host Q/K/V streaming
-  projection/         hidden-to-QKV and device-output pipelines
-  paged/              fixed-host-budget page runtime
-  storage/            aligned Q/K/V and output stores
-  dit/                generic MiniMax-H3 callback schedulers
-  kernels/            Triton kernels and launch profiles
+src/seqattn_core/    public API and implementation; no compat facades
+  _config_file.py    shared TOML path, parsing, and scalar validation
+  api.py             functional public API
+  config.py          execution policy dataclasses
+  planner.py         workspace and budget planning
+  stats.py           statistics dataclasses
+  reference.py       FP32 online-softmax CPU reference
+  validation.py      host tensor and sequence validation
+  quantization.py    per-token-group INT8 quantization
+  streaming/         contiguous CPU-DRAM -> HBM execution
+    backend.py       config loading, SM policy, and capability checks
+    flash_backends.py explicit FA2/FA3/FA4 partial-forward adapters
+    flash_split_executor.py shared FA streaming and FP32 combine schedule
+    workspace.py     persistent CUDA buffers, streams, and events
+    executor.py      built-in Triton copy/compute/output schedule
+    runner.py        validation, reference dispatch, and public runner
+    tile_source.py   host-materialized and device-recomputed Q/K/V loaders
+  paged/             fixed-host-budget page runtime
+    layout.py        page descriptors and tensor/KV layouts
+    protocols.py     PageSource/PageSink reader/writer contracts
+    memory.py        caller-owned memory source and sinks
+    memory_budget.py host allocation accounting and enforcement
+    cache.py         bounded two-region K/V cache
+    simulation.py    in-memory NVMe timing model
+    runtime/         orchestration, staging, I/O, reference, and Triton paths
+  storage/           persistent aligned backing stores
+    direct_io.py     O_DIRECT helpers and aligned bounce buffers
+    records.py       on-disk Q/KV page record construction
+    qkv_store.py     Q/KV manifest validation and page reads
+    qkv_writer.py    streaming Q/KV store construction
+    output.py        paged output writer and loader
+  projection/        hidden-state projection attention pipeline
+    types.py         projection callback contracts
+    workspace.py     persistent projection streams and buffers
+    runner.py        materialized projected attention orchestration
+    cross.py         independent query/context materialized projection
+    recompute.py     large-tile Q-only/KV-only attention orchestration
+    cross_recompute.py independent query/context direct-write recompute
+    api.py           functional convenience API
+  dit/               model-specific fixed-order DiT integrations
+    common/          internal consumers, tiled stages, masks, and validation
+    minimax_h3/      H3 materialized and recompute runners
+    wan/             Wan materialized and recompute block runners
+    ltx2/            LTX2 materialized video/audio block runner
+  benchmarking/      repository benchmark tools; excluded from release wheels
+    common.py        JSON, sequence bounds, RSS, and NVML sampling
+    streaming.py     DRAM-backed and full-GPU benchmark
+    paged.py         memory, simulated-NVMe, and NVMe benchmark
+    projection.py    projected pipeline benchmark
+  kernels/           Triton kernels and launch helpers
 
 packages/seqattn-multigpu/
   optional static and dynamic multi-GPU execution
@@ -31,6 +71,14 @@ symbols. The optional `seqattn-multigpu` distribution consumes the versioned
 private plugin bridge and must match the core version exactly.
 
 ## Execution families
+
+Backend selection and model-specific DiT settings share the same TOML document
+but retain separate tables and dataclasses. Attention owns only backend policy;
+each model owns its execution modes and projection/FFN tile topology. H3 and
+Wan use the same `execution_mode`, `projection_tile_tokens`, and
+`ffn_tile_tokens` names. LTX2 uses the same projection name but keeps separate
+video/audio FFN tiles. There is no generic `[projection]` table, and attention
+Q/KV chunks remain runtime inputs rather than deployment-wide model settings.
 
 | Family | Input policy | Q/K/V policy | Output policy |
 |---|---|---|---|
@@ -132,6 +180,30 @@ Persistent stores use a manifest plus aligned data files. `direct_io=True` is
 a requirement, not a hint: unsupported filesystems, invalid alignment, short
 I/O, or rejected `O_DIRECT` operations fail explicitly. See
 [`paged_nvme_runtime.md`](paged_nvme_runtime.md).
+
+`ProjectedCrossAttentionRunner` separates query projection from context K/V
+projection. It supports unequal packed Q/KV lengths and GQA without accepting
+arbitrary additive QxK masks. `RecomputedCrossAttentionRunner` writes Q and K/V
+directly into independent device staging workspaces.
+
+`RecomputedAttentionRunner` is independent of the materialized projection
+pipeline. It accepts Q-only and KV-only callbacks that write one complete
+attention Q or K/V tile directly into the CUDA attention workspace. It owns one
+device hidden staging buffer sized to the larger attention tile and never
+allocates host Q/K/V. Both paths use the same internal tile-source executor and
+therefore the same online-softmax, finalize, and output-consumer schedule.
+
+DiT block order is owned by architecture subpackages, while attention,
+projection, output consumers, tiled host stages, and structured mask conversion
+remain shared mechanisms. MiniMax-H3 keeps one-hidden materialized and
+two-hidden recompute contracts. Wan runs self-attention, text cross-attention,
+and FFN in that order. LTX2 runs separate video/audio self and text attention,
+materializes both audio/video cross directions before either stream is updated,
+then runs separate FFNs. Wan and LTX2 are single-GPU integrations in this
+revision.
+
+The detailed MiniMax-H3 recompute invariants are specified in
+[`dit_qkv_recompute_architecture.md`](dit_qkv_recompute_architecture.md).
 
 ## Lifetime and concurrency
 

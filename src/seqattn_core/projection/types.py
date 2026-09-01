@@ -1,61 +1,76 @@
-from typing import Protocol
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 
 import torch
 
-
-class QKVProjector(Protocol):
-    """Projects one hidden tile on the current runner compute stream.
-
-    The callback must submit all work to the current stream and return fully
-    written Q/K/V tensors on the same CUDA device as ``hidden``.
-    """
-
-    def __call__(
-        self,
-        hidden: torch.Tensor,
-        start: int,
-        stop: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
-
-
-class QTileProjector(Protocol):
-    """Writes a complete Q tile on the current runner compute stream."""
-
-    def __call__(
-        self,
-        hidden: torch.Tensor,
-        destination_q: torch.Tensor,
-        start: int,
-        stop: int,
-    ) -> None: ...
+QKVProjector = Callable[
+    [torch.Tensor, int, int],
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+]
+QProjector = Callable[[torch.Tensor, int, int], torch.Tensor]
+KVProjector = Callable[
+    [torch.Tensor, int, int],
+    tuple[torch.Tensor, torch.Tensor],
+]
+QTileProjector = Callable[[torch.Tensor, torch.Tensor, int, int], None]
+KVTileProjector = Callable[
+    [torch.Tensor, torch.Tensor, torch.Tensor, int, int],
+    None,
+]
+OutputProjector = Callable[[torch.Tensor, int, int], torch.Tensor]
+LeaseFactory = Callable[[], AbstractContextManager]
 
 
-class KVTileProjector(Protocol):
-    """Writes complete K and V tiles on the current runner compute stream."""
+@dataclass(frozen=True)
+class CrossProjection:
+    project_q: QProjector
+    project_kv: KVProjector
+    weight_lease: LeaseFactory | None = None
 
-    def __call__(
-        self,
-        hidden: torch.Tensor,
-        destination_k: torch.Tensor,
-        destination_v: torch.Tensor,
-        start: int,
-        stop: int,
-    ) -> None: ...
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
 
 
-class OutputProjector(Protocol):
-    """Projects an attention tile on the current runner compute stream.
+@dataclass(frozen=True)
+class SelfProjection:
+    project_qkv: QKVProjector
+    weight_lease: LeaseFactory | None = None
 
-    The returned tensor must be fully written on that stream, reside on the
-    planned CUDA device, and cover the complete destination range.
-    """
-
-    def __call__(
-        self,
-        attention: torch.Tensor,
-        start: int,
-        stop: int,
-    ) -> torch.Tensor: ...
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
 
 
-__all__ = ["KVTileProjector", "OutputProjector", "QKVProjector", "QTileProjector"]
+@dataclass(frozen=True)
+class SelfRecomputeProjection:
+    project_q: QTileProjector
+    project_kv: KVTileProjector
+    weight_lease: LeaseFactory | None = None
+
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
+
+
+@dataclass(frozen=True)
+class CrossRecomputeProjection:
+    project_q: QTileProjector
+    project_kv: KVTileProjector
+    weight_lease: LeaseFactory | None = None
+
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
+
+
+__all__ = [
+    "CrossProjection",
+    "CrossRecomputeProjection",
+    "KVProjector",
+    "KVTileProjector",
+    "LeaseFactory",
+    "OutputProjector",
+    "QKVProjector",
+    "QProjector",
+    "QTileProjector",
+    "SelfProjection",
+    "SelfRecomputeProjection",
+]

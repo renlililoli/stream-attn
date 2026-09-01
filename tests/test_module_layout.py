@@ -2,8 +2,6 @@ from pathlib import Path
 
 import seqattn_core
 from seqattn_core import (
-    H3MaterializedRunner,
-    H3RecomputeRunner,
     MemoryPageSource,
     NvmeQKVStore,
     NvmeQKVWriter,
@@ -17,6 +15,20 @@ from seqattn_core.benchmarking import MemorySampler, ProcessMemorySampler
 from seqattn_core.benchmarking.paged import main as paged_benchmark_main
 from seqattn_core.benchmarking.projection import main as projection_benchmark_main
 from seqattn_core.benchmarking.streaming import main as streaming_benchmark_main
+from seqattn_core.dit import minimax_h3
+from seqattn_core.dit.ltx2 import LTX2Config, LTX2MaterializedRunner, load_ltx2_config
+from seqattn_core.dit.minimax_h3 import (
+    H3Config,
+    H3MaterializedRunner,
+    H3RecomputeRunner,
+    load_h3_config,
+)
+from seqattn_core.dit.wan import (
+    WanConfig,
+    WanMaterializedRunner,
+    WanRecomputeRunner,
+    load_wan_config,
+)
 from seqattn_core.paged import MemoryPageSource as PagedMemoryPageSource
 from seqattn_core.paged import PagedAttentionRunner as PackagedPagedAttentionRunner
 from seqattn_core.paged.simulation import SimulatedNvmeDevice as PackagedSimulatedNvmeDevice
@@ -40,8 +52,48 @@ def test_subpackages_export_the_canonical_implementations():
     assert PackagedStreamingAttentionRunner is StreamingAttentionRunner
     assert H3MaterializedRunner.__name__ == "H3MaterializedRunner"
     assert H3RecomputeRunner.__name__ == "H3RecomputeRunner"
-    assert not hasattr(seqattn_core, "H3DiTRunner")
+    assert WanMaterializedRunner.__name__ == "WanMaterializedRunner"
+    assert WanRecomputeRunner.__name__ == "WanRecomputeRunner"
+    assert LTX2MaterializedRunner.__name__ == "LTX2MaterializedRunner"
+    assert H3Config.__name__ == "H3Config"
+    assert WanConfig.__name__ == "WanConfig"
+    assert LTX2Config.__name__ == "LTX2Config"
+    assert callable(load_h3_config)
+    assert callable(load_wan_config)
+    assert callable(load_ltx2_config)
+    assert not hasattr(minimax_h3, "H3TileConfig")
+    assert not hasattr(minimax_h3, "load_h3_tile_config")
+    for name in (
+        "H3Config",
+        "H3DiTRunner",
+        "H3MaterializedRunner",
+        "H3RecomputeRunner",
+        "LTX2Config",
+        "LTX2MaterializedRunner",
+        "WanConfig",
+        "WanMaterializedRunner",
+        "WanRecomputeRunner",
+    ):
+        assert not hasattr(seqattn_core, name)
+        assert not hasattr(seqattn_core.dit, name)
     assert not any(name.startswith("MultiGpu") for name in dir(seqattn_core))
+
+
+def test_dit_integrations_have_no_legacy_root_modules():
+    dit_dir = Path(seqattn_core.dit.__file__).parent
+    legacy_modules = {
+        "config.py",
+        "consumer.py",
+        "materialized_runner.py",
+        "multigpu.py",
+        "projection.py",
+        "recompute_runner.py",
+        "types.py",
+        "validation.py",
+        "workspace.py",
+    }
+    present = {name for name in legacy_modules if (dit_dir / name).exists()}
+    assert not present, f"model-specific DiT code must not live at dit root: {sorted(present)}"
 
 
 def test_repository_benchmark_modules_expose_main_functions():

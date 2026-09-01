@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import os
 from collections.abc import Collection
-from pathlib import Path
 
 import torch
 
+from .._config_file import load_config_table
 from ..kernels import triton_is_available
 from .flash_backends import flash_backend_is_available
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-    import tomli as tomllib
 
 _ALIASES = {
     "builtin": "triton",
@@ -31,23 +26,8 @@ def canonical_backend_name(name: str) -> str:
     return _ALIASES.get(normalized, normalized)
 
 
-def _default_config_path() -> Path:
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return config_home / "seqattn" / "config.toml"
-
-
 def _backend_from_config_file() -> str | None:
-    configured_path = os.environ.get("SEQATTN_CONFIG")
-    path = Path(configured_path).expanduser() if configured_path else _default_config_path()
-    if not path.exists():
-        if configured_path:
-            raise FileNotFoundError(f"SEQATTN_CONFIG does not exist: {path}")
-        return None
-    with path.open("rb") as handle:
-        document = tomllib.load(handle)
-    section = document.get("attention", {})
-    if not isinstance(section, dict):
-        raise ValueError("seqattn config [attention] must be a TOML table")  # noqa: TRY004
+    section = load_config_table("attention")
     backend = section.get("backend")
     if backend is None:
         return None

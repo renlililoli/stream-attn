@@ -124,15 +124,15 @@ policy and adapter contracts.
 pip install -e '.[cuda]'
 ```
 
-MiniMax-H3 DiT integrations should request the dedicated extra:
+Model-specific DiT integrations should request the dedicated extra:
 
 ```bash
 pip install -e '.[dit]'
 ```
 
 Both extras install the Triton runtime. The `dit` name declares that the
-consumer uses the public H3 block API rather than depending only on the generic
-attention surface.
+consumer uses a model-specific block API rather than depending only on the
+generic attention surface.
 
 The supported platform is Linux with Python 3.10+, PyTorch 2.5+, CUDA, and
 Triton 3.1+. FlashAttention packages are optional and selected only when the
@@ -141,6 +141,45 @@ requested backend and GPU architecture are compatible.
 The release wheel contains the runtime only. Benchmark modules, command-line
 entry points, plotting dependencies, experiment data, and reports remain in
 the source repository and are not installed with the package.
+
+## Deployment configuration
+
+Backend policy and model block tiling share one TOML file selected by
+`SEQATTN_CONFIG`, or `${XDG_CONFIG_HOME:-~/.config}/seqattn/config.toml` when
+present:
+
+```toml
+[attention]
+backend = "auto"
+
+[minimax_h3]
+execution_mode = "materialized" # or "recompute"
+projection_tile_tokens = 4096
+ffn_tile_tokens = 4096
+
+[wan]
+execution_mode = "materialized" # or "recompute"
+projection_tile_tokens = 2048
+ffn_tile_tokens = 2048
+
+[ltx2]
+projection_tile_tokens = 2048
+video_ffn_tile_tokens = 2048
+audio_ffn_tile_tokens = 2048
+```
+
+H3 and Wan expose an execution policy because both materialized and recompute
+runners exist. LTX2 is materialized-only and rejects `execution_mode` rather
+than silently ignoring it. Its single projection tile applies to all six
+self/text/audio-video projection runners; video and audio retain separate FFN
+tiles because their stream dimensions differ.
+
+The H3 `4096` values are measured defaults for the documented RTX 5090
+integration. Wan and LTX2 use conservative `2048` starting values and require
+calibration with the real model operators before they become performance
+claims. Attention `q_chunk_tokens` and `kv_chunk_tokens` remain explicit
+runtime inputs because they depend on attention shape, backend, GPU, CPU/NUMA
+placement, and measured pinned-memory bandwidth.
 
 ## Quick start
 
@@ -230,9 +269,20 @@ APIs. See `packages/seqattn-multigpu/README.md` for installation and usage.
 - `ProjectedAttentionRunner` connects model-owned QKV and output-projection
   callbacks through sequence-sized pinned host Q/K/V without materializing raw
   attention output on the CPU.
+- `ProjectedCrossAttentionRunner` projects independent query and context hidden
+  states, including packed unequal-length and GQA cross-attention. Materialized
+  and recomputed variants reuse the same streaming core.
 - `RecomputedAttentionRunner` regenerates complete attention-sized Q and K/V
   tiles through direct-write callbacks and allocates no host Q/K/V.
-- `H3MaterializedRunner` and `H3RecomputeRunner` provide explicit MiniMax-H3
+- `seqattn_core.dit.minimax_h3` provides explicit MiniMax-H3 materialized,
+  recompute block policies plus `H3Config`.
+- `seqattn_core.dit.wan` provides fixed-order self-attention, text
+  cross-attention, and FFN materialized/recompute block policies plus
+  `WanConfig`.
+- `seqattn_core.dit.ltx2` provides materialized video/audio self-attention,
+  text cross-attention, snapshot-safe bidirectional audio/video cross-attention,
+  separate stream FFNs, and materialized-only `LTX2Config`.
+- `H3MaterializedRunner` and `H3RecomputeRunner` keep the MiniMax-H3
   block policies with one-hidden in-place and two-hidden ping-pong contracts,
   respectively.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a

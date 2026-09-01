@@ -34,4 +34,31 @@ class RecomputeWorkspace:
         self.hidden_has_pending_compute = False
 
 
-__all__ = ["RecomputeWorkspace"]
+class CrossRecomputeWorkspace:
+    """Independent query and context staging for projected cross-attention."""
+
+    def __init__(
+        self,
+        *,
+        query_hidden_features: int,
+        context_hidden_features: int,
+        q_staging_tokens: int,
+        kv_staging_tokens: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> None:
+        self.query = RecomputeWorkspace(
+            hidden_features=query_hidden_features,
+            staging_tokens=q_staging_tokens,
+            dtype=dtype,
+            device=device,
+        )
+        self.context = RecomputeWorkspace(
+            hidden_features=context_hidden_features,
+            staging_tokens=kv_staging_tokens,
+            dtype=dtype,
+            device=device,
+        )
+
+
+__all__ = ["CrossRecomputeWorkspace", "RecomputeWorkspace"]

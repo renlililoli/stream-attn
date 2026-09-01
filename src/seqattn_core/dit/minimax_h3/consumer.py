@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from ..stats import H3DiTStats
+from .stats import H3DiTStats
 from .types import H3BlockOps
 from .workspace import H3BlockWorkspace
 

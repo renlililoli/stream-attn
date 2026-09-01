@@ -80,16 +80,30 @@ but this generic core API remains valid for standalone and paged execution.
 ## Configuration
 
 Backend selection follows the documented explicit argument/environment/TOML
-precedence. H3 QKV and MLP tiles use:
+precedence. Model execution and stage tiling use one naming scheme:
 
 ```toml
 [minimax_h3]
-qkv_tile_tokens = 4096
-mlp_tile_tokens = 4096
+execution_mode = "materialized" # or "recompute"
+projection_tile_tokens = 4096
+ffn_tile_tokens = 4096
+
+[wan]
+execution_mode = "materialized" # or "recompute"
+projection_tile_tokens = 2048
+ffn_tile_tokens = 2048
+
+[ltx2]
+projection_tile_tokens = 2048
+video_ffn_tile_tokens = 2048
+audio_ffn_tile_tokens = 2048
 ```
 
 `SEQATTN_CONFIG` may point to a shared deployment file. Do not put ComfyUI-only
-environment variables into the core configuration.
+environment variables into the core configuration. LTX2 is materialized-only;
+do not add an `execution_mode` key until a recompute runner exists. Wan and
+LTX2 defaults are conservative starting values, not calibrated performance
+defaults.
 
 `q_chunk_tokens` is normally calibrated from measured host-memory bandwidth
 and resident attention throughput. Do not select it from nominal PCIe bandwidth

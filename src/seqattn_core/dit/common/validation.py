@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from ..planner import AttentionPlan
+from ...planner import AttentionPlan
 
 
 def validate_hidden_host(
@@ -16,15 +16,15 @@ def validate_hidden_host(
     if hidden_host.device.type != "cpu" or hidden_host.ndim != 2:
         raise ValueError(f"{name} must use CPU [tokens, hidden_features] layout")
     if hidden_host.shape[1] != hidden_features:
-        raise ValueError(f"{name} feature size does not match the H3 runner")
+        raise ValueError(f"{name} feature size does not match the runner")
     if hidden_host.shape[0] > plan.max_q_tokens or hidden_host.shape[0] > plan.max_kv_tokens:
-        raise ValueError(f"{name} token count exceeds the H3 runner plan")
+        raise ValueError(f"{name} token count exceeds the runner plan")
     if hidden_host.dtype != plan.dtype:
-        raise ValueError(f"{name} dtype does not match the H3 runner plan")
+        raise ValueError(f"{name} dtype does not match the runner plan")
     if not hidden_host.is_contiguous():
         raise ValueError(f"{name} must be contiguous")
     if require_pinned and not hidden_host.is_pinned():
-        raise ValueError(f"asynchronous H3 execution requires pinned {name}")
+        raise ValueError(f"asynchronous execution requires pinned {name}")
 
 
 def require_distinct_storage(source: torch.Tensor, destination: torch.Tensor) -> None:

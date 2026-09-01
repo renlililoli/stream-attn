@@ -5,9 +5,10 @@ from collections.abc import Iterable
 
 import torch
 
-from ..projection import ProjectedAttentionRunner
-from ..stats import H3DiTStats
+from ...projection import ProjectedAttentionRunner
+from ..common.validation import validate_hidden_host
 from .consumer import H3DeviceOutputConsumer
+from .stats import H3DiTStats
 from .types import (
     H3BlockOps,
     H3MaterializedPlan,
@@ -15,7 +16,6 @@ from .types import (
     H3SequenceMeta,
     estimate_h3_materialized_aux_workspace_bytes,
 )
-from .validation import validate_hidden_host
 from .workspace import H3BlockWorkspace
 
 

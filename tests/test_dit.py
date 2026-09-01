@@ -6,24 +6,24 @@ import pytest
 import torch
 
 from seqattn_core import (
+    ProjectedAttentionRunner,
+    ProjectionPipelineConfig,
+    RecomputedAttentionRunner,
+    StreamingAttentionConfig,
+    build_plan,
+)
+from seqattn_core.dit.minimax_h3 import (
     H3BlockOps,
+    H3Config,
     H3DiTStats,
     H3MaterializedProjection,
     H3MaterializedRunner,
     H3RecomputeProjection,
     H3RecomputeRunner,
     H3SequenceMeta,
-    H3TileConfig,
-    ProjectedAttentionRunner,
-    ProjectionPipelineConfig,
-    RecomputedAttentionRunner,
-    StreamingAttentionConfig,
-    build_plan,
-    load_h3_tile_config,
-)
-from seqattn_core.dit import (
     estimate_h3_materialized_aux_workspace_bytes,
     estimate_h3_recompute_aux_workspace_bytes,
+    load_h3_config,
 )
 from seqattn_core.kernels import triton_is_available
 
@@ -63,28 +63,28 @@ def test_h3_workspace_estimates_and_sequence_validation():
         H3SequenceMeta(torch.tensor([0, 5, 4, 7], dtype=torch.int32)).validate(7)
 
 
-def test_h3_tile_config_from_toml(tmp_path):
+def test_h3_config_from_toml(tmp_path):
     path = tmp_path / "seqattn.toml"
     path.write_text(
         "[attention]\nbackend = 'auto'\n\n"
-        "[minimax_h3]\nqkv_tile_tokens = 1024\nmlp_tile_tokens = 512\n"
+        "[minimax_h3]\nprojection_tile_tokens = 1024\nffn_tile_tokens = 512\n"
     )
-    assert load_h3_tile_config(path) == H3TileConfig(
-        qkv_tile_tokens=1024,
-        mlp_tile_tokens=512,
+    assert load_h3_config(path) == H3Config(
+        projection_tile_tokens=1024,
+        ffn_tile_tokens=512,
     )
 
-    path.write_text("[minimax_h3]\nqkv_tile_tokens = 0\n")
-    with pytest.raises(ValueError, match="qkv_tile_tokens"):
-        load_h3_tile_config(path)
+    path.write_text("[minimax_h3]\nprojection_tile_tokens = 0\n")
+    with pytest.raises(ValueError, match="projection_tile_tokens"):
+        load_h3_config(path)
 
 
-def test_h3_tile_config_defaults_to_tuned_block_tiles(tmp_path, monkeypatch):
+def test_h3_config_defaults_to_tuned_block_tiles(tmp_path, monkeypatch):
     monkeypatch.delenv("SEQATTN_CONFIG", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert load_h3_tile_config() == H3TileConfig(
-        qkv_tile_tokens=4096,
-        mlp_tile_tokens=4096,
+    assert load_h3_config() == H3Config(
+        projection_tile_tokens=4096,
+        ffn_tile_tokens=4096,
     )
 
 

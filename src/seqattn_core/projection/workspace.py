@@ -32,9 +32,7 @@ class ProjectionWorkspace:
         self.projected_ready = [torch.cuda.Event() for _ in self.hidden]
         self.copy_done = [torch.cuda.Event() for _ in self.hidden]
         self.busy = [False for _ in self.hidden]
-        self.keepalive: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None] = [
-            None for _ in self.hidden
-        ]
+        self.keepalive: list[object | None] = [None for _ in self.hidden]
 
     def release_slot(self, slot: int) -> None:
         self.keepalive[slot] = None

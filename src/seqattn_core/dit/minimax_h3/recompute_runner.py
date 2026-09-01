@@ -5,9 +5,10 @@ from collections.abc import Iterable
 
 import torch
 
-from ..projection import RecomputedAttentionRunner
-from ..stats import H3DiTStats
+from ...projection import RecomputedAttentionRunner
+from ..common.validation import require_distinct_storage, validate_hidden_host
 from .consumer import H3DeviceOutputConsumer
+from .stats import H3DiTStats
 from .types import (
     H3BlockOps,
     H3RecomputePlan,
@@ -15,7 +16,6 @@ from .types import (
     H3SequenceMeta,
     estimate_h3_recompute_aux_workspace_bytes,
 )
-from .validation import require_distinct_storage, validate_hidden_host
 from .workspace import H3BlockWorkspace
 
 
