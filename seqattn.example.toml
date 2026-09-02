@@ -7,8 +7,19 @@ backend = "auto"
 # QKV projection and complete MLP tile sizes are independent of the resident-Q
 # and streamed-K/V chunk sizes exposed by the ComfyUI node.
 execution_mode = "materialized"
+attention_mode = "dense"
 projection_tile_tokens = 4096
 ffn_tile_tokens = 4096
+
+# sol_streaming is an approximate, single-GPU H3 self-attention algorithm.
+# It requires seqattn-core[sparse], BF16, head dimension 128, equal Q/KV heads,
+# non-causal attention, explicit denoising metadata, and one exact prefix per
+# packed segment. These values keep the first 20% of steps and first two blocks
+# dense before enabling the approximate route policy.
+# attention_mode = "sol_streaming"
+# sol_tau = 1.0
+# sol_first_dense_step_fraction = 0.2
+# sol_first_dense_layers = 2
 
 [wan]
 # Wan supports both materialized and recompute execution. These tile sizes are

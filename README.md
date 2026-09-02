@@ -1,13 +1,18 @@
 # seqattn-core
 
-`seqattn-core` is an inference-only runtime for exact dense attention when the
-complete Q/K/V working set does not fit in GPU memory. It keeps a bounded query
-block in HBM, streams K/V from pinned host memory, and maintains the exact
-online-softmax recurrence in FP32.
+`seqattn-core` is an inference-only runtime for attention when the complete
+Q/K/V working set does not fit in GPU memory. Its default dense algorithms keep
+a bounded query block in HBM, stream K/V from pinned host memory, and maintain
+the exact online-softmax recurrence in FP32.
 
 The package also provides a fixed-host-budget paged runtime for DRAM and aligned
 NVMe stores. The distribution contains only `seqattn_core`; the former
 compatibility facade is not shipped.
+
+MiniMax-H3 can optionally select the approximate `sol_streaming` algorithm. It
+uses Sol-style 64-token routing while preserving SeqAttn's bounded-HBM streamed
+execution. This mode is explicit, single-GPU, and separate from the dense
+backend selector.
 
 SeqAttn is integrated into ComfyUI through
 [MiniMax H3 SeqAttn for ComfyUI](https://github.com/renlililoli/minimax-h3-seq-chunk-attn).
@@ -118,6 +123,20 @@ kernel or the reference implementation. See
 [backend selection and validation](docs/backend_selection.md) for the full
 policy and adapter contracts.
 
+`sol_streaming` is not another value of `StreamingAttentionConfig.backend`.
+It is an approximate H3 attention algorithm selected with
+`minimax_h3.attention_mode`. V1 supports BF16 non-causal self-attention with
+head dimension 128, equal Q/KV head counts, packed segments, and SM80 or newer.
+It fails on unsupported contracts instead of falling back to dense attention.
+
+Every resident Q chunk still loads or projects every K/V tile. The algorithm
+adds one complete K/V summary prepass per packed segment, then routes each
+64-token interaction block to either exact attention or a K-centroid/V-sum
+approximation. It can reduce attention arithmetic, but it does not remove the
+full K/V transfer traffic; recompute mode also repeats K/V projection for the
+summary prepass. No speedup is claimed without model- and hardware-specific
+measurement.
+
 ## Installation
 
 ```bash
@@ -133,6 +152,12 @@ pip install -e '.[dit]'
 Both extras install the Triton runtime. The `dit` name declares that the
 consumer uses a model-specific block API rather than depending only on the
 generic attention surface.
+
+Install the explicit sparse algorithm surface with:
+
+```bash
+pip install -e '.[sparse]'
+```
 
 The supported platform is Linux with Python 3.10+, PyTorch 2.5+, CUDA, and
 Triton 3.1+. FlashAttention packages are optional and selected only when the
@@ -154,8 +179,12 @@ backend = "auto"
 
 [minimax_h3]
 execution_mode = "materialized" # or "recompute"
+attention_mode = "dense" # or "sol_streaming"
 projection_tile_tokens = 4096
 ffn_tile_tokens = 4096
+sol_tau = 1.0
+sol_first_dense_step_fraction = 0.2
+sol_first_dense_layers = 2
 
 [wan]
 execution_mode = "materialized" # or "recompute"
@@ -168,6 +197,11 @@ projection_tile_tokens = 2048
 video_ffn_tile_tokens = 2048
 audio_ffn_tile_tokens = 2048
 ```
+
+The Sol defaults keep the first 20% of denoising steps and the first two H3
+blocks dense. Sparse calls require explicit zero-based step/block indices and
+`exact_prefix_tokens` for every packed segment. Exact prefixes apply to both Q
+and K/V route blocks and round outward to complete 64-token blocks.
 
 H3, Wan, and LTX2 use the same `execution_mode`, `projection_tile_tokens`,
 and FFN tile naming rules. LTX2 keeps separate video/audio FFN tiles because
@@ -286,6 +320,10 @@ APIs. See `packages/seqattn-multigpu/README.md` for installation and usage.
 - `H3MaterializedRunner` and `H3RecomputeRunner` keep the MiniMax-H3
   block policies with one-hidden in-place and two-hidden ping-pong contracts,
   respectively.
+- `seqattn_core.sparse` provides the strict `SolStreamingPlan`, reusable
+  `SolStreamingAttentionRunner`, statistics, and a small-shape semantic
+  reference. Sparse symbols are intentionally absent from the core package
+  root and the multi-GPU plugin bridge.
 - `PagedAttentionRunner` executes through `PageSource` and `PageSink` under a
   fixed operator-owned host-memory budget.
 - `NvmeQKVWriter`, `NvmeQKVStore`, and `NvmeOutputSink` provide aligned,
@@ -301,6 +339,12 @@ See [architecture notes](docs/architecture.md) for package boundaries, memory
 hierarchy, recurrence details, and pipeline invariants. The split DiT storage
 policies and direct-write projector contracts are documented in
 [H3 DiT runtime contracts](docs/design_dit_runtime.md).
+
+The routing design is informed by NVIDIA's Apache-2.0
+[Sol-Attn implementation](https://github.com/NVlabs/Sana/tree/main/techniques/sparse_backends/sol_attn)
+and the [Sol-Attention paper](https://arxiv.org/abs/2607.24027). SeqAttn's
+implementation is adapted independently to resident-Q, streamed-K/V execution;
+it does not vendor the upstream architecture-specific kernels.
 
 ## Paging and NVMe
 
@@ -384,11 +428,13 @@ memory-budget enforcement, and runner reuse.
 
 Current scope:
 
-- Linux, inference-only dense attention. Core contiguous DRAM, projected,
-  recompute, paged, and NVMe execution is single-GPU. Multi-GPU execution is
-  available only through the separately installed `seqattn-multigpu` plugin.
-- No backward pass, dropout, arbitrary sparse masks, model-weight paging,
-  cross-request HBM residency, io_uring, or GPUDirect Storage.
+- Linux and inference-only execution. Dense attention is exact; H3
+  `sol_streaming` is an explicit approximate mode. Core contiguous DRAM,
+  projected, recompute, paged, NVMe, and sparse execution is single-GPU.
+  Multi-GPU execution is available only through `seqattn-multigpu`.
+- No backward pass, dropout, arbitrary user-provided sparse masks,
+  model-weight paging, cross-request HBM residency, io_uring, or GPUDirect
+  Storage.
 - Caller-owned complete tensors used through memory adapters are outside the
   paged operator's host-memory accounting.
 - Physical NVMe performance claims require a separately validated local device;

@@ -2,8 +2,10 @@
 
 Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
-SeqAttn is an inference-only exact dense-attention runtime for workloads whose
-complete Q/K/V working set does not fit in GPU memory. The core package owns
+SeqAttn is an inference-only attention runtime for workloads whose complete
+Q/K/V working set does not fit in GPU memory. Dense execution is exact;
+MiniMax-H3 also has an explicit approximate Sol-style mode. The core
+package owns
 generic planning, execution, storage, and callback orchestration. Model
 loading, checkpoint conversion, block eviction, and UI integration remain
 consumer responsibilities.
@@ -20,6 +22,7 @@ src/seqattn_core/    public API and implementation; no compat facades
   reference.py       FP32 online-softmax CPU reference
   validation.py      host tensor and sequence validation
   quantization.py    per-token-group INT8 quantization
+  sparse/            Sol plan, streamed runner, stats, and semantic reference
   streaming/         contiguous CPU-DRAM -> HBM execution
     backend.py       config loading, SM policy, and capability checks
     flash_backends.py explicit FA2/FA3/FA4 partial-forward adapters
@@ -61,6 +64,8 @@ src/seqattn_core/    public API and implementation; no compat facades
     paged.py         memory, simulated-NVMe, and NVMe benchmark
     projection.py    projected pipeline benchmark
   kernels/           Triton kernels and launch helpers
+    sol_preprocess.py KV summaries, diagonal statistics, and route thresholds
+    sol_streaming.py exact/approximate streamed online-softmax update
 
 packages/seqattn-multigpu/
   planning.py       immutable per-device plans and static query partitioning
@@ -92,6 +97,7 @@ Q/KV chunks remain runtime inputs rather than deployment-wide model settings.
 | Recomputed attention | Caller-owned pinned hidden | Q and K/V regenerated directly into CUDA tiles | Required device consumer |
 | Paged attention | `PageSource` and `PageSink` | Bounded staging and optional bounded K/V cache | Page sink |
 | H3 block runtime | Consumer callbacks and pinned hidden | Explicit materialized or recompute policy | Attention epilogue and MLP tiles |
+| H3 Sol streaming | Same H3 callbacks | Full KV summary pass plus exact/centroid-routed streaming | Required device consumer |
 
 Choose a family from data ownership and capacity constraints. Paged execution
 is for bounded host memory or page-backed storage; it is not a faster wrapper
@@ -115,6 +121,30 @@ Packed `cu_seqlens` are hard boundaries: no Q or K/V tile may cross a segment.
 Exact dense attention observes all K/V for a segment before finalizing Q.
 Causal alignment uses bottom-right positions when Q and K lengths differ.
 
+## Approximate Sol recurrence
+
+`sol_streaming` preserves the same resident-Q bound and FP32 online-softmax
+state but changes the contribution of selected 64-token K/V blocks:
+
+1. A per-segment prepass computes BF16 K centroids, BF16 V sums, and FP32
+   diagonal K-centroid statistics.
+2. Each resident 64-token Q block computes a route threshold from its centroid.
+3. The local +/-1 block band, configured exact Q/KV prefixes, and blocks above
+   the threshold use exact token attention.
+4. Other blocks use one centroid score with the V sum and account for the true
+   token count in the online-softmax normalizer.
+
+Packed segment boundaries remain absolute. Exact prefixes apply to both query
+and key/value blocks and round outward to a full 64-token block. The path is
+approximate because unrouted tokens share a block score and averaged value.
+
+This changes arithmetic, not data availability: every Q chunk still consumes
+all K/V blocks, and a complete K/V summary pass is required first. Materialized
+H3 reads complete host K/V for that extra pass. Recompute H3 performs one extra
+complete K/V projection pass, then continues to regenerate K/V for each Q
+chunk. Missing metadata, unsupported shape/dtype/device contracts, causal mode,
+and insufficient workspace fail explicitly.
+
 ## Workspace ownership
 
 `workspace_budget_bytes` covers only CUDA allocations owned by SeqAttn:
@@ -128,6 +158,11 @@ Causal alignment uses bottom-right positions when Q and K lengths differ.
 It excludes the CUDA context, model weights, caller tensors, callback
 temporaries, and the whole-process memory peak. The plan builder aligns manually
 specified tiles to the selected kernel block dimensions.
+
+The Sol plan adds K-centroid and V-sum arrays for the maximum segment block
+count, FP32 per-head K statistics, per-resident-Q thresholds, and two route
+counters. Dense and sparse execution borrow one `CudaWorkspace` and one
+single-flight lock; their capacities are budgeted together.
 
 Chunk axes are independent:
 
@@ -230,9 +265,14 @@ Returned or direct-written tensors must remain valid until that stream has
 consumed them. Failure recovery restores runner slot and event state, but does
 not make consumer callbacks transactional.
 
+Dense and Sol H3 calls on one constructed runner are serialized by the same
+single-flight lock because they reuse the same CUDA buffers and events.
+
 ## Correctness boundaries
 
 - Execution is inference-only.
+- Dense BF16/FP16 attention remains exact; `sol_streaming` is explicitly
+  approximate.
 - BF16 and FP16 storage are exact with respect to the same online-softmax
   algorithm; INT8 K/V is explicitly approximate.
 - Asynchronous host paths require pinned tensors unless an API explicitly

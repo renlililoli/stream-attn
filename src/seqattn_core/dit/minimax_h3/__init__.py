@@ -1,4 +1,4 @@
-from .config import H3Config, load_h3_config
+from .config import H3AttentionMode, H3Config, load_h3_config
 from .factory import H3Runner, build_h3_runner
 from .materialized_runner import H3MaterializedRunner
 from .recompute_runner import H3RecomputeRunner
@@ -7,6 +7,7 @@ from .types import (
     AttentionEpilogue,
     DeviceTileOp,
     H3BlockOps,
+    H3DenoisingStep,
     H3MaterializedPlan,
     H3MaterializedProjection,
     H3RecomputePlan,
@@ -21,8 +22,10 @@ from .types import (
 __all__ = [
     "AttentionEpilogue",
     "DeviceTileOp",
+    "H3AttentionMode",
     "H3BlockOps",
     "H3Config",
+    "H3DenoisingStep",
     "H3DiTStats",
     "H3MaterializedPlan",
     "H3MaterializedProjection",

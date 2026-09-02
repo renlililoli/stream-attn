@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from itertools import pairwise
 
 import torch
 
@@ -72,14 +73,42 @@ class H3SequenceMeta:
     cu_seqlens: torch.Tensor
     position_ids_gpu: torch.Tensor | None = None
     modulation_row_ids_gpu: torch.Tensor | None = None
+    exact_prefix_tokens: tuple[int, ...] | None = None
 
     def validate(self, tokens: int) -> None:
-        validate_cu_seqlens(
+        bounds = validate_cu_seqlens(
             self.cu_seqlens,
             tokens,
             "cu_seqlens",
             expected_dtype=torch.int32,
         )
+        if self.exact_prefix_tokens is None:
+            return
+        if len(self.exact_prefix_tokens) != len(bounds) - 1:
+            raise ValueError("exact_prefix_tokens must contain one value per packed segment")
+        for index, (prefix, (start, stop)) in enumerate(
+            zip(self.exact_prefix_tokens, pairwise(bounds))
+        ):
+            if isinstance(prefix, bool) or not isinstance(prefix, int):
+                raise TypeError(f"exact_prefix_tokens[{index}] must be an integer")
+            if not 0 <= prefix <= stop - start:
+                raise ValueError(f"exact_prefix_tokens[{index}] exceeds its packed segment")
+
+
+@dataclass(frozen=True)
+class H3DenoisingStep:
+    step_index: int
+    total_steps: int
+
+    def validate(self) -> None:
+        if isinstance(self.step_index, bool) or not isinstance(self.step_index, int):
+            raise TypeError("step_index must be an integer")
+        if isinstance(self.total_steps, bool) or not isinstance(self.total_steps, int):
+            raise TypeError("total_steps must be an integer")
+        if self.total_steps <= 0:
+            raise ValueError("total_steps must be positive")
+        if not 0 <= self.step_index < self.total_steps:
+            raise ValueError("step_index must lie within [0, total_steps)")
 
 
 def _validate_aux_workspace_args(
@@ -172,6 +201,7 @@ __all__ = [
     "AttentionEpilogue",
     "DeviceTileOp",
     "H3BlockOps",
+    "H3DenoisingStep",
     "H3MaterializedPlan",
     "H3MaterializedProjection",
     "H3RecomputePlan",

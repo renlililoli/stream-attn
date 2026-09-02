@@ -18,7 +18,7 @@ equivalent to:
 
 ```text
 Q, K, V = projection_and_attention_preprocessing(X0)
-O       = exact_dense_attention(Q, K, V)
+O       = configured_attention(Q, K, V)
 X1      = attention_epilogue(O, X0)
 X2      = mlp(X1)
 ```
@@ -26,6 +26,10 @@ X2      = mlp(X1)
 `attention_epilogue` may include output projection, gating, and residual work.
 `mlp` receives and returns complete device tiles. SeqAttn does not prescribe a
 checkpoint-specific operator decomposition inside either callback.
+
+Dense mode preserves exact attention. `sol_streaming` changes only the attention
+line to an explicit block approximation; callback ownership and block order stay
+unchanged.
 
 ## Explicit storage policies
 
@@ -39,6 +43,29 @@ The caller selects one of two runners. There is no automatic policy switch.
 Materialized execution minimizes repeated projection but uses sequence-sized
 host Q/K/V. Recompute reduces host activation memory but repeats K/V projection
 for every resident Q pass.
+
+## Explicit attention policy
+
+`H3Config.attention_mode` is `"dense"` by default and may be set to
+`"sol_streaming"`. This is independent from `execution_mode`: materialized and
+recompute storage can each execute either dense or Sol attention. It is also
+independent from `StreamingAttentionConfig.backend`; Sol V1 requires the built-in
+Triton backend.
+
+For every block call in Sol mode, the consumer supplies:
+
+- `H3DenoisingStep(step_index, total_steps)` with zero-based indices;
+- a non-negative `block_index`;
+- `H3SequenceMeta.exact_prefix_tokens`, one value per packed segment.
+
+With the defaults, `ceil(total_steps * 0.2)` early steps and block indices below
+2 stay dense. Remaining blocks use `tau=1.0`. Policy-selected dense warmup is
+intentional; missing metadata, causal attention, unsupported hardware/dtype/head
+layout, and insufficient workspace raise errors without a compatibility fallback.
+
+Sol V1 is single-GPU BF16 non-causal self-attention on SM80 or newer, with head
+dimension 128 and equal Q/KV head counts. Every Q chunk still scans all K/V.
+Each segment adds one K/V summary prepass before routed attention.
 
 ## Public callback types
 
@@ -98,7 +125,7 @@ place:
 hidden host source
   -> projection tiles
   -> complete pinned host Q/K/V
-  -> exact attention with device output consumer
+  -> configured dense or Sol attention with device output consumer
   -> attention epilogue
   -> MLP tiles
   -> completed hidden D2H into the original allocation
@@ -108,6 +135,9 @@ Complete Q/K/V production finishes before attention starts. During attention,
 the original hidden values remain available as residual input. A complete raw
 attention output and complete post-attention hidden tensor are never stored on
 the host.
+
+In Sol mode, the complete materialized K/V is streamed once for summary creation
+and again for each resident Q chunk.
 
 `run_blocks_` repeats this in-place contract over an iterable of
 `(H3MaterializedProjection, H3BlockOps)` pairs and returns the original hidden
@@ -122,7 +152,7 @@ hidden tensors:
 immutable source hidden tile
   -> Q direct-write for one resident Q range
   -> repeated K/V direct-write for the complete segment
-  -> exact attention device output
+  -> configured dense or Sol attention device output
   -> attention epilogue and MLP
   -> completed hidden D2H into destination
 ```
@@ -133,6 +163,9 @@ between blocks and returns whichever tensor contains the final result.
 
 The recompute workspace owns one hidden staging allocation sized to
 `max(q_chunk_tokens, kv_chunk_tokens)`. It allocates no complete host Q/K/V.
+
+In Sol mode, recompute performs one extra complete K/V projection pass for the
+summary, followed by the normal complete K/V regeneration for each Q chunk.
 
 ## Sequence metadata
 
@@ -146,6 +179,10 @@ The recompute workspace owns one hidden staging allocation sized to
 Empty packed segments are allowed. Projection and attention tasks must still
 respect every boundary.
 
+`exact_prefix_tokens` is optional for dense execution and mandatory for Sol. Each
+value is a token count within its segment. The exact region applies to both Q
+and K/V and rounds outward to complete 64-token route blocks.
+
 ## Independent chunk axes
 
 | Axis | Used by | Selection basis |
@@ -154,6 +191,7 @@ respect every boundary.
 | `q_chunk_tokens` | Attention resident Q | Measured host-memory roofline and CUDA workspace |
 | `kv_chunk_tokens` | Attention K/V tile | Copy/update overlap after Q is calibrated |
 | `ffn_tile_tokens` | Attention consumer and FFN | Consumer kernel saturation and auxiliary workspace |
+| 64-token Sol route block | Sparse routing only | Fixed V1 algorithm contract |
 
 No equality relationship is required. The default H3 consumer configuration
 is:
@@ -161,8 +199,12 @@ is:
 ```toml
 [minimax_h3]
 execution_mode = "materialized"
+attention_mode = "dense"
 projection_tile_tokens = 4096
 ffn_tile_tokens = 4096
+sol_tau = 1.0
+sol_first_dense_step_fraction = 0.2
+sol_first_dense_layers = 2
 ```
 
 `load_h3_config()` reads `SEQATTN_CONFIG` or the default SeqAttn TOML
@@ -186,12 +228,20 @@ This compares logical sequence-sized activation storage only. It excludes
 allocator overhead, model weights, callback-owned buffers, CUDA context, and
 SeqAttn auxiliary workspaces.
 
+The Sol CUDA workspace additionally holds K centroids, V sums, FP32 diagonal K
+statistics, Q-block thresholds, and route counters. `build_sol_streaming_plan()`
+accounts for these allocations together with the borrowed dense workspace.
+
 ## Reuse and concurrency
 
 H3 runners, their projection runners, and their attention runners are
 single-flight. Reuse the stack for compatible serial blocks or denoise steps.
 Create separate stacks for true concurrency. Do not overlap calls that share
 persistent streams, events, or buffers.
+
+Dense and Sol calls constructed by `build_h3_runner()` share one CUDA workspace
+and one single-flight lock. Sparse symbols remain outside the multi-GPU plugin
+API; V1 has no distributed execution contract.
 
 The current materialized-versus-recompute calibration is recorded in
 [`benchmark_h3_qkv_recompute_profile_2026-08-27.md`](benchmark_h3_qkv_recompute_profile_2026-08-27.md).

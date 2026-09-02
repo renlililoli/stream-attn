@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextlib import nullcontext, suppress
 
 import torch
@@ -52,20 +53,38 @@ class _RecomputedAttentionBase:
         stats: RecomputedStats,
         range_name: str,
     ) -> None:
+        def execute(source: QKVTileSource) -> None:
+            self.attention.run_with_qkv_source(
+                source,
+                q_tokens,
+                kv_tokens,
+                cu_seqlens_q,
+                cu_seqlens_kv,
+                output_consumer=output_consumer,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                stats=stats.attention,
+            )
+
+        self._run_source_executor(
+            source,
+            execute=execute,
+            stats=stats,
+            range_name=range_name,
+        )
+
+    def _run_source_executor(
+        self,
+        source: QKVTileSource,
+        *,
+        execute: Callable[[QKVTileSource], None],
+        stats: RecomputedStats,
+        range_name: str,
+    ) -> None:
         started = time.perf_counter()
         try:
             with self._range(range_name):
-                self.attention.run_with_qkv_source(
-                    source,
-                    q_tokens,
-                    kv_tokens,
-                    cu_seqlens_q,
-                    cu_seqlens_kv,
-                    output_consumer=output_consumer,
-                    softmax_scale=softmax_scale,
-                    causal=causal,
-                    stats=stats.attention,
-                )
+                execute(source)
         except Exception:
             with suppress(Exception):
                 torch.cuda.synchronize(self.plan.device)
@@ -133,8 +152,62 @@ class RecomputedAttentionRunner(_RecomputedAttentionBase):
         causal: bool = False,
         stats: RecomputedAttentionStats | None = None,
     ) -> None:
-        self.validate_hidden(hidden_cpu)
+        def execute(source: QKVTileSource) -> None:
+            self.attention.run_with_qkv_source(
+                source,
+                hidden_cpu.shape[0],
+                hidden_cpu.shape[0],
+                cu_seqlens,
+                cu_seqlens,
+                output_consumer=output_consumer,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                stats=stats.attention,
+            )
+
         stats = RecomputedAttentionStats() if stats is None else stats
+        self._run_with_source_executor(
+            hidden_cpu,
+            project_q=project_q,
+            project_kv=project_kv,
+            execute=execute,
+            stats=stats,
+            range_name="seqattn:recomputed_attention",
+        )
+
+    @single_flight
+    @torch.inference_mode()
+    def run_with_source_executor(
+        self,
+        hidden_cpu: torch.Tensor,
+        *,
+        project_q: QTileProjector,
+        project_kv: KVTileProjector,
+        execute: Callable[[QKVTileSource], None],
+        stats: RecomputedAttentionStats | None = None,
+        range_name: str = "seqattn:recomputed_attention",
+    ) -> None:
+        stats = RecomputedAttentionStats() if stats is None else stats
+        self._run_with_source_executor(
+            hidden_cpu,
+            project_q=project_q,
+            project_kv=project_kv,
+            execute=execute,
+            stats=stats,
+            range_name=range_name,
+        )
+
+    def _run_with_source_executor(
+        self,
+        hidden_cpu: torch.Tensor,
+        *,
+        project_q: QTileProjector,
+        project_kv: KVTileProjector,
+        execute: Callable[[QKVTileSource], None],
+        stats: RecomputedAttentionStats,
+        range_name: str,
+    ) -> None:
+        self.validate_hidden(hidden_cpu)
         self._record_common_stats(stats, hidden_cpu.shape[0], hidden_cpu.element_size())
         source = RecomputedQKVTileSource(
             hidden_cpu,
@@ -144,17 +217,11 @@ class RecomputedAttentionRunner(_RecomputedAttentionBase):
             stats=stats,
             enable_nvtx=self.plan.enable_nvtx,
         )
-        self._run_source(
+        self._run_source_executor(
             source,
-            q_tokens=hidden_cpu.shape[0],
-            kv_tokens=hidden_cpu.shape[0],
-            cu_seqlens_q=cu_seqlens,
-            cu_seqlens_kv=cu_seqlens,
-            output_consumer=output_consumer,
-            softmax_scale=softmax_scale,
-            causal=causal,
+            execute=execute,
             stats=stats,
-            range_name="seqattn:recomputed_attention",
+            range_name=range_name,
         )
 
 

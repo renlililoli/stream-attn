@@ -15,6 +15,24 @@ Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
 Aliases are accepted for compatibility, but statistics record canonical names.
 
+## Algorithm mode versus backend
+
+`StreamingAttentionConfig.backend` selects how one dense Q-by-K/V tile is
+computed. It does not select a sparse attention algorithm.
+
+MiniMax-H3 separately supports:
+
+```toml
+[minimax_h3]
+attention_mode = "dense" # or "sol_streaming"
+```
+
+`sol_streaming` is an approximate routing algorithm built on SeqAttn's Triton
+streaming runtime. It must not be passed as a backend name and is never selected
+by `backend="auto"`. The H3 policy can deliberately keep configured early
+denoising steps and blocks dense, but unsupported sparse contracts fail
+explicitly rather than silently falling back.
+
 ## Configuration precedence
 
 `StreamingAttentionConfig.backend=None` resolves while building the immutable
@@ -68,13 +86,20 @@ requires Blackwell-class SM100 or newer.
 | Causal streaming with external offsets | Built-in Triton; automatic selection falls back, explicit Flash selection fails |
 | Projected attention | Built-in Triton only |
 | Recomputed attention | Built-in Triton only |
-| H3 materialized or recompute runner | Built-in Triton only |
+| H3 dense materialized or recompute runner | Built-in Triton only |
+| H3 `sol_streaming` | Built-in Triton, BF16, head dimension 128, equal Q/KV heads, non-causal self-attention, SM80+, single GPU |
 | Paged CUDA runtime | Built-in Triton only |
 | Paged CPU runtime | `reference` only |
 
 The Flash adapters produce a partial normalized output and FP32 LSE for one Q
 tile and one K/V tile. SeqAttn owns the common streaming schedule and FP32
 log-sum-exp combine path.
+
+The Sol path adds one K/V summary prepass per packed segment. It still scans and
+transfers every K/V tile for every resident Q chunk, and recompute mode must
+project K/V once more for the summary. `effective_density` measures exact route
+blocks divided by all routed blocks; it is not a transfer-density or end-to-end
+speedup metric.
 
 ## Validation scope
 
@@ -99,3 +124,5 @@ The consolidated A30 FA2 and RTX 5090 FA4/Triton validation is in
   requested plan.
 - `no compatible seqattn backend is available` means every automatic candidate
   was unavailable or disallowed by the selected runtime.
+- A `sol_streaming requires ...` error means the approximate H3 contract is
+  incomplete or unsupported; the runtime does not substitute dense execution.

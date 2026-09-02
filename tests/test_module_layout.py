@@ -46,6 +46,13 @@ from seqattn_core.projection import ProjectedAttentionRunner as PackagedProjecte
 from seqattn_core.projection import (
     RecomputedAttentionRunner as PackagedRecomputedAttentionRunner,
 )
+from seqattn_core.sparse import (
+    SolStreamingAttentionRunner,
+    SolStreamingPlan,
+    SolStreamingStats,
+    build_sol_streaming_plan,
+    sol_streaming_reference,
+)
 from seqattn_core.storage import NvmeQKVStore as PackagedNvmeQKVStore
 from seqattn_core.storage import NvmeQKVWriter as PackagedNvmeQKVWriter
 from seqattn_core.streaming import StreamingAttentionRunner as PackagedStreamingAttentionRunner
@@ -60,6 +67,11 @@ def test_subpackages_export_the_canonical_implementations():
     assert PackagedProjectedAttentionRunner is ProjectedAttentionRunner
     assert PackagedRecomputedAttentionRunner is RecomputedAttentionRunner
     assert PackagedStreamingAttentionRunner is StreamingAttentionRunner
+    assert SolStreamingAttentionRunner.__name__ == "SolStreamingAttentionRunner"
+    assert SolStreamingPlan.__name__ == "SolStreamingPlan"
+    assert SolStreamingStats.__name__ == "SolStreamingStats"
+    assert callable(build_sol_streaming_plan)
+    assert callable(sol_streaming_reference)
     assert H3MaterializedRunner.__name__ == "H3MaterializedRunner"
     assert H3RecomputeRunner.__name__ == "H3RecomputeRunner"
     assert WanMaterializedRunner.__name__ == "WanMaterializedRunner"
@@ -94,6 +106,11 @@ def test_subpackages_export_the_canonical_implementations():
         assert not hasattr(seqattn_core, name)
         assert not hasattr(seqattn_core.dit, name)
     assert not any(name.startswith("MultiGpu") for name in dir(seqattn_core))
+    assert not any(name.startswith("SolStreaming") for name in dir(seqattn_core))
+
+    from seqattn_core import _plugin_api
+
+    assert not any(name.startswith("SolStreaming") for name in dir(_plugin_api))
 
 
 def test_dit_integrations_have_no_legacy_root_modules():

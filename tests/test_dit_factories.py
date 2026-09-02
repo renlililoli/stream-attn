@@ -268,3 +268,55 @@ def test_materialized_qkv_arena_rejects_incompatible_layouts(incompatible):
     compatible = _plan(q_tokens=7, kv_tokens=5)
     with pytest.raises(ValueError, match="matching heads, head_dim, and dtype"):
         MaterializedQKVArena.for_plans((compatible, incompatible), pin_memory=False)
+
+
+def test_h3_factory_wraps_the_shared_dense_runtime_for_sol(monkeypatch):
+    from seqattn_core.dit.minimax_h3 import factory
+
+    source_plan = object()
+    runtime_plan = object()
+    sol_plan = SimpleNamespace(attention=runtime_plan)
+    projected_attention = object()
+    projected = SimpleNamespace(attention=projected_attention)
+    sol_runner = object()
+    constructed = {}
+
+    def build_sol(plan):
+        constructed["sol_plan_input"] = plan
+        return sol_plan
+
+    def build_projected(plan, pipeline_config):
+        constructed["projected"] = (plan, pipeline_config)
+        return projected
+
+    def build_sol_runner(plan, dense_runner):
+        constructed["sol_runner"] = (plan, dense_runner)
+        return sol_runner
+
+    def build_materialized(*args, **kwargs):
+        constructed["h3"] = (args, kwargs)
+        return SimpleNamespace(kind="H3MaterializedRunner")
+
+    monkeypatch.setattr(factory, "build_sol_streaming_plan", build_sol)
+    monkeypatch.setattr(factory, "ProjectedAttentionRunner", build_projected)
+    monkeypatch.setattr(factory, "SolStreamingAttentionRunner", build_sol_runner)
+    monkeypatch.setattr(factory, "H3MaterializedRunner", build_materialized)
+
+    config = H3Config(
+        attention_mode="sol_streaming",
+        projection_tile_tokens=1536,
+        ffn_tile_tokens=768,
+    )
+    result = build_h3_runner(
+        source_plan,
+        hidden_features=96,
+        config=config,
+    )
+
+    assert result.kind == "H3MaterializedRunner"
+    assert constructed["sol_plan_input"] is source_plan
+    assert constructed["projected"][0] is runtime_plan
+    assert constructed["projected"][1].projection_tile_tokens == 1536
+    assert constructed["sol_runner"] == (sol_plan, projected_attention)
+    assert constructed["h3"][1]["config"] is config
+    assert constructed["h3"][1]["sol_attention"] is sol_runner

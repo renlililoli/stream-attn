@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 import torch
 
@@ -15,8 +16,14 @@ from .flash_split_executor import FlashSplitExecutorMixin
 from .measurement import QueryTaskMeasurement
 from .protocols import DeviceOutputConsumer, DeviceOutputTransform, TaskDeviceOutputConsumer
 from .tasks import QueryTask, build_query_tasks, validate_query_task_inputs
-from .tile_source import QKVTileSource
+from .tile_source import HostQKVTileSource, QKVTileSource
 from .workspace import CudaWorkspace
+
+
+@dataclass(frozen=True)
+class _StreamingCudaRuntime:
+    workspace: CudaWorkspace
+    single_flight_lock: object
 
 
 class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
@@ -45,6 +52,44 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         self._workspace = (
             CudaWorkspace(plan) if self.backend in {"triton", "fa2", "fa3", "fa4"} else None
         )
+
+    def _borrow_cuda_runtime(self) -> _StreamingCudaRuntime:
+        """Return the package-private CUDA resources shared by fused executors."""
+
+        if self.backend != "triton" or self._workspace is None:
+            raise RuntimeError("a built-in Triton CUDA runtime is required")
+        return _StreamingCudaRuntime(
+            workspace=self._workspace,
+            single_flight_lock=self._single_flight_lock,
+        )
+
+    def _prepare_host_qkv_source(
+        self,
+        q_cpu: torch.Tensor,
+        k_cpu: torch.Tensor,
+        v_cpu: torch.Tensor,
+        cu_seqlens_q: torch.Tensor,
+        cu_seqlens_k: torch.Tensor,
+    ) -> tuple[HostQKVTileSource, list[int], list[int]]:
+        """Validate host Q/K/V and bind it to this runner's CUDA workspace."""
+
+        q_bounds, k_bounds = self._validate_inputs(
+            q_cpu,
+            k_cpu,
+            v_cpu,
+            cu_seqlens_q,
+            cu_seqlens_k,
+        )
+        self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
+        runtime = self._borrow_cuda_runtime()
+        source = HostQKVTileSource(
+            q_cpu,
+            k_cpu,
+            v_cpu,
+            runtime.workspace,
+            enable_nvtx=self.plan.enable_nvtx,
+        )
+        return source, q_bounds, k_bounds
 
     def _validate_inputs(
         self,

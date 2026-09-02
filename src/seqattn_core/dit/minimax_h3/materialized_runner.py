@@ -7,11 +7,14 @@ import torch
 
 from ..._single_flight import init_single_flight, single_flight
 from ...projection import ProjectedAttentionRunner
+from ...sparse import SolStreamingAttentionRunner
 from ..common import validate_hidden_host
+from .config import H3Config, use_sol_streaming
 from .consumer import H3DeviceOutputConsumer
 from .stats import H3DiTStats
 from .types import (
     H3BlockOps,
+    H3DenoisingStep,
     H3MaterializedPlan,
     H3MaterializedProjection,
     H3SequenceMeta,
@@ -30,6 +33,8 @@ class H3MaterializedRunner:
         hidden_features: int,
         ffn_tile_tokens: int,
         num_final_output_buffers: int = 2,
+        config: H3Config | None = None,
+        sol_attention: SolStreamingAttentionRunner | None = None,
     ) -> None:
         init_single_flight(self)
         if hidden_features <= 0:
@@ -42,8 +47,17 @@ class H3MaterializedRunner:
             raise ValueError("the H3 fused block runner requires the Triton backend")
         if projected_attention.plan.output_mode != "device_consumer":
             raise ValueError("the H3 fused block runner requires device_consumer output mode")
+        config = H3Config(execution_mode="materialized") if config is None else config
+        if config.execution_mode != "materialized":
+            raise ValueError("H3 materialized runner requires execution_mode='materialized'")
+        if config.attention_mode == "sol_streaming" and sol_attention is None:
+            raise ValueError("H3 sol_streaming mode requires a Sol attention runner")
+        if sol_attention is not None and sol_attention.plan.attention != projected_attention.plan:
+            raise ValueError("H3 projected and Sol attention plans must match")
 
         self.projected_attention = projected_attention
+        self.config = config
+        self.sol_attention = sol_attention
         self.hidden_features = hidden_features
         self.ffn_tile_tokens = ffn_tile_tokens
         attention_plan = projected_attention.plan
@@ -90,12 +104,22 @@ class H3MaterializedRunner:
         projection: H3MaterializedProjection,
         ops: H3BlockOps,
         *,
+        block_index: int | None = None,
+        denoising_step: H3DenoisingStep | None = None,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: H3DiTStats | None = None,
     ) -> torch.Tensor:
         self._validate_hidden(hidden_host)
         sequence_meta.validate(hidden_host.shape[0])
+        sparse = use_sol_streaming(
+            self.config,
+            sequence_meta=sequence_meta,
+            denoising_step=denoising_step,
+            block_index=block_index,
+        )
+        if sparse and causal:
+            raise ValueError("sol_streaming does not support causal attention")
         stats = H3DiTStats() if stats is None else stats
         stats.backend = self.projected_attention.attention.backend
         stats.qkv_storage_policy = "materialized"
@@ -123,17 +147,34 @@ class H3MaterializedRunner:
         )
         attention_started = time.perf_counter()
         with ops.consumer_context():
-            self.projected_attention.attention.run_with_device_consumer(
-                q_cpu,
-                k_cpu,
-                v_cpu,
-                sequence_meta.cu_seqlens,
-                sequence_meta.cu_seqlens,
-                output_consumer=self.consumer,
-                softmax_scale=softmax_scale,
-                causal=causal,
-                stats=stats.projection.attention,
-            )
+            if sparse:
+                assert self.sol_attention is not None
+                assert sequence_meta.exact_prefix_tokens is not None
+                self.sol_attention.run_with_device_consumer(
+                    q_cpu,
+                    k_cpu,
+                    v_cpu,
+                    sequence_meta.cu_seqlens,
+                    exact_prefix_tokens=sequence_meta.exact_prefix_tokens,
+                    output_consumer=self.consumer,
+                    tau=self.config.sol_tau,
+                    softmax_scale=softmax_scale,
+                    stats=stats.sol_attention,
+                )
+                stats.sol_streaming_blocks += 1
+            else:
+                self.projected_attention.attention.run_with_device_consumer(
+                    q_cpu,
+                    k_cpu,
+                    v_cpu,
+                    sequence_meta.cu_seqlens,
+                    sequence_meta.cu_seqlens,
+                    output_consumer=self.consumer,
+                    softmax_scale=softmax_scale,
+                    causal=causal,
+                    stats=stats.projection.attention,
+                )
+                stats.dense_attention_blocks += 1
         stats.projection.attention_output_seconds += time.perf_counter() - attention_started
 
         stats.post_attention_roundtrip_bytes_avoided += 2 * hidden_bytes
@@ -151,17 +192,21 @@ class H3MaterializedRunner:
         sequence_meta: H3SequenceMeta,
         blocks: Iterable[tuple[H3MaterializedProjection, H3BlockOps]],
         *,
+        first_block_index: int = 0,
+        denoising_step: H3DenoisingStep | None = None,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: H3DiTStats | None = None,
     ) -> torch.Tensor:
         stats = H3DiTStats() if stats is None else stats
-        for projection, ops in blocks:
+        for block_index, (projection, ops) in enumerate(blocks, start=first_block_index):
             self.run_block_(
                 hidden_host,
                 sequence_meta,
                 projection,
                 ops,
+                block_index=block_index,
+                denoising_step=denoising_step,
                 softmax_scale=softmax_scale,
                 causal=causal,
                 stats=stats,

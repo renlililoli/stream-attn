@@ -7,11 +7,14 @@ import torch
 
 from ..._single_flight import init_single_flight, single_flight
 from ...projection import RecomputedAttentionRunner
+from ...sparse import SolStreamingAttentionRunner
 from ..common import require_distinct_storage, validate_hidden_host
+from .config import H3Config, use_sol_streaming
 from .consumer import H3DeviceOutputConsumer
 from .stats import H3DiTStats
 from .types import (
     H3BlockOps,
+    H3DenoisingStep,
     H3RecomputePlan,
     H3RecomputeProjection,
     H3SequenceMeta,
@@ -29,6 +32,8 @@ class H3RecomputeRunner:
         *,
         ffn_tile_tokens: int,
         num_final_output_buffers: int = 2,
+        config: H3Config | None = None,
+        sol_attention: SolStreamingAttentionRunner | None = None,
     ) -> None:
         init_single_flight(self)
         if ffn_tile_tokens <= 0:
@@ -37,8 +42,17 @@ class H3RecomputeRunner:
             raise ValueError("num_final_output_buffers must be 1 or 2")
         if recomputed_attention.attention.backend != "triton":
             raise ValueError("the H3 recompute runner requires the Triton backend")
+        config = H3Config(execution_mode="recompute") if config is None else config
+        if config.execution_mode != "recompute":
+            raise ValueError("H3 recompute runner requires execution_mode='recompute'")
+        if config.attention_mode == "sol_streaming" and sol_attention is None:
+            raise ValueError("H3 sol_streaming mode requires a Sol attention runner")
+        if sol_attention is not None and sol_attention.plan.attention != recomputed_attention.plan:
+            raise ValueError("H3 recompute and Sol attention plans must match")
 
         self.recomputed_attention = recomputed_attention
+        self.config = config
+        self.sol_attention = sol_attention
         self.hidden_features = recomputed_attention.hidden_features
         self.ffn_tile_tokens = ffn_tile_tokens
         attention_plan = recomputed_attention.plan
@@ -86,6 +100,8 @@ class H3RecomputeRunner:
         projection: H3RecomputeProjection,
         ops: H3BlockOps,
         *,
+        block_index: int | None = None,
+        denoising_step: H3DenoisingStep | None = None,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: H3DiTStats | None = None,
@@ -94,6 +110,14 @@ class H3RecomputeRunner:
         self._validate_hidden(destination_hidden_host, name="destination_hidden_host")
         require_distinct_storage(source_hidden_host, destination_hidden_host)
         sequence_meta.validate(source_hidden_host.shape[0])
+        sparse = use_sol_streaming(
+            self.config,
+            sequence_meta=sequence_meta,
+            denoising_step=denoising_step,
+            block_index=block_index,
+        )
+        if sparse and causal:
+            raise ValueError("sol_streaming does not support causal attention")
 
         stats = H3DiTStats() if stats is None else stats
         stats.backend = self.recomputed_attention.attention.backend
@@ -108,16 +132,43 @@ class H3RecomputeRunner:
             stats=stats,
         )
         with projection.context(), ops.consumer_context():
-            self.recomputed_attention.run_with_device_consumer(
-                source_hidden_host,
-                sequence_meta.cu_seqlens,
-                project_q=projection.project_q,
-                project_kv=projection.project_kv,
-                output_consumer=self.consumer,
-                softmax_scale=softmax_scale,
-                causal=causal,
-                stats=stats.recompute,
-            )
+            if sparse:
+                assert self.sol_attention is not None
+                assert sequence_meta.exact_prefix_tokens is not None
+
+                def execute(source) -> None:
+                    self.sol_attention.run_with_qkv_source(
+                        source,
+                        source_hidden_host.shape[0],
+                        sequence_meta.cu_seqlens,
+                        exact_prefix_tokens=sequence_meta.exact_prefix_tokens,
+                        output_consumer=self.consumer,
+                        tau=self.config.sol_tau,
+                        softmax_scale=softmax_scale,
+                        stats=stats.sol_attention,
+                    )
+
+                self.recomputed_attention.run_with_source_executor(
+                    source_hidden_host,
+                    project_q=projection.project_q,
+                    project_kv=projection.project_kv,
+                    execute=execute,
+                    stats=stats.recompute,
+                    range_name="seqattn:h3_sol_recomputed_attention",
+                )
+                stats.sol_streaming_blocks += 1
+            else:
+                self.recomputed_attention.run_with_device_consumer(
+                    source_hidden_host,
+                    sequence_meta.cu_seqlens,
+                    project_q=projection.project_q,
+                    project_kv=projection.project_kv,
+                    output_consumer=self.consumer,
+                    softmax_scale=softmax_scale,
+                    causal=causal,
+                    stats=stats.recompute,
+                )
+                stats.dense_attention_blocks += 1
 
         hidden_bytes = source_hidden_host.numel() * source_hidden_host.element_size()
         stats.hidden_host_bytes_peak = max(stats.hidden_host_bytes_peak, 2 * hidden_bytes)
@@ -136,6 +187,8 @@ class H3RecomputeRunner:
         sequence_meta: H3SequenceMeta,
         blocks: Iterable[tuple[H3RecomputeProjection, H3BlockOps]],
         *,
+        first_block_index: int = 0,
+        denoising_step: H3DenoisingStep | None = None,
         softmax_scale: float | None = None,
         causal: bool = False,
         stats: H3DiTStats | None = None,
@@ -146,13 +199,15 @@ class H3RecomputeRunner:
         stats = H3DiTStats() if stats is None else stats
         source = hidden_host
         destination = scratch_hidden_host
-        for projection, ops in blocks:
+        for block_index, (projection, ops) in enumerate(blocks, start=first_block_index):
             self.run_block(
                 source,
                 destination,
                 sequence_meta,
                 projection,
                 ops,
+                block_index=block_index,
+                denoising_step=denoising_step,
                 softmax_scale=softmax_scale,
                 causal=causal,
                 stats=stats,

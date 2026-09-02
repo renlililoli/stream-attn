@@ -24,6 +24,7 @@ classifiers = [
 [project.optional-dependencies]
 cuda = ["triton>=3.1"]
 dit = ["triton>=3.1"]
+sparse = ["triton>=3.1"]
 dev = ["pytest>=8", "ruff>=0.9"]
 
 [tool.setuptools.packages.find]
