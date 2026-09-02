@@ -13,7 +13,7 @@ from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     StreamingAttentionStats,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.benchmarking.common import atomic_json, make_bounds, make_host_tensors_parallel
 
@@ -94,7 +94,7 @@ def run_streaming(
         num_kv_buffers=2,
         num_output_buffers=1,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q.shape[1],
         kv_heads=k.shape[1],
         head_dim=q.shape[2],
@@ -104,7 +104,7 @@ def run_streaming(
         max_kv_tokens=k.shape[0],
         config=config,
     )
-    runner = StreamingAttentionRunner(plan, config)
+    runner = StreamingAttentionRunner(plan)
     stats = StreamingAttentionStats()
     torch.cuda.reset_peak_memory_stats()
     start_event = torch.cuda.Event(enable_timing=True)

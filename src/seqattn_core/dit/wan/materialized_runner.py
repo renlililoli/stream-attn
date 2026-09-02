@@ -10,11 +10,17 @@ from ...projection import ProjectedAttentionRunner, ProjectedCrossAttentionRunne
 from ..common import (
     AttentionOutputConsumer,
     AttentionOutputWorkspace,
+    MaterializedAttentionExecutor,
     TiledHostStageRunner,
     validate_hidden_host,
 )
 from .stats import WanDiTStats
-from .types import WanBlockOps, WanMaterializedProjections, WanSequenceMeta
+from .types import (
+    WanBlockOps,
+    WanMaterializedProjections,
+    WanSequenceMeta,
+    validate_wan_runner_contract,
+)
 
 
 class WanMaterializedRunner:
@@ -33,7 +39,11 @@ class WanMaterializedRunner:
         self.self_attention = self_attention
         self.cross_attention = cross_attention
         self.hidden_features = hidden_features
-        self._validate_plans()
+        validate_wan_runner_contract(
+            self_attention,
+            cross_attention,
+            hidden_features=hidden_features,
+        )
         plan = self_attention.plan
         output_chunk_tokens = max(plan.q_chunk_tokens, cross_attention.plan.q_chunk_tokens)
         self.output_workspace = AttentionOutputWorkspace(
@@ -44,6 +54,7 @@ class WanMaterializedRunner:
             num_output_buffers=num_output_buffers,
         )
         self.consumer = AttentionOutputConsumer(self.output_workspace)
+        self.attention_executor = MaterializedAttentionExecutor(self.consumer)
         self.ffn = TiledHostStageRunner(
             hidden_features=hidden_features,
             chunk_tokens=ffn_tile_tokens,
@@ -51,23 +62,6 @@ class WanMaterializedRunner:
             device=plan.device,
             require_pinned_hidden=self_attention.pipeline_config.require_pinned_hidden,
         )
-
-    def _validate_plans(self) -> None:
-        self_plan = self.self_attention.plan
-        cross_plan = self.cross_attention.plan
-        if self.hidden_features <= 0:
-            raise ValueError("hidden_features must be positive")
-        if (
-            self_plan.output_mode != "device_consumer"
-            or cross_plan.output_mode != "device_consumer"
-        ):
-            raise ValueError("Wan attention runners require device_consumer output mode")
-        if self_plan.device != cross_plan.device or self_plan.dtype != cross_plan.dtype:
-            raise ValueError("Wan self and cross attention must use the same device and dtype")
-        if self_plan.max_q_tokens != cross_plan.max_q_tokens:
-            raise ValueError("Wan self and cross attention must plan the same hidden token count")
-        if self_plan.max_q_tokens != self_plan.max_kv_tokens:
-            raise ValueError("Wan self-attention requires equal planned Q and K/V token counts")
 
     def _validate_inputs(
         self,
@@ -105,50 +99,29 @@ class WanMaterializedRunner:
         stats.qkv_storage_policy = "materialized"
         started = time.perf_counter()
 
-        self_stage_started = time.perf_counter()
-        with projections.self_attention.context():
-            q, k, v = self.self_attention.project_qkv_to_host(
-                hidden_host,
-                projections.self_attention.project_qkv,
-                stats=stats.self_attention,
-            )
-        raw_output_bytes = q.numel() * q.element_size()
-        stats.self_attention.raw_attention_roundtrip_bytes_avoided += 2 * raw_output_bytes
-        self.consumer.reset(
-            destination_hidden_host=hidden_host,
-            residual_hidden_host=hidden_host,
+        self.attention_executor.run_self(
+            self.self_attention,
+            hidden_host,
+            sequence_meta.hidden_cu_seqlens,
+            projections.self_attention,
             epilogue=ops.self_attention_epilogue,
+            consumer_lease=ops.self_attention_lease,
+            softmax_scale=self_softmax_scale,
+            causal=self_causal,
+            stats=stats.self_attention,
         )
-        self_attention_started = time.perf_counter()
-        with ops.self_attention_context():
-            self.self_attention.attention.run_with_device_consumer(
-                q,
-                k,
-                v,
-                sequence_meta.hidden_cu_seqlens,
-                sequence_meta.hidden_cu_seqlens,
-                output_consumer=self.consumer,
-                softmax_scale=self_softmax_scale,
-                causal=self_causal,
-                stats=stats.self_attention.attention,
-            )
-        stats.self_attention.attention_output_seconds += (
-            time.perf_counter() - self_attention_started
+        self.attention_executor.run_cross(
+            self.cross_attention,
+            hidden_host,
+            text_hidden_host,
+            sequence_meta.hidden_cu_seqlens,
+            sequence_meta.text_cu_seqlens,
+            projections.text_cross_attention,
+            epilogue=ops.cross_attention_epilogue,
+            consumer_lease=ops.cross_attention_lease,
+            softmax_scale=cross_softmax_scale,
+            stats=stats.cross_attention,
         )
-        stats.self_attention.wall_seconds += time.perf_counter() - self_stage_started
-
-        cross_stage_started = time.perf_counter()
-
-        with projections.text_cross_attention.context():
-            q, k, v = self.cross_attention.project_to_host(
-                hidden_host,
-                text_hidden_host,
-                project_q=projections.text_cross_attention.project_q,
-                project_kv=projections.text_cross_attention.project_kv,
-                stats=stats.cross_attention,
-            )
-        raw_output_bytes = q.numel() * q.element_size()
-        stats.cross_attention.raw_attention_roundtrip_bytes_avoided += 2 * raw_output_bytes
         arenas = {
             id(runner.arena): runner.arena for runner in (self.self_attention, self.cross_attention)
         }
@@ -156,27 +129,6 @@ class WanMaterializedRunner:
             stats.qkv_host_bytes_peak,
             sum(arena.allocated_bytes for arena in arenas.values()),
         )
-        self.consumer.reset(
-            destination_hidden_host=hidden_host,
-            residual_hidden_host=hidden_host,
-            epilogue=ops.cross_attention_epilogue,
-        )
-        cross_attention_started = time.perf_counter()
-        with ops.cross_attention_context():
-            self.cross_attention.attention.run_with_device_consumer(
-                q,
-                k,
-                v,
-                sequence_meta.hidden_cu_seqlens,
-                sequence_meta.text_cu_seqlens,
-                output_consumer=self.consumer,
-                softmax_scale=cross_softmax_scale,
-                stats=stats.cross_attention.attention,
-            )
-        stats.cross_attention.attention_output_seconds += (
-            time.perf_counter() - cross_attention_started
-        )
-        stats.cross_attention.wall_seconds += time.perf_counter() - cross_stage_started
 
         with ops.ffn_context():
             self.ffn.run(hidden_host, hidden_host, ops.ffn, stats=stats.ffn)
@@ -196,9 +148,12 @@ class WanMaterializedRunner:
         text_hidden_host: torch.Tensor,
         sequence_meta: WanSequenceMeta,
         blocks: Iterable[tuple[WanMaterializedProjections, WanBlockOps]],
-        **kwargs,
+        *,
+        self_softmax_scale: float | None = None,
+        cross_softmax_scale: float | None = None,
+        self_causal: bool = False,
+        stats: WanDiTStats | None = None,
     ) -> torch.Tensor:
-        stats = kwargs.pop("stats", None)
         stats = WanDiTStats() if stats is None else stats
         for projections, ops in blocks:
             self.run_block_(
@@ -207,8 +162,10 @@ class WanMaterializedRunner:
                 sequence_meta,
                 projections,
                 ops,
+                self_softmax_scale=self_softmax_scale,
+                cross_softmax_scale=cross_softmax_scale,
+                self_causal=self_causal,
                 stats=stats,
-                **kwargs,
             )
         return hidden_host
 

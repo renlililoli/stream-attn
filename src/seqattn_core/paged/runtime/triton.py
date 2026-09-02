@@ -12,7 +12,7 @@ from ...kernels import (
     update_attention_state,
     update_attention_state_int8,
 )
-from ...planner import AttentionPlan
+from ...plan import AttentionPlan
 from ...stats import PagedAttentionStats
 from ..cache import KVPageCache
 from ..layout import KVLayout, PageDescriptor, PageReadMetrics

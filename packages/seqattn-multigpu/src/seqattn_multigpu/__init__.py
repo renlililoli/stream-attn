@@ -1,8 +1,8 @@
 from seqattn_core._plugin_api import PLUGIN_API_VERSION, QueryTaskMeasurement
 
-if PLUGIN_API_VERSION != "0.3.0a4":
+if PLUGIN_API_VERSION != "0.4.0a1":
     raise ImportError(
-        "seqattn-multigpu 0.3.0a4 requires the seqattn-core 0.3.0a4 plugin API; "
+        "seqattn-multigpu 0.4.0a1 requires the seqattn-core 0.4.0a1 plugin API; "
         f"found {PLUGIN_API_VERSION}"
     )
 
@@ -14,6 +14,12 @@ from .dynamic import (
     DynamicScheduleConfig,
     DynamicWorkloadSignature,
 )
+from .planning import (
+    DeviceQuerySchedule,
+    MultiGpuAttentionPlan,
+    MultiGpuDeviceSpec,
+    build_multi_gpu_plan,
+)
 from .projection import DynamicQKVProjectionCursor, MultiGpuQKVProjectionRunner
 from .stats import (
     DynamicDeviceStats,
@@ -21,13 +27,7 @@ from .stats import (
     MultiGpuAttentionStats,
     MultiGpuH3DiTStats,
 )
-from .streaming import (
-    DeviceQuerySchedule,
-    MultiGpuAttentionPlan,
-    MultiGpuDeviceSpec,
-    MultiGpuStreamingAttentionRunner,
-    build_multi_gpu_plan,
-)
+from .streaming import MultiGpuStreamingAttentionRunner
 
 __all__ = [
     "DeviceQuerySchedule",
@@ -50,4 +50,4 @@ __all__ = [
     "build_multi_gpu_plan",
 ]
 
-__version__ = "0.3.0a4"
+__version__ = "0.4.0a1"

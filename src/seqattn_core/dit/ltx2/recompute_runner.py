@@ -10,12 +10,18 @@ from ...projection import RecomputedAttentionRunner, RecomputedCrossAttentionRun
 from ..common import (
     AttentionOutputConsumer,
     AttentionOutputWorkspace,
+    RecomputedAttentionExecutor,
     TiledHostStageRunner,
     require_distinct_storage,
     validate_hidden_host,
 )
 from .stats import LTX2DiTStats
-from .types import LTX2AttentionOps, LTX2BlockOps, LTX2RecomputeProjections, LTX2SequenceMeta
+from .types import (
+    LTX2BlockOps,
+    LTX2RecomputeProjections,
+    LTX2SequenceMeta,
+    validate_ltx2_runner_contract,
+)
 
 
 class LTX2RecomputeRunner:
@@ -43,7 +49,16 @@ class LTX2RecomputeRunner:
         self.audio_from_video_attention = audio_from_video_attention
         self.video_hidden_features = video_self_attention.hidden_features
         self.audio_hidden_features = audio_self_attention.hidden_features
-        self._validate_plans()
+        validate_ltx2_runner_contract(
+            video_self_attention=video_self_attention,
+            audio_self_attention=audio_self_attention,
+            video_text_attention=video_text_attention,
+            audio_text_attention=audio_text_attention,
+            video_from_audio_attention=video_from_audio_attention,
+            audio_from_video_attention=audio_from_video_attention,
+            video_hidden_features=self.video_hidden_features,
+            audio_hidden_features=self.audio_hidden_features,
+        )
         video_plan = video_self_attention.plan
         audio_plan = audio_self_attention.plan
         self.video_consumer = AttentionOutputConsumer(
@@ -72,6 +87,8 @@ class LTX2RecomputeRunner:
                 num_output_buffers=num_output_buffers,
             )
         )
+        self.video_attention_executor = RecomputedAttentionExecutor(self.video_consumer)
+        self.audio_attention_executor = RecomputedAttentionExecutor(self.audio_consumer)
         self.video_ffn = TiledHostStageRunner(
             hidden_features=self.video_hidden_features,
             chunk_tokens=video_ffn_tile_tokens,
@@ -86,39 +103,6 @@ class LTX2RecomputeRunner:
             device=audio_plan.device,
             require_pinned_hidden=audio_self_attention.require_pinned_hidden,
         )
-
-    def _validate_plans(self) -> None:
-        runners = (
-            self.video_self_attention,
-            self.audio_self_attention,
-            self.video_text_attention,
-            self.audio_text_attention,
-            self.video_from_audio_attention,
-            self.audio_from_video_attention,
-        )
-        plans = tuple(runner.plan for runner in runners)
-        if any(plan.output_mode != "device_consumer" for plan in plans):
-            raise ValueError("LTX2 recompute runners require device_consumer output mode")
-        if len({plan.device for plan in plans}) != 1 or len({plan.dtype for plan in plans}) != 1:
-            raise ValueError("LTX2 attention runners must use one device and dtype")
-        video_tokens = self.video_self_attention.plan.max_q_tokens
-        audio_tokens = self.audio_self_attention.plan.max_q_tokens
-        if self.video_self_attention.plan.max_kv_tokens != video_tokens:
-            raise ValueError("LTX2 video self-attention requires equal Q and K/V lengths")
-        if self.audio_self_attention.plan.max_kv_tokens != audio_tokens:
-            raise ValueError("LTX2 audio self-attention requires equal Q and K/V lengths")
-        expected_q = (
-            (self.video_text_attention, video_tokens),
-            (self.video_from_audio_attention, video_tokens),
-            (self.audio_text_attention, audio_tokens),
-            (self.audio_from_video_attention, audio_tokens),
-        )
-        if any(runner.plan.max_q_tokens != tokens for runner, tokens in expected_q):
-            raise ValueError("LTX2 cross-attention Q lengths must match their target streams")
-        if self.video_from_audio_attention.plan.max_kv_tokens != audio_tokens:
-            raise ValueError("video-from-audio K/V length must match the audio stream")
-        if self.audio_from_video_attention.plan.max_kv_tokens != video_tokens:
-            raise ValueError("audio-from-video K/V length must match the video stream")
 
     def _validate_inputs(
         self,
@@ -162,66 +146,6 @@ class LTX2RecomputeRunner:
             text_hidden_host.shape[0],
         )
 
-    @staticmethod
-    def _run_self(
-        runner: RecomputedAttentionRunner,
-        source: torch.Tensor,
-        destination: torch.Tensor,
-        cu_seqlens: torch.Tensor,
-        projection,
-        ops: LTX2AttentionOps,
-        consumer: AttentionOutputConsumer,
-        stats,
-        softmax_scale: float | None,
-    ) -> None:
-        consumer.reset(
-            destination_hidden_host=destination,
-            residual_hidden_host=source,
-            epilogue=ops.epilogue,
-        )
-        with projection.context(), ops.context():
-            runner.run_with_device_consumer(
-                source,
-                cu_seqlens,
-                project_q=projection.project_q,
-                project_kv=projection.project_kv,
-                output_consumer=consumer,
-                softmax_scale=softmax_scale,
-                stats=stats,
-            )
-
-    @staticmethod
-    def _run_cross(
-        runner: RecomputedCrossAttentionRunner,
-        query: torch.Tensor,
-        context: torch.Tensor,
-        destination: torch.Tensor,
-        cu_q: torch.Tensor,
-        cu_kv: torch.Tensor,
-        projection,
-        ops: LTX2AttentionOps,
-        consumer: AttentionOutputConsumer,
-        stats,
-        softmax_scale: float | None,
-    ) -> None:
-        consumer.reset(
-            destination_hidden_host=destination,
-            residual_hidden_host=query,
-            epilogue=ops.epilogue,
-        )
-        with projection.context(), ops.context():
-            runner.run_with_device_consumer(
-                query,
-                context,
-                cu_q,
-                cu_kv,
-                project_q=projection.project_q,
-                project_kv=projection.project_kv,
-                output_consumer=consumer,
-                softmax_scale=softmax_scale,
-                stats=stats,
-            )
-
     @single_flight
     @torch.inference_mode()
     def run_block(
@@ -252,29 +176,31 @@ class LTX2RecomputeRunner:
         stats.qkv_storage_policy = "recompute"
         started = time.perf_counter()
 
-        self._run_self(
+        self.video_attention_executor.run_self(
             self.video_self_attention,
             video_source,
             video_destination,
             sequence_meta.video_cu_seqlens,
             projections.video_self_attention,
-            ops.video_self_attention,
-            self.video_consumer,
-            stats.video_self_recompute,
-            self_softmax_scale,
+            epilogue=ops.video_self_attention.epilogue,
+            consumer_lease=ops.video_self_attention.weight_lease,
+            softmax_scale=self_softmax_scale,
+            causal=False,
+            stats=stats.video_self_recompute,
         )
-        self._run_self(
+        self.audio_attention_executor.run_self(
             self.audio_self_attention,
             audio_source,
             audio_destination,
             sequence_meta.audio_cu_seqlens,
             projections.audio_self_attention,
-            ops.audio_self_attention,
-            self.audio_consumer,
-            stats.audio_self_recompute,
-            self_softmax_scale,
+            epilogue=ops.audio_self_attention.epilogue,
+            consumer_lease=ops.audio_self_attention.weight_lease,
+            softmax_scale=self_softmax_scale,
+            causal=False,
+            stats=stats.audio_self_recompute,
         )
-        self._run_cross(
+        self.video_attention_executor.run_cross(
             self.video_text_attention,
             video_destination,
             text_hidden_host,
@@ -282,12 +208,12 @@ class LTX2RecomputeRunner:
             sequence_meta.video_cu_seqlens,
             sequence_meta.text_cu_seqlens,
             projections.video_text_attention,
-            ops.video_text_attention,
-            self.video_consumer,
-            stats.video_text_recompute,
-            cross_softmax_scale,
+            epilogue=ops.video_text_attention.epilogue,
+            consumer_lease=ops.video_text_attention.weight_lease,
+            softmax_scale=cross_softmax_scale,
+            stats=stats.video_text_recompute,
         )
-        self._run_cross(
+        self.audio_attention_executor.run_cross(
             self.audio_text_attention,
             audio_destination,
             text_hidden_host,
@@ -295,14 +221,14 @@ class LTX2RecomputeRunner:
             sequence_meta.audio_cu_seqlens,
             sequence_meta.text_cu_seqlens,
             projections.audio_text_attention,
-            ops.audio_text_attention,
-            self.audio_consumer,
-            stats.audio_text_recompute,
-            cross_softmax_scale,
+            epilogue=ops.audio_text_attention.epilogue,
+            consumer_lease=ops.audio_text_attention.weight_lease,
+            softmax_scale=cross_softmax_scale,
+            stats=stats.audio_text_recompute,
         )
 
         # Both directions read the same post-text snapshots and write alternate buffers.
-        self._run_cross(
+        self.video_attention_executor.run_cross(
             self.video_from_audio_attention,
             video_source,
             audio_source,
@@ -310,12 +236,12 @@ class LTX2RecomputeRunner:
             sequence_meta.video_cu_seqlens,
             sequence_meta.audio_cu_seqlens,
             projections.video_from_audio_attention,
-            ops.video_from_audio_attention,
-            self.video_consumer,
-            stats.video_from_audio_recompute,
-            cross_softmax_scale,
+            epilogue=ops.video_from_audio_attention.epilogue,
+            consumer_lease=ops.video_from_audio_attention.weight_lease,
+            softmax_scale=cross_softmax_scale,
+            stats=stats.video_from_audio_recompute,
         )
-        self._run_cross(
+        self.audio_attention_executor.run_cross(
             self.audio_from_video_attention,
             audio_source,
             video_source,
@@ -323,10 +249,10 @@ class LTX2RecomputeRunner:
             sequence_meta.audio_cu_seqlens,
             sequence_meta.video_cu_seqlens,
             projections.audio_from_video_attention,
-            ops.audio_from_video_attention,
-            self.audio_consumer,
-            stats.audio_from_video_recompute,
-            cross_softmax_scale,
+            epilogue=ops.audio_from_video_attention.epilogue,
+            consumer_lease=ops.audio_from_video_attention.weight_lease,
+            softmax_scale=cross_softmax_scale,
+            stats=stats.audio_from_video_recompute,
         )
         with ops.video_ffn.context():
             self.video_ffn.run(
@@ -368,9 +294,11 @@ class LTX2RecomputeRunner:
         text_hidden_host: torch.Tensor,
         sequence_meta: LTX2SequenceMeta,
         blocks: Iterable[tuple[LTX2RecomputeProjections, LTX2BlockOps]],
-        **kwargs,
+        *,
+        self_softmax_scale: float | None = None,
+        cross_softmax_scale: float | None = None,
+        stats: LTX2DiTStats | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        stats = kwargs.pop("stats", None)
         stats = LTX2DiTStats() if stats is None else stats
         video_source, video_destination = video_hidden_host, video_scratch_host
         audio_source, audio_destination = audio_hidden_host, audio_scratch_host
@@ -384,8 +312,9 @@ class LTX2RecomputeRunner:
                 sequence_meta,
                 projections,
                 ops,
+                self_softmax_scale=self_softmax_scale,
+                cross_softmax_scale=cross_softmax_scale,
                 stats=stats,
-                **kwargs,
             )
             video_source, video_destination = video_destination, video_source
             audio_source, audio_destination = audio_destination, audio_source

@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+
 import torch
 
-from ...planner import AttentionPlan
+from ...plan import AttentionPlan
+
+AttentionEpilogue = Callable[[torch.Tensor, torch.Tensor, int, int], torch.Tensor]
+DeviceTileOp = Callable[[torch.Tensor, int, int], torch.Tensor]
+LeaseFactory = Callable[[], AbstractContextManager]
+
+
+@dataclass(frozen=True)
+class TiledStageOp:
+    operation: DeviceTileOp
+    weight_lease: LeaseFactory | None = None
+
+    def context(self) -> AbstractContextManager:
+        return nullcontext() if self.weight_lease is None else self.weight_lease()
 
 
 def validate_hidden_host(
@@ -34,4 +51,11 @@ def require_distinct_storage(source: torch.Tensor, destination: torch.Tensor) ->
         raise ValueError("recompute requires distinct source and destination storage")
 
 
-__all__ = ["require_distinct_storage", "validate_hidden_host"]
+__all__ = [
+    "AttentionEpilogue",
+    "DeviceTileOp",
+    "LeaseFactory",
+    "TiledStageOp",
+    "require_distinct_storage",
+    "validate_hidden_host",
+]

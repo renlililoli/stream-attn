@@ -7,7 +7,7 @@ import torch
 
 from ..._single_flight import init_single_flight, single_flight
 from ...projection import ProjectedAttentionRunner
-from ..common.validation import validate_hidden_host
+from ..common import validate_hidden_host
 from .consumer import H3DeviceOutputConsumer
 from .stats import H3DiTStats
 from .types import (

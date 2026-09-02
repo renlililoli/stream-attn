@@ -10,12 +10,18 @@ from ...projection import RecomputedAttentionRunner, RecomputedCrossAttentionRun
 from ..common import (
     AttentionOutputConsumer,
     AttentionOutputWorkspace,
+    RecomputedAttentionExecutor,
     TiledHostStageRunner,
     require_distinct_storage,
     validate_hidden_host,
 )
 from .stats import WanDiTStats
-from .types import WanBlockOps, WanRecomputeProjections, WanSequenceMeta
+from .types import (
+    WanBlockOps,
+    WanRecomputeProjections,
+    WanSequenceMeta,
+    validate_wan_runner_contract,
+)
 
 
 class WanRecomputeRunner:
@@ -33,7 +39,11 @@ class WanRecomputeRunner:
         self.self_attention = self_attention
         self.cross_attention = cross_attention
         self.hidden_features = self_attention.hidden_features
-        self._validate_plans()
+        validate_wan_runner_contract(
+            self_attention,
+            cross_attention,
+            hidden_features=self.hidden_features,
+        )
         plan = self_attention.plan
         output_chunk_tokens = max(plan.q_chunk_tokens, cross_attention.plan.q_chunk_tokens)
         self.output_workspace = AttentionOutputWorkspace(
@@ -44,6 +54,7 @@ class WanRecomputeRunner:
             num_output_buffers=num_output_buffers,
         )
         self.consumer = AttentionOutputConsumer(self.output_workspace)
+        self.attention_executor = RecomputedAttentionExecutor(self.consumer)
         self.ffn = TiledHostStageRunner(
             hidden_features=self.hidden_features,
             chunk_tokens=ffn_tile_tokens,
@@ -51,18 +62,6 @@ class WanRecomputeRunner:
             device=plan.device,
             require_pinned_hidden=self_attention.require_pinned_hidden,
         )
-
-    def _validate_plans(self) -> None:
-        self_plan = self.self_attention.plan
-        cross_plan = self.cross_attention.plan
-        if self_plan.device != cross_plan.device or self_plan.dtype != cross_plan.dtype:
-            raise ValueError("Wan self and cross attention must use the same device and dtype")
-        if self_plan.max_q_tokens != cross_plan.max_q_tokens:
-            raise ValueError("Wan self and cross attention must plan the same hidden token count")
-        if self_plan.max_q_tokens != self_plan.max_kv_tokens:
-            raise ValueError("Wan self-attention requires equal planned Q and K/V token counts")
-        if self.cross_attention.query_hidden_features != self.hidden_features:
-            raise ValueError("Wan cross-attention query feature size must match hidden features")
 
     def _validate_inputs(
         self,
@@ -118,40 +117,31 @@ class WanRecomputeRunner:
         stats.qkv_storage_policy = "recompute"
         started = time.perf_counter()
 
-        self.consumer.reset(
-            destination_hidden_host=destination_hidden_host,
-            residual_hidden_host=source_hidden_host,
+        self.attention_executor.run_self(
+            self.self_attention,
+            source_hidden_host,
+            destination_hidden_host,
+            sequence_meta.hidden_cu_seqlens,
+            projections.self_attention,
             epilogue=ops.self_attention_epilogue,
+            consumer_lease=ops.self_attention_lease,
+            softmax_scale=self_softmax_scale,
+            causal=self_causal,
+            stats=stats.self_recompute,
         )
-        with projections.self_attention.context(), ops.self_attention_context():
-            self.self_attention.run_with_device_consumer(
-                source_hidden_host,
-                sequence_meta.hidden_cu_seqlens,
-                project_q=projections.self_attention.project_q,
-                project_kv=projections.self_attention.project_kv,
-                output_consumer=self.consumer,
-                softmax_scale=self_softmax_scale,
-                causal=self_causal,
-                stats=stats.self_recompute,
-            )
-
-        self.consumer.reset(
-            destination_hidden_host=destination_hidden_host,
-            residual_hidden_host=destination_hidden_host,
+        self.attention_executor.run_cross(
+            self.cross_attention,
+            destination_hidden_host,
+            text_hidden_host,
+            destination_hidden_host,
+            sequence_meta.hidden_cu_seqlens,
+            sequence_meta.text_cu_seqlens,
+            projections.text_cross_attention,
             epilogue=ops.cross_attention_epilogue,
+            consumer_lease=ops.cross_attention_lease,
+            softmax_scale=cross_softmax_scale,
+            stats=stats.cross_recompute,
         )
-        with projections.text_cross_attention.context(), ops.cross_attention_context():
-            self.cross_attention.run_with_device_consumer(
-                destination_hidden_host,
-                text_hidden_host,
-                sequence_meta.hidden_cu_seqlens,
-                sequence_meta.text_cu_seqlens,
-                project_q=projections.text_cross_attention.project_q,
-                project_kv=projections.text_cross_attention.project_kv,
-                output_consumer=self.consumer,
-                softmax_scale=cross_softmax_scale,
-                stats=stats.cross_recompute,
-            )
 
         with ops.ffn_context():
             self.ffn.run(
@@ -177,9 +167,12 @@ class WanRecomputeRunner:
         text_hidden_host: torch.Tensor,
         sequence_meta: WanSequenceMeta,
         blocks: Iterable[tuple[WanRecomputeProjections, WanBlockOps]],
-        **kwargs,
+        *,
+        self_softmax_scale: float | None = None,
+        cross_softmax_scale: float | None = None,
+        self_causal: bool = False,
+        stats: WanDiTStats | None = None,
     ) -> torch.Tensor:
-        stats = kwargs.pop("stats", None)
         stats = WanDiTStats() if stats is None else stats
         source = hidden_host
         destination = scratch_hidden_host
@@ -191,8 +184,10 @@ class WanRecomputeRunner:
                 sequence_meta,
                 projections,
                 ops,
+                self_softmax_scale=self_softmax_scale,
+                cross_softmax_scale=cross_softmax_scale,
+                self_causal=self_causal,
                 stats=stats,
-                **kwargs,
             )
             source, destination = destination, source
         return source

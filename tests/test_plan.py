@@ -1,14 +1,12 @@
-from dataclasses import replace
-
 import pytest
 import torch
 
-from seqattn_core import StreamingAttentionConfig, build_plan
+from seqattn_core import StreamingAttentionConfig, build_attention_plan
 from seqattn_core.kernels import profiles as kernel_profiles
-from seqattn_core.planner import estimate_workspace_bytes, resolve_runtime_config
+from seqattn_core.plan import estimate_workspace_bytes
 
 
-def test_planner_uses_largest_query_chunk_that_fits_budget():
+def test_plan_uses_largest_query_chunk_that_fits_budget():
     shape = {
         "q_heads": 16,
         "kv_heads": 4,
@@ -18,7 +16,7 @@ def test_planner_uses_largest_query_chunk_that_fits_budget():
         "num_output_buffers": 2,
     }
     budget = estimate_workspace_bytes(q_tokens=512, kv_tokens=256, **shape)
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=shape["q_heads"],
         kv_heads=shape["kv_heads"],
         head_dim=shape["head_dim"],
@@ -38,9 +36,9 @@ def test_planner_uses_largest_query_chunk_that_fits_budget():
     assert plan.group_size == 4
 
 
-def test_planner_rejects_invalid_gqa_ratio():
+def test_plan_rejects_invalid_gqa_ratio():
     with pytest.raises(ValueError, match="multiple"):
-        build_plan(
+        build_attention_plan(
             q_heads=6,
             kv_heads=4,
             head_dim=64,
@@ -51,9 +49,9 @@ def test_planner_rejects_invalid_gqa_ratio():
         )
 
 
-def test_planner_rejects_explicit_chunks_over_budget():
+def test_plan_rejects_explicit_chunks_over_budget():
     with pytest.raises(ValueError, match="exceeding"):
-        build_plan(
+        build_attention_plan(
             q_heads=16,
             kv_heads=4,
             head_dim=64,
@@ -70,8 +68,8 @@ def test_planner_rejects_explicit_chunks_over_budget():
         )
 
 
-def test_joint_planner_prefers_8k_kv_and_large_resident_q_for_h3_shape():
-    plan = build_plan(
+def test_default_kv_chunk_is_conservative_and_budget_selects_largest_q():
+    plan = build_attention_plan(
         q_heads=56,
         kv_heads=8,
         head_dim=128,
@@ -108,7 +106,7 @@ def test_device_consumer_plan_does_not_charge_raw_output_buffer():
 
 
 def test_default_kernel_profile_is_portable_on_cpu():
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=8,
         kv_heads=8,
         head_dim=128,
@@ -122,7 +120,7 @@ def test_default_kernel_profile_is_portable_on_cpu():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_default_kernel_profile_uses_blackwell_d128_preset():
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=8,
         kv_heads=8,
         head_dim=128,
@@ -150,7 +148,7 @@ def test_default_kernel_profile_uses_a30_triton37_d128_preset(monkeypatch):
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (8, 0))
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "NVIDIA A30")
     monkeypatch.setattr(kernel_profiles, "triton_major_minor", lambda: (3, 7))
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=8,
         kv_heads=8,
         head_dim=128,
@@ -168,7 +166,7 @@ def test_a30_d128_preset_falls_back_outside_triton37(monkeypatch, triton_version
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (8, 0))
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "NVIDIA A30")
     monkeypatch.setattr(kernel_profiles, "triton_major_minor", lambda: triton_version)
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=8,
         kv_heads=8,
         head_dim=128,
@@ -181,7 +179,7 @@ def test_a30_d128_preset_falls_back_outside_triton37(monkeypatch, triton_version
 
 
 def test_explicit_kernel_parameter_uses_portable_defaults_for_the_rest():
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=8,
         kv_heads=8,
         head_dim=128,
@@ -194,15 +192,18 @@ def test_explicit_kernel_parameter_uses_portable_defaults_for_the_rest():
     assert (plan.block_m, plan.block_n, plan.num_warps, plan.num_stages) == (32, 64, 4, 2)
 
 
-def test_runtime_config_accepts_requests_that_resolve_to_the_plan():
+def test_plan_contains_resolved_runtime_policy():
     requested = StreamingAttentionConfig(
-        backend="reference",
+        backend="builtin",
         q_chunk_tokens=23,
         kv_chunk_tokens=19,
         block_m=32,
         block_n=32,
+        require_pinned=False,
+        pin_output=False,
+        enable_nvtx=True,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=4,
         kv_heads=2,
         head_dim=64,
@@ -213,30 +214,9 @@ def test_runtime_config_accepts_requests_that_resolve_to_the_plan():
         config=requested,
     )
 
-    resolved = resolve_runtime_config(plan, requested)
-
-    assert resolved.q_chunk_tokens == plan.q_chunk_tokens == 32
-    assert resolved.kv_chunk_tokens == plan.kv_chunk_tokens == 32
-
-
-def test_runtime_config_rejects_a_different_resolved_structure():
-    requested = StreamingAttentionConfig(
-        backend="reference",
-        q_chunk_tokens=64,
-        kv_chunk_tokens=64,
-        block_m=32,
-        block_n=32,
-    )
-    plan = build_plan(
-        q_heads=4,
-        kv_heads=2,
-        head_dim=64,
-        dtype=torch.float32,
-        device="cpu",
-        max_q_tokens=128,
-        max_kv_tokens=128,
-        config=requested,
-    )
-
-    with pytest.raises(ValueError, match="q_chunk_tokens does not match"):
-        resolve_runtime_config(plan, replace(requested, q_chunk_tokens=96))
+    assert plan.q_chunk_tokens == 32
+    assert plan.kv_chunk_tokens == 32
+    assert plan.backend == "triton"
+    assert plan.require_pinned is False
+    assert plan.pin_output is False
+    assert plan.enable_nvtx is True

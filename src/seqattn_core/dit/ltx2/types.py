@@ -8,6 +8,10 @@ import torch
 from ...projection import (
     CrossProjection,
     CrossRecomputeProjection,
+    ProjectedAttentionRunner,
+    ProjectedCrossAttentionRunner,
+    RecomputedAttentionRunner,
+    RecomputedCrossAttentionRunner,
     SelfProjection,
     SelfRecomputeProjection,
 )
@@ -113,10 +117,74 @@ class LTX2BlockOps:
     audio_ffn: TiledStageOp
 
 
+def validate_ltx2_runner_contract(
+    *,
+    video_self_attention: ProjectedAttentionRunner | RecomputedAttentionRunner,
+    audio_self_attention: ProjectedAttentionRunner | RecomputedAttentionRunner,
+    video_text_attention: ProjectedCrossAttentionRunner | RecomputedCrossAttentionRunner,
+    audio_text_attention: ProjectedCrossAttentionRunner | RecomputedCrossAttentionRunner,
+    video_from_audio_attention: ProjectedCrossAttentionRunner | RecomputedCrossAttentionRunner,
+    audio_from_video_attention: ProjectedCrossAttentionRunner | RecomputedCrossAttentionRunner,
+    video_hidden_features: int,
+    audio_hidden_features: int,
+) -> None:
+    if video_hidden_features <= 0 or audio_hidden_features <= 0:
+        raise ValueError("LTX2 hidden feature sizes must be positive")
+    runners = (
+        video_self_attention,
+        audio_self_attention,
+        video_text_attention,
+        audio_text_attention,
+        video_from_audio_attention,
+        audio_from_video_attention,
+    )
+    plans = tuple(runner.plan for runner in runners)
+    if any(plan.output_mode != "device_consumer" for plan in plans):
+        raise ValueError("LTX2 attention runners require device_consumer output mode")
+    if len({plan.device for plan in plans}) != 1 or len({plan.dtype for plan in plans}) != 1:
+        raise ValueError("LTX2 attention runners must use one device and dtype")
+
+    video_tokens = video_self_attention.plan.max_q_tokens
+    audio_tokens = audio_self_attention.plan.max_q_tokens
+    if video_self_attention.plan.max_kv_tokens != video_tokens:
+        raise ValueError("LTX2 video self-attention must plan equal Q and K/V lengths")
+    if audio_self_attention.plan.max_kv_tokens != audio_tokens:
+        raise ValueError("LTX2 audio self-attention must plan equal Q and K/V lengths")
+    expected_q_tokens = (
+        (video_text_attention, video_tokens),
+        (video_from_audio_attention, video_tokens),
+        (audio_text_attention, audio_tokens),
+        (audio_from_video_attention, audio_tokens),
+    )
+    if any(runner.plan.max_q_tokens != tokens for runner, tokens in expected_q_tokens):
+        raise ValueError("LTX2 cross-attention Q lengths must match their target streams")
+    if video_from_audio_attention.plan.max_kv_tokens != audio_tokens:
+        raise ValueError("video-from-audio K/V length must match the audio stream")
+    if audio_from_video_attention.plan.max_kv_tokens != video_tokens:
+        raise ValueError("audio-from-video K/V length must match the video stream")
+    if video_text_attention.plan.max_kv_tokens != audio_text_attention.plan.max_kv_tokens:
+        raise ValueError("LTX2 text cross-attention runners must plan the same text length")
+
+    expected_features = (
+        (video_text_attention, video_hidden_features, None),
+        (audio_text_attention, audio_hidden_features, None),
+        (video_from_audio_attention, video_hidden_features, audio_hidden_features),
+        (audio_from_video_attention, audio_hidden_features, video_hidden_features),
+    )
+    for runner, query_features, context_features in expected_features:
+        if runner.query_hidden_features != query_features:
+            raise ValueError("LTX2 cross-attention query feature size does not match its stream")
+        if context_features is not None and runner.context_hidden_features != context_features:
+            raise ValueError("LTX2 cross-attention context feature size does not match its stream")
+    if video_text_attention.context_hidden_features != audio_text_attention.context_hidden_features:
+        raise ValueError("LTX2 text cross-attention runners must use one text feature size")
+
+
 __all__ = [
     "LTX2AttentionOps",
     "LTX2BlockOps",
     "LTX2MaterializedProjections",
     "LTX2RecomputeProjections",
     "LTX2SequenceMeta",
+    "validate_ltx2_runner_contract",
 ]

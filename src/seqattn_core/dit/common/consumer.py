@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from .types import AttentionEpilogue
+from .contracts import AttentionEpilogue
 
 if TYPE_CHECKING:
     from ...streaming.tasks import QueryTask

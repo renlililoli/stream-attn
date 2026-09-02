@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import torch
+
+from ..plan import AttentionPlan
+
 
 @dataclass(frozen=True)
 class QueryTask:
@@ -88,4 +92,37 @@ def build_query_tasks(
     return tuple(tasks)
 
 
-__all__ = ["QueryTask", "build_query_tasks"]
+def validate_query_task_inputs(
+    plan: AttentionPlan,
+    q_cpu: torch.Tensor,
+    k_cpu: torch.Tensor,
+    v_cpu: torch.Tensor,
+    query_tasks: tuple[QueryTask, ...],
+) -> None:
+    if any(tensor.device.type != "cpu" for tensor in (q_cpu, k_cpu, v_cpu)):
+        raise ValueError("scheduled query task inputs must be CPU-backed")
+    if q_cpu.shape[1:] != (plan.q_heads, plan.head_dim):
+        raise ValueError("q shape does not match the runner plan")
+    if k_cpu.shape != v_cpu.shape or k_cpu.shape[1:] != (plan.kv_heads, plan.head_dim):
+        raise ValueError("k/v shape does not match the runner plan")
+    if any(tensor.dtype != plan.dtype for tensor in (q_cpu, k_cpu, v_cpu)):
+        raise ValueError("input dtype does not match the runner plan")
+    if q_cpu.shape[0] > plan.max_q_tokens or k_cpu.shape[0] > plan.max_kv_tokens:
+        raise ValueError("input token count exceeds the runner plan")
+
+    previous_stop = 0
+    for task in query_tasks:
+        task.validate()
+        if task.q_start < previous_stop:
+            raise ValueError("query tasks must be ordered and non-overlapping")
+        if task.q_stop > q_cpu.shape[0] or task.k_stop > k_cpu.shape[0]:
+            raise ValueError("query task exceeds the provided Q/K/V tensors")
+        if task.q_tokens > plan.q_chunk_tokens:
+            raise ValueError("query task exceeds the runner q_chunk_tokens")
+        segment_q_tokens = task.k_tokens - task.causal_shift
+        if task.q_local_offset + task.q_tokens > segment_q_tokens:
+            raise ValueError("query task exceeds its packed query segment")
+        previous_stop = task.q_stop
+
+
+__all__ = ["QueryTask", "build_query_tasks", "validate_query_task_inputs"]

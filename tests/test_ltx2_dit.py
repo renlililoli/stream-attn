@@ -10,7 +10,7 @@ from seqattn_core import (
     RecomputedAttentionRunner,
     RecomputedCrossAttentionRunner,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.dit.common import TiledStageOp
 from seqattn_core.dit.ltx2 import (
@@ -181,19 +181,9 @@ def _config():
     )
 
 
-def _runtime_config(plan):
-    return StreamingAttentionConfig(
-        backend="triton",
-        workspace_budget_bytes=plan.workspace_budget_bytes,
-        num_kv_buffers=plan.num_kv_buffers,
-        num_output_buffers=plan.num_output_buffers,
-        output_mode=plan.output_mode,
-    )
-
-
 def _self_runner(tokens, heads, dim, dtype):
     config = _config()
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=dim,
@@ -205,14 +195,13 @@ def _self_runner(tokens, heads, dim, dtype):
     )
     return ProjectedAttentionRunner(
         plan,
-        _runtime_config(plan),
         ProjectionPipelineConfig(projection_tile_tokens=13),
     )
 
 
 def _recompute_self_runner(tokens, hidden_features, heads, dim, dtype):
     config = _config()
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=dim,
@@ -225,7 +214,6 @@ def _recompute_self_runner(tokens, hidden_features, heads, dim, dtype):
     return RecomputedAttentionRunner(
         plan,
         hidden_features=hidden_features,
-        attention_config=_runtime_config(plan),
     )
 
 
@@ -240,7 +228,7 @@ def _recompute_cross_runner(
     dtype,
 ):
     config = _config()
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=kv_heads,
         head_dim=dim,
@@ -254,13 +242,21 @@ def _recompute_cross_runner(
         plan,
         query_hidden_features=query_features,
         context_hidden_features=context_features,
-        attention_config=_runtime_config(plan),
     )
 
 
-def _cross_runner(q_tokens, kv_tokens, heads, kv_heads, dim, dtype):
+def _cross_runner(
+    q_tokens,
+    kv_tokens,
+    query_features,
+    context_features,
+    heads,
+    kv_heads,
+    dim,
+    dtype,
+):
     config = _config()
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=kv_heads,
         head_dim=dim,
@@ -272,8 +268,9 @@ def _cross_runner(q_tokens, kv_tokens, heads, kv_heads, dim, dtype):
     )
     return ProjectedCrossAttentionRunner(
         plan,
-        _runtime_config(plan),
         ProjectionPipelineConfig(projection_tile_tokens=13),
+        query_hidden_features=query_features,
+        context_hidden_features=context_features,
     )
 
 
@@ -339,13 +336,45 @@ def test_ltx2_materialized_block_matches_reference_and_preserves_cross_snapshot(
     runner = LTX2MaterializedRunner(
         video_self_attention=_self_runner(video_tokens, heads, dim, dtype),
         audio_self_attention=_self_runner(audio_tokens, heads, dim, dtype),
-        video_text_attention=_cross_runner(video_tokens, text_tokens, heads, kv_heads, dim, dtype),
-        audio_text_attention=_cross_runner(audio_tokens, text_tokens, heads, kv_heads, dim, dtype),
+        video_text_attention=_cross_runner(
+            video_tokens,
+            text_tokens,
+            video_features,
+            text_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
+        ),
+        audio_text_attention=_cross_runner(
+            audio_tokens,
+            text_tokens,
+            audio_features,
+            text_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
+        ),
         video_from_audio_attention=_cross_runner(
-            video_tokens, audio_tokens, heads, kv_heads, dim, dtype
+            video_tokens,
+            audio_tokens,
+            video_features,
+            audio_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
         ),
         audio_from_video_attention=_cross_runner(
-            audio_tokens, video_tokens, heads, kv_heads, dim, dtype
+            audio_tokens,
+            video_tokens,
+            audio_features,
+            video_features,
+            heads,
+            kv_heads,
+            dim,
+            dtype,
         ),
         video_hidden_features=video_features,
         audio_hidden_features=audio_features,

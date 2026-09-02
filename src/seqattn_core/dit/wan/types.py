@@ -8,6 +8,10 @@ import torch
 from ...projection import (
     CrossProjection,
     CrossRecomputeProjection,
+    ProjectedAttentionRunner,
+    ProjectedCrossAttentionRunner,
+    RecomputedAttentionRunner,
+    RecomputedCrossAttentionRunner,
     SelfProjection,
     SelfRecomputeProjection,
 )
@@ -71,9 +75,32 @@ class WanBlockOps:
         return self._context(self.ffn_lease)
 
 
+def validate_wan_runner_contract(
+    self_attention: ProjectedAttentionRunner | RecomputedAttentionRunner,
+    cross_attention: ProjectedCrossAttentionRunner | RecomputedCrossAttentionRunner,
+    *,
+    hidden_features: int,
+) -> None:
+    if hidden_features <= 0:
+        raise ValueError("hidden_features must be positive")
+    self_plan = self_attention.plan
+    cross_plan = cross_attention.plan
+    if self_plan.output_mode != "device_consumer" or cross_plan.output_mode != "device_consumer":
+        raise ValueError("Wan attention runners require device_consumer output mode")
+    if self_plan.device != cross_plan.device or self_plan.dtype != cross_plan.dtype:
+        raise ValueError("Wan self and cross attention must use the same device and dtype")
+    if self_plan.max_q_tokens != cross_plan.max_q_tokens:
+        raise ValueError("Wan self and cross attention must plan the same hidden token count")
+    if self_plan.max_q_tokens != self_plan.max_kv_tokens:
+        raise ValueError("Wan self-attention requires equal planned Q and K/V token counts")
+    if cross_attention.query_hidden_features != hidden_features:
+        raise ValueError("Wan cross-attention query feature size must match hidden features")
+
+
 __all__ = [
     "WanBlockOps",
     "WanMaterializedProjections",
     "WanRecomputeProjections",
     "WanSequenceMeta",
+    "validate_wan_runner_contract",
 ]

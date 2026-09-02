@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 
 from ..config import StreamingAttentionConfig
-from ..planner import build_plan
+from ..plan import build_attention_plan
 from ..stats import StreamingAttentionStats
 from ..streaming import StreamingAttentionRunner
 from .common import (
@@ -171,7 +171,7 @@ def main() -> None:
                 backend=("builtin" if args.mode == "seqattn" else "fa2"),
                 enable_nvtx=args.nvtx,
             )
-            plan = build_plan(
+            plan = build_attention_plan(
                 q_heads=args.q_heads,
                 kv_heads=args.kv_heads,
                 head_dim=args.head_dim,
@@ -181,7 +181,7 @@ def main() -> None:
                 max_kv_tokens=args.tokens,
                 config=config,
             )
-            runner = StreamingAttentionRunner(plan, config)
+            runner = StreamingAttentionRunner(plan)
             result["plan"] = {
                 "q_chunk_tokens": plan.q_chunk_tokens,
                 "q_chunk_requested_tokens": args.q_chunk,

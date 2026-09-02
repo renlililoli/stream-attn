@@ -17,7 +17,7 @@ from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     StreamingAttentionStats,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.benchmarking.common import atomic_json, make_bounds
 
@@ -195,7 +195,7 @@ def main() -> None:
                     num_output_buffers=1,
                     output_mode="host",
                 )
-                plan = build_plan(
+                plan = build_attention_plan(
                     q_heads=args.q_heads,
                     kv_heads=args.kv_heads,
                     head_dim=args.head_dim,
@@ -205,7 +205,7 @@ def main() -> None:
                     max_kv_tokens=args.tokens,
                     config=config,
                 )
-                runner = StreamingAttentionRunner(plan, config)
+                runner = StreamingAttentionRunner(plan)
                 for _ in range(args.warmup):
                     runner(q, k, v, cu, cu, causal=args.causal, out=output)
                 torch.cuda.synchronize()

@@ -1,6 +1,6 @@
 # Paged CPU and NVMe runtime
 
-Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
 The paged runtime executes exact dense attention without requiring complete
 CPU Q/K/V tensors. It is Linux-only, inference-only, and single-GPU. It

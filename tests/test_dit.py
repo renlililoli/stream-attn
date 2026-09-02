@@ -8,8 +8,9 @@ from seqattn_core import (
     ProjectedAttentionRunner,
     ProjectionPipelineConfig,
     RecomputedAttentionRunner,
+    RecomputedAttentionStats,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.dit.minimax_h3 import (
     H3BlockOps,
@@ -174,7 +175,7 @@ def test_h3_materialized_runner_matches_full_gpu():
         projection_tile_tokens=31,
         num_projection_buffers=2,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -185,7 +186,7 @@ def test_h3_materialized_runner_matches_full_gpu():
         config=attention_config,
     )
     runner = H3MaterializedRunner(
-        ProjectedAttentionRunner(plan, attention_config, projection_config),
+        ProjectedAttentionRunner(plan, projection_config),
         hidden_features=hidden_features,
         ffn_tile_tokens=43,
     )
@@ -270,7 +271,7 @@ def test_h3_recompute_large_tiles_match_full_gpu_and_ping_pong():
         block_n=16,
         output_mode="device_consumer",
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -283,7 +284,6 @@ def test_h3_recompute_large_tiles_match_full_gpu_and_ping_pong():
     recomputed = RecomputedAttentionRunner(
         plan,
         hidden_features=hidden_features,
-        attention_config=attention_config,
     )
     runner = H3RecomputeRunner(recomputed, ffn_tile_tokens=19)
     q_ranges = []
@@ -412,7 +412,7 @@ def test_recomputed_attention_projection_failure_allows_runner_reuse():
         block_n=16,
         output_mode="device_consumer",
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -425,7 +425,6 @@ def test_recomputed_attention_projection_failure_allows_runner_reuse():
     runner = RecomputedAttentionRunner(
         plan,
         hidden_features=hidden_features,
-        attention_config=config,
     )
 
     def project_q(tile, destination, start, stop):
@@ -471,12 +470,14 @@ def test_recomputed_attention_projection_failure_allows_runner_reuse():
     assert not runner.workspace.hidden_has_pending_compute
 
     collector = Collector()
+    stats = RecomputedAttentionStats()
     runner.run_with_device_consumer(
         hidden,
         cu,
         project_q=project_q,
         project_kv=project_kv,
         output_consumer=collector,
+        stats=stats,
     )
     projected = qkv(hidden.to(device))
     q = projected[:, :inner].view(tokens, heads, head_dim)
@@ -490,6 +491,9 @@ def test_recomputed_attention_projection_failure_allows_runner_reuse():
     ).squeeze(0)
     expected = expected.transpose(0, 1).reshape(tokens, inner)
     torch.testing.assert_close(collector.output, expected, atol=3e-2, rtol=3e-2)
+    assert stats.raw_attention_roundtrip_bytes_avoided == (
+        2 * tokens * inner * hidden.element_size()
+    )
 
 
 @pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
@@ -515,7 +519,7 @@ def test_h3_recompute_runner_reuse_has_bounded_allocator_growth():
         block_n=16,
         output_mode="device_consumer",
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -529,7 +533,6 @@ def test_h3_recompute_runner_reuse_has_bounded_allocator_growth():
         RecomputedAttentionRunner(
             plan,
             hidden_features=hidden_features,
-            attention_config=attention_config,
         ),
         ffn_tile_tokens=19,
     )

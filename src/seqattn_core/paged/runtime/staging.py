@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 import torch
 
-from ...planner import AttentionPlan
+from ...plan import AttentionPlan
 from ..layout import KVLayout, PageDescriptor, TensorLayout
 from ..memory_budget import HostMemoryPlan
 from .types import KVStage

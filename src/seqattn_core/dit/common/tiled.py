@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import torch
 
 from ..._single_flight import init_single_flight, single_flight
-from .types import DeviceTileOp
+from .contracts import DeviceTileOp
 
 
 @dataclass

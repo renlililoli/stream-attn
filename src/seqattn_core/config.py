@@ -1,6 +1,41 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+
+from ._config_file import load_config_table, reject_unknown_keys
+
+_BACKEND_ALIASES = {
+    "builtin": "triton",
+    "flash2": "fa2",
+    "flash2_split": "fa2",
+}
+_KNOWN_BACKENDS = {"auto", "reference", "triton", "fa2", "fa3", "fa4", *_BACKEND_ALIASES}
+
+
+def canonical_backend_name(name: str) -> str:
+    normalized = name.strip().lower()
+    if normalized not in _KNOWN_BACKENDS:
+        raise ValueError(f"unsupported backend: {name}")
+    return _BACKEND_ALIASES.get(normalized, normalized)
+
+
+def configured_backend_name(explicit: str | None) -> str:
+    """Resolve explicit/environment/TOML backend precedence once during planning."""
+
+    if explicit is not None:
+        return canonical_backend_name(explicit)
+    environment = os.environ.get("SEQATTN_BACKEND")
+    if environment:
+        return canonical_backend_name(environment)
+    section = load_config_table("attention")
+    reject_unknown_keys(section, "attention", {"backend"})
+    backend = section.get("backend")
+    if backend is None:
+        return "auto"
+    if not isinstance(backend, str):
+        raise ValueError("seqattn config attention.backend must be a string")  # noqa: TRY004
+    return canonical_backend_name(backend)
 
 
 @dataclass(frozen=True)

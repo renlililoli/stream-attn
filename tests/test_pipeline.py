@@ -9,7 +9,7 @@ from seqattn_core import (
     ProjectedAttentionStats,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
@@ -63,7 +63,7 @@ def test_projected_pipeline_matches_full_gpu(dtype):
         projection_tile_tokens=31,
         num_projection_buffers=2,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -73,7 +73,7 @@ def test_projected_pipeline_matches_full_gpu(dtype):
         max_kv_tokens=tokens,
         config=attention_config,
     )
-    runner = ProjectedAttentionRunner(plan, attention_config, pipeline_config)
+    runner = ProjectedAttentionRunner(plan, pipeline_config)
     stats = ProjectedAttentionStats()
     actual = runner(
         hidden_cpu,
@@ -129,7 +129,7 @@ def test_projected_runner_recovers_after_projection_callback_failure():
         block_m=16,
         block_n=16,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -141,7 +141,6 @@ def test_projected_runner_recovers_after_projection_callback_failure():
     )
     runner = ProjectedAttentionRunner(
         plan,
-        config,
         ProjectionPipelineConfig(projection_tile_tokens=13),
     )
 
@@ -197,7 +196,7 @@ def test_projected_runner_reuse_has_bounded_allocator_growth():
         block_n=32,
         num_output_buffers=2,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -209,7 +208,6 @@ def test_projected_runner_reuse_has_bounded_allocator_growth():
     )
     runner = ProjectedAttentionRunner(
         plan,
-        attention_config,
         ProjectionPipelineConfig(projection_tile_tokens=96),
     )
     out = torch.empty((tokens, hidden_features), dtype=dtype, pin_memory=True)
@@ -250,7 +248,7 @@ def test_projection_workspace_resets_without_device_wide_synchronization(monkeyp
         block_m=16,
         block_n=16,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -262,7 +260,6 @@ def test_projection_workspace_resets_without_device_wide_synchronization(monkeyp
     )
     runner = ProjectedAttentionRunner(
         plan,
-        config,
         ProjectionPipelineConfig(
             projection_tile_tokens=7,
             num_projection_buffers=2,
@@ -332,7 +329,7 @@ def test_output_transform_rejects_a_tensor_on_the_wrong_cuda_device():
         block_n=16,
         output_mode="device_consumer",
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -342,7 +339,7 @@ def test_output_transform_rejects_a_tensor_on_the_wrong_cuda_device():
         max_kv_tokens=tokens,
         config=config,
     )
-    runner = ProjectedAttentionRunner(plan, config).attention
+    runner = ProjectedAttentionRunner(plan).attention
     out = torch.empty((tokens, heads * head_dim), dtype=dtype, pin_memory=True)
 
     def wrong_device_output(attention, start, stop):
@@ -400,7 +397,7 @@ def test_output_consumer_failure_synchronizes_and_allows_runner_reuse():
         block_n=16,
         output_mode="device_consumer",
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -410,7 +407,7 @@ def test_output_consumer_failure_synchronizes_and_allows_runner_reuse():
         max_kv_tokens=tokens,
         config=config,
     )
-    runner = ProjectedAttentionRunner(plan, config).attention
+    runner = ProjectedAttentionRunner(plan).attention
 
     class FailingConsumer:
         def __init__(self):

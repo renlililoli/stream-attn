@@ -233,7 +233,7 @@ def _run_mode(args: argparse.Namespace) -> None:
             ProjectionPipelineConfig,
             RecomputedAttentionRunner,
             StreamingAttentionConfig,
-            build_plan,
+            build_attention_plan,
         )
         from seqattn_core.benchmarking.common import ProcessMemorySampler
         from seqattn_core.dit.minimax_h3 import (
@@ -338,7 +338,7 @@ def _run_mode(args: argparse.Namespace) -> None:
             output_mode="device_consumer",
             enable_nvtx=args.nvtx,
         )
-        attention_plan = build_plan(
+        attention_plan = build_attention_plan(
             q_heads=heads,
             kv_heads=heads,
             head_dim=head_dim,
@@ -474,7 +474,6 @@ def _run_mode(args: argparse.Namespace) -> None:
         if args.mode == "materialized":
             projected_attention = ProjectedAttentionRunner(
                 attention_plan,
-                attention_config,
                 ProjectionPipelineConfig(
                     projection_tile_tokens=args.projection_tile_tokens,
                     num_projection_buffers=2,
@@ -509,8 +508,6 @@ def _run_mode(args: argparse.Namespace) -> None:
             recomputed_attention = RecomputedAttentionRunner(
                 attention_plan,
                 hidden_features=hidden_features,
-                attention_config=attention_config,
-                enable_nvtx=args.nvtx,
             )
             runner = H3RecomputeRunner(
                 recomputed_attention,

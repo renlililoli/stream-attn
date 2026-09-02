@@ -9,7 +9,7 @@ from seqattn_core import (
     ProjectedAttentionStats,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
     build_query_tasks,
 )
 from seqattn_core._plugin_api import H3BlockOps, H3MaterializedProjection, H3SequenceMeta
@@ -389,7 +389,7 @@ def test_two_gpu_qkv_projection_uses_default_4096_token_blocks():
         block_n=16,
         output_mode="device_consumer",
     )
-    primary_plan = build_plan(
+    primary_plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -399,7 +399,7 @@ def test_two_gpu_qkv_projection_uses_default_4096_token_blocks():
         max_kv_tokens=tokens,
         config=primary_config,
     )
-    projected = ProjectedAttentionRunner(primary_plan, primary_config)
+    projected = ProjectedAttentionRunner(primary_plan)
     multi_plan = build_multi_gpu_plan(
         q_heads=heads,
         kv_heads=heads,
@@ -509,7 +509,7 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
         block_n=16,
         output_mode="device_consumer",
     )
-    primary_plan = build_plan(
+    primary_plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -521,7 +521,6 @@ def test_two_gpu_h3_runner_dynamically_projects_and_matches_full_gpu_block():
     )
     projected = ProjectedAttentionRunner(
         primary_plan,
-        primary_config,
         ProjectionPipelineConfig(projection_tile_tokens=31),
     )
     multi_plan = build_multi_gpu_plan(
@@ -651,7 +650,7 @@ def test_two_gpu_h3_projection_failure_stops_before_attention():
         block_n=16,
         output_mode="device_consumer",
     )
-    primary_plan = build_plan(
+    primary_plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -661,7 +660,7 @@ def test_two_gpu_h3_projection_failure_stops_before_attention():
         max_kv_tokens=tokens,
         config=primary_config,
     )
-    projected = ProjectedAttentionRunner(primary_plan, primary_config)
+    projected = ProjectedAttentionRunner(primary_plan)
     multi_plan = build_multi_gpu_plan(
         q_heads=heads,
         kv_heads=heads,

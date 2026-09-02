@@ -7,7 +7,7 @@ from contextlib import nullcontext
 import torch
 
 from ...config import PagedAttentionConfig
-from ...planner import build_plan
+from ...plan import build_attention_plan
 from ...stats import PagedAttentionStats
 from ...streaming.backend import resolve_backend
 from ..cache import KVPageCache
@@ -71,7 +71,7 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
         attention_config = config.attention
         if attention_config.output_mode != "host":
             raise ValueError("paged output sinks require attention output_mode='host'")
-        plan = build_plan(
+        plan = build_attention_plan(
             q_heads=q_layout.heads,
             kv_heads=kv_layout.heads,
             head_dim=q_layout.head_dim,
@@ -82,7 +82,7 @@ class PagedAttentionRunner(PagedIoMixin, ReferenceExecutorMixin, TritonExecutorM
             config=attention_config,
         )
         backend = resolve_backend(
-            attention_config.backend,
+            plan.backend,
             plan.dtype,
             plan.device,
             head_dim=plan.head_dim,

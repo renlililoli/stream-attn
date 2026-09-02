@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ...config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ...planner import AttentionPlan
+from ...config import ProjectionPipelineConfig
+from ...plan import AttentionPlan
 from ...projection import (
     MaterializedQKVArena,
     ProjectedAttentionRunner,
@@ -36,7 +36,6 @@ def build_ltx2_runner(
     audio_hidden_features: int,
     text_hidden_features: int,
     config: LTX2Config | None = None,
-    attention_config: StreamingAttentionConfig | None = None,
     num_output_buffers: int = 2,
 ) -> LTX2Runner:
     """Construct the configured single-GPU LTX2 runner."""
@@ -65,38 +64,40 @@ def build_ltx2_runner(
         return LTX2MaterializedRunner(
             video_self_attention=ProjectedAttentionRunner(
                 plans.video_self_attention,
-                attention_config,
                 pipeline,
                 arena=video_arena,
             ),
             audio_self_attention=ProjectedAttentionRunner(
                 plans.audio_self_attention,
-                attention_config,
                 pipeline,
                 arena=audio_arena,
             ),
             video_text_attention=ProjectedCrossAttentionRunner(
                 plans.video_text_attention,
-                attention_config,
                 pipeline,
+                query_hidden_features=video_hidden_features,
+                context_hidden_features=text_hidden_features,
                 arena=video_arena,
             ),
             audio_text_attention=ProjectedCrossAttentionRunner(
                 plans.audio_text_attention,
-                attention_config,
                 pipeline,
+                query_hidden_features=audio_hidden_features,
+                context_hidden_features=text_hidden_features,
                 arena=audio_arena,
             ),
             video_from_audio_attention=ProjectedCrossAttentionRunner(
                 plans.video_from_audio_attention,
-                attention_config,
                 pipeline,
+                query_hidden_features=video_hidden_features,
+                context_hidden_features=audio_hidden_features,
                 arena=video_arena,
             ),
             audio_from_video_attention=ProjectedCrossAttentionRunner(
                 plans.audio_from_video_attention,
-                attention_config,
                 pipeline,
+                query_hidden_features=audio_hidden_features,
+                context_hidden_features=video_hidden_features,
                 arena=audio_arena,
             ),
             video_hidden_features=video_hidden_features,
@@ -109,36 +110,30 @@ def build_ltx2_runner(
         video_self_attention=RecomputedAttentionRunner(
             plans.video_self_attention,
             hidden_features=video_hidden_features,
-            attention_config=attention_config,
         ),
         audio_self_attention=RecomputedAttentionRunner(
             plans.audio_self_attention,
             hidden_features=audio_hidden_features,
-            attention_config=attention_config,
         ),
         video_text_attention=RecomputedCrossAttentionRunner(
             plans.video_text_attention,
             query_hidden_features=video_hidden_features,
             context_hidden_features=text_hidden_features,
-            attention_config=attention_config,
         ),
         audio_text_attention=RecomputedCrossAttentionRunner(
             plans.audio_text_attention,
             query_hidden_features=audio_hidden_features,
             context_hidden_features=text_hidden_features,
-            attention_config=attention_config,
         ),
         video_from_audio_attention=RecomputedCrossAttentionRunner(
             plans.video_from_audio_attention,
             query_hidden_features=video_hidden_features,
             context_hidden_features=audio_hidden_features,
-            attention_config=attention_config,
         ),
         audio_from_video_attention=RecomputedCrossAttentionRunner(
             plans.audio_from_video_attention,
             query_hidden_features=audio_hidden_features,
             context_hidden_features=video_hidden_features,
-            attention_config=attention_config,
         ),
         video_ffn_tile_tokens=config.video_ffn_tile_tokens,
         audio_ffn_tile_tokens=config.audio_ffn_tile_tokens,

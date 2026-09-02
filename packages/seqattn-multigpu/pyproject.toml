@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seqattn-multigpu"
-version = "0.3.0a4"
+version = "0.4.0a1"
 description = "Optional multi-GPU schedulers and MiniMax-H3 runners for seqattn-core"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [{name = "seqattn contributors"}]
-dependencies = ["seqattn-core[dit]==0.3.0a4"]
+dependencies = ["seqattn-core[dit]==0.4.0a1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.9"]

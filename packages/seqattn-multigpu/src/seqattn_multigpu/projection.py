@@ -17,7 +17,7 @@ from seqattn_core._plugin_api import (
     validate_projection_hidden,
 )
 
-from .streaming import MultiGpuAttentionPlan
+from .planning import MultiGpuAttentionPlan
 
 
 @dataclass(frozen=True)

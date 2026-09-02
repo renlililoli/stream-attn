@@ -19,7 +19,7 @@ from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
     StreamingAttentionStats,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.benchmarking.common import ProcessMemorySampler, make_bounds
 
@@ -110,7 +110,7 @@ def main() -> None:
                 num_output_buffers=1,
                 output_mode="host",
             )
-            plan = build_plan(
+            plan = build_attention_plan(
                 q_heads=args.q_heads,
                 kv_heads=args.kv_heads,
                 head_dim=args.head_dim,
@@ -124,7 +124,7 @@ def main() -> None:
             torch.cuda.reset_peak_memory_stats()
             signature = OutputSignature(args.tokens)
             stats = StreamingAttentionStats()
-            runner = StreamingAttentionRunner(plan, config)
+            runner = StreamingAttentionRunner(plan)
             with ProcessMemorySampler(args.sample_interval_ms / 1000) as sampler:
                 torch.cuda.synchronize()
                 started = time.perf_counter()

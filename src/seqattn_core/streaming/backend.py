@@ -1,49 +1,15 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Collection
 
 import torch
 
-from .._config_file import load_config_table, reject_unknown_keys
+from ..config import canonical_backend_name, configured_backend_name
 from ..kernels import triton_is_available
 from .flash_backends import flash_backend_is_available
 
-_ALIASES = {
-    "builtin": "triton",
-    "flash2": "fa2",
-    "flash2_split": "fa2",
-}
 _CUDA_BACKENDS = {"triton", "fa2", "fa3", "fa4"}
 _FLASH_BACKENDS = {"fa2", "fa3", "fa4"}
-_KNOWN_BACKENDS = {"auto", "reference", *_CUDA_BACKENDS, *_ALIASES}
-
-
-def canonical_backend_name(name: str) -> str:
-    normalized = name.strip().lower()
-    if normalized not in _KNOWN_BACKENDS:
-        raise ValueError(f"unsupported backend: {name}")
-    return _ALIASES.get(normalized, normalized)
-
-
-def _backend_from_config_file() -> str | None:
-    section = load_config_table("attention")
-    reject_unknown_keys(section, "attention", {"backend"})
-    backend = section.get("backend")
-    if backend is None:
-        return None
-    if not isinstance(backend, str):
-        raise ValueError("seqattn config attention.backend must be a string")  # noqa: TRY004
-    return canonical_backend_name(backend)
-
-
-def configured_backend_name(explicit: str | None) -> str:
-    if explicit is not None:
-        return canonical_backend_name(explicit)
-    environment = os.environ.get("SEQATTN_BACKEND")
-    if environment:
-        return canonical_backend_name(environment)
-    return _backend_from_config_file() or "auto"
 
 
 def backend_is_available(name: str) -> bool:

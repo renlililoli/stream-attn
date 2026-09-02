@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from .config import StreamingAttentionConfig
-from .planner import AttentionPlan, build_plan
+from .plan import AttentionPlan, build_attention_plan
 from .stats import StreamingAttentionStats
 from .streaming import StreamingAttentionRunner
 
@@ -44,7 +44,7 @@ def streaming_attn_varlen_func(
     if max_seqlen_k is not None and actual_max_k > max_seqlen_k:
         raise ValueError("cu_seqlens_k exceeds max_seqlen_k")
     config = StreamingAttentionConfig() if config is None else config
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q.shape[1],
         kv_heads=k.shape[1],
         head_dim=q.shape[2],
@@ -54,7 +54,7 @@ def streaming_attn_varlen_func(
         max_kv_tokens=k.shape[0],
         config=config,
     )
-    return StreamingAttentionRunner(plan, config)(
+    return StreamingAttentionRunner(plan)(
         q,
         k,
         v,

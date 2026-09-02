@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from seqattn_core import StreamingAttentionConfig, StreamingAttentionRunner, build_plan
+from seqattn_core import StreamingAttentionConfig, StreamingAttentionRunner, build_attention_plan
 from seqattn_core.reference import streaming_attention_reference
 
 try:
@@ -29,7 +29,7 @@ def test_flash2_split_matches_reference():
         block_m=64,
         block_n=64,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=4,
         kv_heads=2,
         head_dim=64,
@@ -39,7 +39,7 @@ def test_flash2_split_matches_reference():
         max_kv_tokens=k.shape[0],
         config=config,
     )
-    actual = StreamingAttentionRunner(plan, config)(q, k, v, cu_q, cu_k)
+    actual = StreamingAttentionRunner(plan)(q, k, v, cu_q, cu_k)
     expected = streaming_attention_reference(
         q,
         k,
@@ -63,7 +63,7 @@ def test_flash2_split_rejects_causal_external_chunks():
         block_m=64,
         block_n=64,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=2,
         kv_heads=2,
         head_dim=64,
@@ -73,6 +73,6 @@ def test_flash2_split_rejects_causal_external_chunks():
         max_kv_tokens=64,
         config=config,
     )
-    runner = StreamingAttentionRunner(plan, config)
+    runner = StreamingAttentionRunner(plan)
     with pytest.raises(ValueError, match="causal offsets"):
         runner(q, q, q, cu, cu, causal=True)

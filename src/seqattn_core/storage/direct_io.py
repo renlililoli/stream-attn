@@ -139,11 +139,6 @@ class AlignedFileWriter:
             self.closed = True
 
 
-# Private aliases retained for tests and compatibility with the previous module.
-_AlignedBuffer = AlignedBuffer
-_AlignedFileWriter = AlignedFileWriter
-
-
 __all__ = [
     "DIRECT_IO_ALIGNMENT",
     "FORMAT_VERSION",

@@ -4,7 +4,7 @@ import torch
 from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.kernels import triton_is_available
 from seqattn_core.reference import streaming_attention_reference
@@ -29,7 +29,7 @@ def test_triton_matches_reference(dtype, causal, q_heads, kv_heads):
         block_m=32,
         block_n=32,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=64,
@@ -39,7 +39,7 @@ def test_triton_matches_reference(dtype, causal, q_heads, kv_heads):
         max_kv_tokens=k.shape[0],
         config=config,
     )
-    runner = StreamingAttentionRunner(plan, config)
+    runner = StreamingAttentionRunner(plan)
     actual = runner(q, k, v, cu_q, cu_k, causal=causal)
     expected = streaming_attention_reference(
         q,
@@ -69,7 +69,7 @@ def test_runner_reuse_has_bounded_allocator_growth():
         block_m=32,
         block_n=32,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=4,
         kv_heads=4,
         head_dim=64,
@@ -79,7 +79,7 @@ def test_runner_reuse_has_bounded_allocator_growth():
         max_kv_tokens=257,
         config=config,
     )
-    runner = StreamingAttentionRunner(plan, config)
+    runner = StreamingAttentionRunner(plan)
     runner(q, k, v, cu, cu)
     torch.cuda.synchronize()
     baseline = torch.cuda.memory_allocated()
@@ -113,7 +113,7 @@ def test_device_consumer_q_reuse_matches_separate_output_path():
             num_output_buffers=2,
             output_mode=output_mode,
         )
-        plan = build_plan(
+        plan = build_attention_plan(
             q_heads=4,
             kv_heads=2,
             head_dim=32,
@@ -123,7 +123,7 @@ def test_device_consumer_q_reuse_matches_separate_output_path():
             max_kv_tokens=k.shape[0],
             config=config,
         )
-        runner = StreamingAttentionRunner(plan, config)
+        runner = StreamingAttentionRunner(plan)
         out = torch.empty_like(q, pin_memory=True)
         runner.run_with_device_output(
             q,

@@ -13,8 +13,8 @@ from ..stats import (
 from .workspace import CudaWorkspace
 
 if TYPE_CHECKING:
-    from ..projection.recompute_workspace import CrossRecomputeWorkspace, RecomputeWorkspace
-    from ..projection.types import KVTileProjector, QTileProjector
+    from ..projection.contracts import KVTileProjector, QTileProjector
+    from ..projection.memory import CrossRecomputeWorkspace, RecomputeWorkspace
 
 
 class QKVTileSource(Protocol):
@@ -324,6 +324,9 @@ class RecomputedCrossQKVTileSource:
 
     def release_kv(self, buffer_index: int, compute_stream: torch.cuda.Stream) -> None:
         del buffer_index, compute_stream
+
+    def recover(self) -> None:
+        self.workspace.recover()
 
 
 __all__ = [

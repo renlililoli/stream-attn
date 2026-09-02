@@ -1,6 +1,6 @@
 # Backend selection and validation
 
-Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
 ## Backend names
 
@@ -17,7 +17,8 @@ Aliases are accepted for compatibility, but statistics record canonical names.
 
 ## Configuration precedence
 
-`StreamingAttentionConfig.backend=None` resolves in this order:
+`StreamingAttentionConfig.backend=None` resolves while building the immutable
+attention plan, in this order:
 
 1. A non-`None` Python argument.
 2. `SEQATTN_BACKEND`.

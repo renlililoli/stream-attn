@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seqattn-core"
-version = "0.3.0a4"
+version = "0.4.0a1"
 description = "Core paged exact-attention runtime with bounded HBM and host-memory working sets"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [{name = "seqattn contributors"}]
 dependencies = [
   "torch>=2.5",
@@ -16,7 +16,6 @@ dependencies = [
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",

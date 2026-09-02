@@ -14,7 +14,7 @@ from .tile_source import HostQKVTileSource, QKVTileSource
 
 class TritonExecutorMixin:
     def _range(self, name: str):
-        if self.config.enable_nvtx:
+        if self.plan.enable_nvtx:
             return torch.cuda.nvtx.range(name)
         return nullcontext()
 
@@ -39,7 +39,7 @@ class TritonExecutorMixin:
             k_cpu,
             v_cpu,
             workspace,
-            enable_nvtx=self.config.enable_nvtx,
+            enable_nvtx=self.plan.enable_nvtx,
         )
         return self._run_triton_from_source(
             source,
@@ -72,7 +72,7 @@ class TritonExecutorMixin:
             k_cpu,
             v_cpu,
             workspace,
-            enable_nvtx=self.config.enable_nvtx,
+            enable_nvtx=self.plan.enable_nvtx,
         )
         self._run_triton_from_source(
             source,

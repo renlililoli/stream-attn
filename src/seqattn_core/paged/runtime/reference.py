@@ -7,7 +7,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 import torch
 
-from ...planner import AttentionPlan
+from ...plan import AttentionPlan
 from ...quantization import dequantize_int8_per_token_group
 from ...stats import PagedAttentionStats
 from ..cache import KVPageCache

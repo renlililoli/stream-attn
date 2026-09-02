@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from seqattn_core import StreamingAttentionConfig, build_plan
+from seqattn_core import StreamingAttentionConfig, build_attention_plan
 from seqattn_core.dit.ltx2 import LTX2AttentionPlans, LTX2Config, build_ltx2_runner
 from seqattn_core.dit.minimax_h3 import H3Config, build_h3_runner
 from seqattn_core.dit.wan import WanAttentionPlans, WanConfig, build_wan_runner
@@ -52,7 +52,7 @@ def test_h3_factory_selects_mode_and_propagates_tiles(monkeypatch):
     assert materialized.kind == "H3MaterializedRunner"
     projected = next(call for call in calls if call.kind == "ProjectedAttentionRunner")
     assert projected.args[0] is plan
-    assert projected.args[2].projection_tile_tokens == 1536
+    assert projected.args[1].projection_tile_tokens == 1536
     assert materialized.kwargs["ffn_tile_tokens"] == 768
 
     calls.clear()
@@ -113,7 +113,10 @@ def test_wan_factory_selects_mode_and_shares_one_materialized_arena(monkeypatch)
     ]
     assert len(producers) == 2
     assert {id(call.kwargs["arena"]) for call in producers} == {id(arena_calls[0])}
-    assert all(call.args[2].projection_tile_tokens == 1152 for call in producers)
+    assert all(call.args[1].projection_tile_tokens == 1152 for call in producers)
+    cross = next(call for call in producers if call.kind == "ProjectedCrossAttentionRunner")
+    assert cross.kwargs["query_hidden_features"] == 72
+    assert cross.kwargs["context_hidden_features"] == 48
     assert materialized.kwargs["ffn_tile_tokens"] == 576
 
     calls.clear()
@@ -181,7 +184,19 @@ def test_ltx2_factory_selects_mode_and_shares_two_materialized_arenas(monkeypatc
     ]
     assert len(producers) == 6
     assert all(call.kwargs["arena"] is arena_by_plan[id(call.args[0])] for call in producers)
-    assert all(call.args[2].projection_tile_tokens == 1280 for call in producers)
+    assert all(call.args[1].projection_tile_tokens == 1280 for call in producers)
+    materialized_crosses = [
+        call for call in producers if call.kind == "ProjectedCrossAttentionRunner"
+    ]
+    assert [
+        (call.kwargs["query_hidden_features"], call.kwargs["context_hidden_features"])
+        for call in materialized_crosses
+    ] == [
+        (96, 40),
+        (64, 40),
+        (96, 64),
+        (64, 96),
+    ]
     assert materialized.kwargs["video_ffn_tile_tokens"] == 704
     assert materialized.kwargs["audio_ffn_tile_tokens"] == 448
 
@@ -215,7 +230,7 @@ def test_ltx2_factory_selects_mode_and_shares_two_materialized_arenas(monkeypatc
 
 
 def _plan(*, q_tokens, kv_tokens, q_heads=2, kv_heads=1, dtype=torch.float32):
-    return build_plan(
+    return build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=16,

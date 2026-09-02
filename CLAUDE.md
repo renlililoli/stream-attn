@@ -27,7 +27,7 @@ For a compatible standalone environment, install editable from this directory:
 pip install -e '.[cuda,benchmark,dev]'
 ```
 
-CPU reference, planner, storage, and API tests can run without CUDA. Triton tests skip when CUDA/Triton is unavailable, and direct-I/O tests may skip when the filesystem does not support `O_DIRECT`.
+CPU reference, plan, storage, and API tests can run without CUDA. Triton tests skip when CUDA/Triton is unavailable, and direct-I/O tests may skip when the filesystem does not support `O_DIRECT`.
 
 ## Tests and quality checks
 
@@ -36,8 +36,8 @@ CPU reference, planner, storage, and API tests can run without CUDA. Triton test
 pytest -q
 
 # One file or one test
-pytest -q tests/test_planner.py
-pytest -q tests/test_planner.py::test_planner_rejects_invalid_gqa_ratio
+pytest -q tests/test_plan.py
+pytest -q tests/test_plan.py::test_plan_rejects_invalid_gqa_ratio
 
 # Useful focused suites
 pytest -q tests/test_reference.py
@@ -66,7 +66,7 @@ modules inside the core package.
 
 The three main execution paths share configuration, planning, validation, statistics, and Triton kernels:
 
-1. **Contiguous streaming** (`streaming/`): CPU-backed packed Q/K/V are validated by `StreamingAttentionRunner`; `planner.py` jointly selects an HBM-resident Q super-block and streamed K/V tile; a persistent CUDA workspace overlaps H2D, Triton online-softmax updates, and D2H. `api.py` exposes dense and FlashAttention-style varlen wrappers.
+1. **Contiguous streaming** (`streaming/`): CPU-backed packed Q/K/V are validated by `StreamingAttentionRunner`; `plan.py` deterministically resolves an HBM-resident Q super-block and streamed K/V tile; a persistent CUDA workspace overlaps H2D, Triton online-softmax updates, and D2H. `api.py` exposes dense and FlashAttention-style varlen wrappers.
 2. **Paged memory/NVMe** (`paged/`, `storage/`): `PagedAttentionRunner` adapts `PageSource`/`PageSink` contracts, allocates all operator-owned host resources through `HostMemoryPlan`, streams Q and K/V pages through staging rings and a bounded two-region K/V cache, then dispatches to reference or Triton execution. `storage/` implements aligned Q/KV records, atomic manifest-last publication, output stores, and explicit `O_DIRECT` I/O.
 3. **Projected pipeline** (`projection/`): `ProjectedAttentionRunner` pipelines CPU hidden-state H2D, model-owned QKV callbacks, and Q/K/V D2H into persistent pinned buffers. After a global K/V readiness barrier, streamed attention passes each GPU output tile directly to the model-owned output-projection callback before projected output D2H, avoiding a raw-attention CPU round trip.
 

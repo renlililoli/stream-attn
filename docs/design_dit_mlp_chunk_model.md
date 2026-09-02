@@ -1,6 +1,6 @@
 # H3 projection and MLP chunk calibration
 
-Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
 This guide covers the secondary H3 tile settings
 `projection_tile_tokens` and `ffn_tile_tokens`. Calibrate attention Q and K/V

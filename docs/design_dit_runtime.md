@@ -1,6 +1,6 @@
 # H3 DiT runtime contracts
 
-Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
 The H3 runtime schedules a generic transformer block through consumer-provided
 callbacks. SeqAttn owns tiling, host/device buffers, attention execution,

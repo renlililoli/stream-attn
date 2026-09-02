@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 
 from ..config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ..planner import build_plan
+from ..plan import build_attention_plan
 from ..projection import ProjectedAttentionRunner
 from ..stats import ProjectedAttentionStats, StreamingAttentionStats
 from ..streaming import StreamingAttentionRunner
@@ -104,7 +104,7 @@ def main() -> None:
             num_projection_buffers=2,
             enable_nvtx=args.nvtx,
         )
-        plan = build_plan(
+        plan = build_attention_plan(
             q_heads=args.heads,
             kv_heads=args.heads,
             head_dim=args.head_dim,
@@ -114,13 +114,13 @@ def main() -> None:
             max_kv_tokens=args.tokens,
             config=attention_config,
         )
-        runner = ProjectedAttentionRunner(plan, attention_config, pipeline_config)
+        runner = ProjectedAttentionRunner(plan, pipeline_config)
         plan = runner.plan
         staged_attention = None
         staged_plan = None
         if args.mode == "staged":
             staged_config = replace(attention_config, output_mode="host")
-            staged_plan = build_plan(
+            staged_plan = build_attention_plan(
                 q_heads=args.heads,
                 kv_heads=args.heads,
                 head_dim=args.head_dim,
@@ -130,7 +130,7 @@ def main() -> None:
                 max_kv_tokens=args.tokens,
                 config=staged_config,
             )
-            staged_attention = StreamingAttentionRunner(staged_plan, staged_config)
+            staged_attention = StreamingAttentionRunner(staged_plan)
         output_cpu = torch.empty((args.tokens, args.hidden_size), dtype=dtype, pin_memory=True)
         raw_attention_cpu = None
         if args.mode == "staged":

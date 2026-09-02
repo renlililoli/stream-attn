@@ -10,10 +10,10 @@ from .dit.minimax_h3.types import (
     estimate_h3_consumer_workspace_bytes,
 )
 from .dit.minimax_h3.workspace import H3BlockWorkspace
-from .planner import AttentionPlan, build_plan
+from .plan import AttentionPlan, build_attention_plan
 from .projection import ProjectedAttentionRunner
+from .projection.memory import ProjectionWorkspace
 from .projection.validation import validate_projected_qkv, validate_projection_hidden
-from .projection.workspace import ProjectionWorkspace
 from .stats import ProjectedAttentionStats, StreamingAttentionStats
 from .streaming.measurement import QueryTaskMeasurement
 from .streaming.protocols import DeviceOutputConsumer, TaskDeviceOutputConsumer
@@ -21,7 +21,7 @@ from .streaming.runner import StreamingAttentionRunner
 from .streaming.tasks import QueryTask, build_query_tasks
 from .validation import validate_host_qkv
 
-PLUGIN_API_VERSION = "0.3.0a4"
+PLUGIN_API_VERSION = "0.4.0a1"
 
 __all__ = [
     "PLUGIN_API_VERSION",
@@ -42,7 +42,7 @@ __all__ = [
     "StreamingAttentionRunner",
     "StreamingAttentionStats",
     "TaskDeviceOutputConsumer",
-    "build_plan",
+    "build_attention_plan",
     "build_query_tasks",
     "estimate_h3_consumer_workspace_bytes",
     "validate_host_qkv",

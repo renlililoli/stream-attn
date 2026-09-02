@@ -7,7 +7,7 @@ import torch
 from seqattn_core import (
     StreamingAttentionConfig,
     StreamingAttentionRunner,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core._plugin_api import (
     H3BlockOps,
@@ -459,7 +459,7 @@ def test_single_dynamic_query_task_reports_cuda_timing_and_matches_reference():
         block_n=16,
         backend="triton",
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=4,
         kv_heads=2,
         head_dim=32,
@@ -480,7 +480,7 @@ def test_single_dynamic_query_task_reports_cuda_timing_and_matches_reference():
     )
     out = torch.empty_like(q, pin_memory=True)
     measurement = QueryTaskMeasurement()
-    runner = StreamingAttentionRunner(plan, config)
+    runner = StreamingAttentionRunner(plan)
     runner.run_query_tasks(
         q,
         k,

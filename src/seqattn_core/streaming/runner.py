@@ -5,17 +5,16 @@ import time
 import torch
 
 from .._single_flight import init_single_flight, single_flight
-from ..config import StreamingAttentionConfig
-from ..planner import AttentionPlan, resolve_runtime_config
+from ..plan import AttentionPlan
 from ..reference import streaming_attention_reference
 from ..stats import StreamingAttentionStats
 from ..validation import require_pinned_inputs, validate_cu_seqlens, validate_host_qkv
-from .backend import configured_backend_name, resolve_backend
+from .backend import resolve_backend
 from .executor import TritonExecutorMixin
 from .flash_split_executor import FlashSplitExecutorMixin
 from .measurement import QueryTaskMeasurement
 from .protocols import DeviceOutputConsumer, DeviceOutputTransform, TaskDeviceOutputConsumer
-from .tasks import QueryTask, build_query_tasks
+from .tasks import QueryTask, build_query_tasks, validate_query_task_inputs
 from .tile_source import QKVTileSource
 from .workspace import CudaWorkspace
 
@@ -27,15 +26,10 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
     stream when independent calls need to execute concurrently.
     """
 
-    def __init__(
-        self,
-        plan: AttentionPlan,
-        config: StreamingAttentionConfig | None = None,
-    ) -> None:
+    def __init__(self, plan: AttentionPlan) -> None:
         init_single_flight(self)
         self.plan = plan
-        self.config = resolve_runtime_config(plan, config)
-        self._backend_request = configured_backend_name(self.config.backend)
+        self._backend_request = plan.backend
         allowed = (
             {"triton", "reference"}
             if plan.output_mode == "device_consumer"
@@ -78,9 +72,9 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         v_cpu: torch.Tensor,
         out: torch.Tensor,
     ) -> None:
-        if self.config.require_pinned:
+        if self.plan.require_pinned:
             require_pinned_inputs(q_cpu, k_cpu, v_cpu)
-        if self.config.pin_output and not out.is_pinned():
+        if self.plan.pin_output and not out.is_pinned():
             raise ValueError("asynchronous D2H requires a pinned out tensor")
 
     def _prepare_triton_inputs(
@@ -89,7 +83,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         k_cpu: torch.Tensor,
         v_cpu: torch.Tensor,
     ) -> None:
-        if self.config.require_pinned:
+        if self.plan.require_pinned:
             require_pinned_inputs(q_cpu, k_cpu, v_cpu)
 
     def _prepare_stats(
@@ -120,53 +114,6 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
                 head_dim=self.plan.head_dim,
             )
         return execution_backend
-
-    def _validate_query_tasks(
-        self,
-        query_tasks: tuple[QueryTask, ...],
-        *,
-        q_tokens: int,
-        kv_tokens: int,
-    ) -> None:
-        previous_stop = 0
-        for task in query_tasks:
-            task.validate()
-            if task.q_start < previous_stop:
-                raise ValueError("query tasks must be ordered and non-overlapping")
-            if task.q_stop > q_tokens or task.k_stop > kv_tokens:
-                raise ValueError("query task exceeds the provided Q/K/V tensors")
-            if task.q_tokens > self.plan.q_chunk_tokens:
-                raise ValueError("query task exceeds the runner q_chunk_tokens")
-            segment_q_tokens = task.k_tokens - task.causal_shift
-            if task.q_local_offset + task.q_tokens > segment_q_tokens:
-                raise ValueError("query task exceeds its packed query segment")
-            previous_stop = task.q_stop
-
-    def _validate_query_task_inputs(
-        self,
-        q_cpu: torch.Tensor,
-        k_cpu: torch.Tensor,
-        v_cpu: torch.Tensor,
-        query_tasks: tuple[QueryTask, ...],
-    ) -> None:
-        if any(tensor.device.type != "cpu" for tensor in (q_cpu, k_cpu, v_cpu)):
-            raise ValueError("scheduled query task inputs must be CPU-backed")
-        if q_cpu.shape[1:] != (self.plan.q_heads, self.plan.head_dim):
-            raise ValueError("q shape does not match the runner plan")
-        if k_cpu.shape != v_cpu.shape or k_cpu.shape[1:] != (
-            self.plan.kv_heads,
-            self.plan.head_dim,
-        ):
-            raise ValueError("k/v shape does not match the runner plan")
-        if any(tensor.dtype != self.plan.dtype for tensor in (q_cpu, k_cpu, v_cpu)):
-            raise ValueError("input dtype does not match the runner plan")
-        if q_cpu.shape[0] > self.plan.max_q_tokens or k_cpu.shape[0] > self.plan.max_kv_tokens:
-            raise ValueError("input token count exceeds the runner plan")
-        self._validate_query_tasks(
-            query_tasks,
-            q_tokens=q_cpu.shape[0],
-            kv_tokens=k_cpu.shape[0],
-        )
 
     def _execute_host_query_tasks(
         self,
@@ -226,7 +173,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
 
         if self.plan.output_mode != "host":
             raise ValueError("a device_consumer runner cannot return host query tasks")
-        self._validate_query_task_inputs(q_cpu, k_cpu, v_cpu, query_tasks)
+        validate_query_task_inputs(self.plan, q_cpu, k_cpu, v_cpu, query_tasks)
         if out.device.type != "cpu":
             raise ValueError("scheduled query task output must be CPU-backed")
         if out.shape != q_cpu.shape or out.dtype != q_cpu.dtype:
@@ -270,7 +217,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
 
         if self.plan.output_mode != "device_consumer" or self.backend != "triton":
             raise ValueError("scheduled device consumers require device_consumer Triton plans")
-        self._validate_query_task_inputs(q_cpu, k_cpu, v_cpu, query_tasks)
+        validate_query_task_inputs(self.plan, q_cpu, k_cpu, v_cpu, query_tasks)
         self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
 
         scale = self.plan.head_dim**-0.5 if softmax_scale is None else float(softmax_scale)
@@ -307,7 +254,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
 
         if self.plan.output_mode != "device_consumer" or self.backend != "triton":
             raise ValueError("scheduled device consumers require device_consumer Triton plans")
-        self._validate_query_task_inputs(q_cpu, k_cpu, v_cpu, (query_task,))
+        validate_query_task_inputs(self.plan, q_cpu, k_cpu, v_cpu, (query_task,))
         self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
 
         scale = self.plan.head_dim**-0.5 if softmax_scale is None else float(softmax_scale)
@@ -350,7 +297,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
                 q_cpu.shape,
                 dtype=q_cpu.dtype,
                 device="cpu",
-                pin_memory=self.config.pin_output and torch.cuda.is_available(),
+                pin_memory=self.plan.pin_output and torch.cuda.is_available(),
             )
         if out.shape != q_cpu.shape or out.dtype != q_cpu.dtype or out.device.type != "cpu":
             raise ValueError("out must be a CPU tensor matching q shape and dtype")

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ...config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ...planner import AttentionPlan
+from ...config import ProjectionPipelineConfig
+from ...plan import AttentionPlan
 from ...projection import (
     MaterializedQKVArena,
     ProjectedAttentionRunner,
@@ -31,7 +31,6 @@ def build_wan_runner(
     hidden_features: int,
     text_hidden_features: int,
     config: WanConfig | None = None,
-    attention_config: StreamingAttentionConfig | None = None,
     num_output_buffers: int = 2,
 ) -> WanRunner:
     """Construct the configured single-GPU Wan runner."""
@@ -47,14 +46,14 @@ def build_wan_runner(
         )
         self_attention = ProjectedAttentionRunner(
             plans.self_attention,
-            attention_config,
             pipeline,
             arena=arena,
         )
         cross_attention = ProjectedCrossAttentionRunner(
             plans.text_cross_attention,
-            attention_config,
             pipeline,
+            query_hidden_features=hidden_features,
+            context_hidden_features=text_hidden_features,
             arena=arena,
         )
         return WanMaterializedRunner(
@@ -67,13 +66,11 @@ def build_wan_runner(
     self_attention = RecomputedAttentionRunner(
         plans.self_attention,
         hidden_features=hidden_features,
-        attention_config=attention_config,
     )
     cross_attention = RecomputedCrossAttentionRunner(
         plans.text_cross_attention,
         query_hidden_features=hidden_features,
         context_hidden_features=text_hidden_features,
-        attention_config=attention_config,
     )
     return WanRecomputeRunner(
         self_attention,

@@ -10,7 +10,7 @@ from seqattn_core import (
     RecomputedCrossAttentionRunner,
     RecomputedCrossAttentionStats,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.kernels import triton_is_available
 
@@ -94,7 +94,7 @@ def test_projected_cross_attention_matches_full_gpu_gqa_and_packed_batch():
         return out_linear(attention)
 
     config = _attention_config()
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=head_dim,
@@ -106,8 +106,9 @@ def test_projected_cross_attention_matches_full_gpu_gqa_and_packed_batch():
     )
     runner = ProjectedCrossAttentionRunner(
         plan,
-        config,
         ProjectionPipelineConfig(projection_tile_tokens=23),
+        query_hidden_features=query_features,
+        context_hidden_features=context_features,
     )
     stats = ProjectedCrossAttentionStats()
     actual = runner(
@@ -192,7 +193,7 @@ def test_recomputed_cross_attention_matches_materialized_reference_without_host_
         dtype=dtype,
     )
     config = _attention_config(output_mode="device_consumer")
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=head_dim,
@@ -206,7 +207,6 @@ def test_recomputed_cross_attention_matches_materialized_reference_without_host_
         plan,
         query_hidden_features=query_features,
         context_hidden_features=context_features,
-        attention_config=config,
     )
 
     def project_q(tile, destination, start, stop):
@@ -250,7 +250,21 @@ def test_recomputed_cross_attention_matches_materialized_reference_without_host_
 
 
 @pytest.mark.skipif(not triton_is_available(), reason="requires CUDA and Triton")
-def test_projected_cross_runner_recovers_after_projection_callback_failure():
+@pytest.mark.parametrize(
+    ("failure", "exception_type", "message"),
+    [
+        ("callback", RuntimeError, "injected cross projection failure"),
+        ("q_shape", ValueError, "project_q returned shape"),
+        ("q_dtype", ValueError, "project_q must return"),
+        ("kv_shape", ValueError, "project_kv returned invalid shapes"),
+        ("kv_dtype", ValueError, "project_kv must return"),
+    ],
+)
+def test_projected_cross_runner_recovers_after_projection_failure(
+    failure,
+    exception_type,
+    message,
+):
     dtype = torch.bfloat16
     query_tokens, context_tokens = 31, 23
     query_features, context_features = 24, 20
@@ -272,7 +286,7 @@ def test_projected_cross_runner_recovers_after_projection_callback_failure():
         block_m=16,
         block_n=16,
     )
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=head_dim,
@@ -284,36 +298,53 @@ def test_projected_cross_runner_recovers_after_projection_callback_failure():
     )
     runner = ProjectedCrossAttentionRunner(
         plan,
-        config,
         ProjectionPipelineConfig(projection_tile_tokens=11),
+        query_hidden_features=query_features,
+        context_hidden_features=context_features,
     )
 
-    def fail_query(tile, start, stop):
-        del tile, start, stop
-        raise RuntimeError("injected cross projection failure")
+    def project_q(tile, start, stop):
+        del start, stop
+        projected = q_linear(tile).view(-1, q_heads, head_dim)
+        if failure == "callback":
+            raise RuntimeError("injected cross projection failure")
+        if failure == "q_shape":
+            return projected[:, :, :-1]
+        if failure == "q_dtype":
+            return projected.float()
+        return projected
 
     def project_kv(tile, start, stop):
         del start, stop
         projected = kv_linear(tile).view(-1, 2, kv_heads, head_dim)
+        if failure == "kv_shape":
+            return projected[:, 0, :, :-1], projected[:, 1, :, :-1]
+        if failure == "kv_dtype":
+            return projected[:, 0].float(), projected[:, 1].float()
         return projected[:, 0].contiguous(), projected[:, 1].contiguous()
 
-    with pytest.raises(RuntimeError, match="injected cross projection failure"):
+    with pytest.raises(exception_type, match=message):
         runner.project_to_host(
             query,
             context,
-            project_q=fail_query,
+            project_q=project_q,
             project_kv=project_kv,
         )
 
-    def project_q(tile, start, stop):
+    def valid_project_q(tile, start, stop):
         del start, stop
         return q_linear(tile).view(-1, q_heads, head_dim)
+
+    def valid_project_kv(tile, start, stop):
+        del start, stop
+        projected = kv_linear(tile).view(-1, 2, kv_heads, head_dim)
+        return projected[:, 0].contiguous(), projected[:, 1].contiguous()
 
     q, k, v = runner.project_to_host(
         query,
         context,
-        project_q=project_q,
-        project_kv=project_kv,
+        project_q=valid_project_q,
+        project_kv=valid_project_kv,
     )
     expected_q = q_linear(query.to("cuda")).view_as(q).cpu()
     expected_kv = kv_linear(context.to("cuda")).view(-1, 2, kv_heads, head_dim).cpu()

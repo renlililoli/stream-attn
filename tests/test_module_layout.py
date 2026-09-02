@@ -144,3 +144,36 @@ def test_core_package_contains_no_compat_facades():
     core_dir = Path(seqattn_core.__file__).parent
     present = {name for name in compat_facades if (core_dir / f"{name}.py").exists()}
     assert not present, f"compatibility facades must not ship: {sorted(present)}"
+
+
+def test_attention_planning_has_one_public_resolved_plan_api():
+    core_dir = Path(seqattn_core.__file__).parent
+    assert not (core_dir / "planner.py").exists()
+    assert callable(seqattn_core.build_attention_plan)
+    assert not hasattr(seqattn_core, "build_plan")
+
+
+def test_storage_package_has_no_compatibility_facades_or_private_aliases():
+    storage_dir = Path(seqattn_core.storage.__file__).parent
+    assert not (storage_dir / "qkv.py").exists()
+
+    from seqattn_core.storage import direct_io
+
+    assert not hasattr(direct_io, "_AlignedBuffer")
+    assert not hasattr(direct_io, "_AlignedFileWriter")
+
+
+def test_projection_package_has_no_legacy_policy_split_modules():
+    projection_dir = Path(seqattn_core.projection.__file__).parent
+    legacy_modules = {
+        "arena.py",
+        "cross.py",
+        "cross_recompute.py",
+        "recompute.py",
+        "recompute_workspace.py",
+        "runner.py",
+        "types.py",
+        "workspace.py",
+    }
+    present = {name for name in legacy_modules if (projection_dir / name).exists()}
+    assert not present, f"legacy projection modules must not ship: {sorted(present)}"

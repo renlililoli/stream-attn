@@ -219,13 +219,13 @@ For repeated layers or denoise steps, build one plan and reuse one runner so
 its buffers, streams, and CUDA events remain allocated:
 
 ```python
-from seqattn_core import StreamingAttentionRunner, build_plan
+from seqattn_core import StreamingAttentionRunner, build_attention_plan
 
 config = StreamingAttentionConfig(
     workspace_budget_bytes=4 * 2**30,
     kv_chunk_tokens=4096,
 )
-plan = build_plan(
+plan = build_attention_plan(
     q_heads=56,
     kv_heads=56,
     head_dim=128,
@@ -235,7 +235,7 @@ plan = build_plan(
     max_kv_tokens=tokens,
     config=config,
 )
-runner = StreamingAttentionRunner(plan, config)
+runner = StreamingAttentionRunner(plan)
 out = torch.empty_like(q).pin_memory()
 runner(q, k, v, cu, cu, out=out)
 ```

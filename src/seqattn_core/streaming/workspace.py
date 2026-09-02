@@ -4,7 +4,7 @@ from contextlib import suppress
 
 import torch
 
-from ..planner import AttentionPlan
+from ..plan import AttentionPlan
 
 
 class TaskTimingEvents:

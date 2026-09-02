@@ -3,11 +3,10 @@ from __future__ import annotations
 import torch
 
 from ..config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ..planner import build_plan
+from ..plan import build_attention_plan
 from ..stats import ProjectedAttentionStats, ProjectedCrossAttentionStats
-from .cross import ProjectedCrossAttentionRunner
-from .runner import ProjectedAttentionRunner
-from .types import KVProjector, OutputProjector, QKVProjector, QProjector
+from .contracts import KVProjector, OutputProjector, QKVProjector, QProjector
+from .runners import ProjectedAttentionRunner, ProjectedCrossAttentionRunner
 
 
 def streaming_projected_self_attention(
@@ -30,7 +29,7 @@ def streaming_projected_self_attention(
     """Functional convenience wrapper for one projected self-attention call."""
 
     attention_config = StreamingAttentionConfig() if attention_config is None else attention_config
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=head_dim,
@@ -40,7 +39,7 @@ def streaming_projected_self_attention(
         max_kv_tokens=hidden_cpu.shape[0],
         config=attention_config,
     )
-    runner = ProjectedAttentionRunner(plan, attention_config, pipeline_config)
+    runner = ProjectedAttentionRunner(plan, pipeline_config)
     return runner(
         hidden_cpu,
         cu_seqlens,
@@ -76,7 +75,7 @@ def streaming_projected_cross_attention(
     """Functional convenience wrapper for one projected cross-attention call."""
 
     attention_config = StreamingAttentionConfig() if attention_config is None else attention_config
-    plan = build_plan(
+    plan = build_attention_plan(
         q_heads=q_heads,
         kv_heads=kv_heads,
         head_dim=head_dim,
@@ -86,7 +85,12 @@ def streaming_projected_cross_attention(
         max_kv_tokens=context_hidden_host.shape[0],
         config=attention_config,
     )
-    runner = ProjectedCrossAttentionRunner(plan, attention_config, pipeline_config)
+    runner = ProjectedCrossAttentionRunner(
+        plan,
+        pipeline_config,
+        query_hidden_features=query_hidden_host.shape[1],
+        context_hidden_features=context_hidden_host.shape[1],
+    )
     return runner(
         query_hidden_host,
         context_hidden_host,

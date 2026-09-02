@@ -18,12 +18,10 @@ from seqattn_core._plugin_api import (
 )
 
 from .dynamic import DynamicScheduleConfig
+from .planning import MultiGpuAttentionPlan
 from .projection import MultiGpuQKVProjectionRunner
 from .stats import MultiGpuH3DiTStats
-from .streaming import (
-    MultiGpuAttentionPlan,
-    MultiGpuStreamingAttentionRunner,
-)
+from .streaming import MultiGpuStreamingAttentionRunner
 
 
 def _normalize_device_values(

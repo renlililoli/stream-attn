@@ -10,7 +10,7 @@ from seqattn_core import (
     RecomputedAttentionRunner,
     RecomputedCrossAttentionRunner,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core.dit.wan import (
     WanBlockOps,
@@ -98,7 +98,7 @@ def _plans(tokens, text_tokens, heads, kv_heads, head_dim, dtype):
         block_n=16,
         output_mode="device_consumer",
     )
-    self_plan = build_plan(
+    self_plan = build_attention_plan(
         q_heads=heads,
         kv_heads=heads,
         head_dim=head_dim,
@@ -108,7 +108,7 @@ def _plans(tokens, text_tokens, heads, kv_heads, head_dim, dtype):
         max_kv_tokens=tokens,
         config=config,
     )
-    cross_plan = build_plan(
+    cross_plan = build_attention_plan(
         q_heads=heads,
         kv_heads=kv_heads,
         head_dim=head_dim,
@@ -158,17 +158,17 @@ def test_wan_materialized_block_matches_full_gpu_order():
     text = torch.randn(text_tokens, text_features, dtype=dtype, pin_memory=True)
     modules = _build_modules(hidden_features, text_features, heads, kv_heads, head_dim, dtype)
     self_qkv, _, cross_q, cross_kv, *_ = modules
-    config, self_plan, cross_plan = _plans(tokens, text_tokens, heads, kv_heads, head_dim, dtype)
+    _, self_plan, cross_plan = _plans(tokens, text_tokens, heads, kv_heads, head_dim, dtype)
     runner = WanMaterializedRunner(
         ProjectedAttentionRunner(
             self_plan,
-            config,
             ProjectionPipelineConfig(projection_tile_tokens=23),
         ),
         ProjectedCrossAttentionRunner(
             cross_plan,
-            config,
             ProjectionPipelineConfig(projection_tile_tokens=17),
+            query_hidden_features=hidden_features,
+            context_hidden_features=text_features,
         ),
         hidden_features=hidden_features,
         ffn_tile_tokens=29,
@@ -236,17 +236,15 @@ def test_wan_recompute_block_matches_full_gpu_without_host_qkv():
     text = torch.randn(text_tokens, text_features, dtype=dtype, pin_memory=True)
     modules = _build_modules(hidden_features, text_features, heads, kv_heads, head_dim, dtype)
     self_qkv, _, cross_q, cross_kv, *_ = modules
-    config, self_plan, cross_plan = _plans(tokens, text_tokens, heads, kv_heads, head_dim, dtype)
+    _, self_plan, cross_plan = _plans(tokens, text_tokens, heads, kv_heads, head_dim, dtype)
     self_runner = RecomputedAttentionRunner(
         self_plan,
         hidden_features=hidden_features,
-        attention_config=config,
     )
     cross_runner = RecomputedCrossAttentionRunner(
         cross_plan,
         query_hidden_features=hidden_features,
         context_hidden_features=text_features,
-        attention_config=config,
     )
     runner = WanRecomputeRunner(self_runner, cross_runner, ffn_tile_tokens=23)
 

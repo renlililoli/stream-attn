@@ -15,7 +15,7 @@ from seqattn_core import (
     ProjectedAttentionRunner,
     ProjectionPipelineConfig,
     StreamingAttentionConfig,
-    build_plan,
+    build_attention_plan,
 )
 from seqattn_core._plugin_api import (
     H3BlockOps,
@@ -221,7 +221,7 @@ def main() -> None:
                 output_mode="device_consumer",
                 backend="triton",
             )
-            attention_plan = build_plan(
+            attention_plan = build_attention_plan(
                 q_heads=args.heads,
                 kv_heads=args.heads,
                 head_dim=args.head_dim,
@@ -233,7 +233,6 @@ def main() -> None:
             )
             projected = ProjectedAttentionRunner(
                 attention_plan,
-                attention_config,
                 ProjectionPipelineConfig(projection_tile_tokens=args.projection_chunk),
             )
             runner = H3MaterializedRunner(
@@ -296,7 +295,6 @@ def main() -> None:
             primary_schedule = multi_plan.schedules[0]
             projected = ProjectedAttentionRunner(
                 primary_schedule.attention_plan,
-                primary_schedule.config,
                 ProjectionPipelineConfig(projection_tile_tokens=args.projection_chunk),
             )
             runner = MultiGpuH3MaterializedRunner(

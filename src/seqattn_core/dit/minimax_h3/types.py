@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import torch
 
-from ...projection.types import KVTileProjector, QKVProjector, QTileProjector
+from ...projection.contracts import KVTileProjector, QKVProjector, QTileProjector
 from ...validation import validate_cu_seqlens
 from ..common import AttentionEpilogue, DeviceTileOp, LeaseFactory
 

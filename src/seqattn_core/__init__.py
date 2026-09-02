@@ -26,7 +26,7 @@ from .paged import (
     SimulatedPageSource,
     TensorLayout,
 )
-from .planner import AttentionPlan, build_plan
+from .plan import AttentionPlan, build_attention_plan
 from .projection import (
     CrossProjection,
     CrossRecomputeProjection,
@@ -113,7 +113,7 @@ __all__ = [
     "StreamingAttentionStats",
     "TaskDeviceOutputConsumer",
     "TensorLayout",
-    "build_plan",
+    "build_attention_plan",
     "build_query_tasks",
     "ephemeral_nvme_directory",
     "load_nvme_output",
@@ -123,4 +123,4 @@ __all__ = [
     "streaming_projected_self_attention",
 ]
 
-__version__ = "0.3.0a4"
+__version__ = "0.4.0a1"

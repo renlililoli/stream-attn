@@ -121,7 +121,7 @@ pip install -e '.[cuda,dit,dev]'
 Use focused tests while developing:
 
 ```bash
-pytest -q tests/test_planner.py
+pytest -q tests/test_plan.py
 pytest -q tests/test_reference.py
 pytest -q tests/test_triton.py
 pytest -q tests/test_pipeline.py

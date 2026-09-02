@@ -7,7 +7,7 @@ import torch
 
 from ..._single_flight import init_single_flight, single_flight
 from ...projection import RecomputedAttentionRunner
-from ..common.validation import require_distinct_storage, validate_hidden_host
+from ..common import require_distinct_storage, validate_hidden_host
 from .consumer import H3DeviceOutputConsumer
 from .stats import H3DiTStats
 from .types import (
@@ -119,21 +119,12 @@ class H3RecomputeRunner:
                 stats=stats.recompute,
             )
 
-        tokens = source_hidden_host.shape[0]
-        attention_bytes = (
-            tokens
-            * self.recomputed_attention.plan.q_heads
-            * self.recomputed_attention.plan.head_dim
-            * source_hidden_host.element_size()
-        )
         hidden_bytes = source_hidden_host.numel() * source_hidden_host.element_size()
         stats.hidden_host_bytes_peak = max(stats.hidden_host_bytes_peak, 2 * hidden_bytes)
         stats.post_attention_roundtrip_bytes_avoided += 2 * hidden_bytes
         stats.recompute.qkv_host_bytes = 0
         stats.blocks += 1
         stats.wall_seconds += time.perf_counter() - started
-        # The fused consumer avoids a raw attention host round trip in both policies.
-        stats.recompute.raw_attention_roundtrip_bytes_avoided += 2 * attention_bytes
         return destination_hidden_host
 
     @single_flight

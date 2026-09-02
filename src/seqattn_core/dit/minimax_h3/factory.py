@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ...config import ProjectionPipelineConfig, StreamingAttentionConfig
-from ...planner import AttentionPlan
+from ...config import ProjectionPipelineConfig
+from ...plan import AttentionPlan
 from ...projection import ProjectedAttentionRunner, RecomputedAttentionRunner
 from .config import H3Config, load_h3_config
 from .materialized_runner import H3MaterializedRunner
@@ -15,7 +15,6 @@ def build_h3_runner(
     *,
     hidden_features: int,
     config: H3Config | None = None,
-    attention_config: StreamingAttentionConfig | None = None,
     num_output_buffers: int = 2,
 ) -> H3Runner:
     """Construct the configured single-GPU H3 runner from one resolved plan."""
@@ -24,7 +23,6 @@ def build_h3_runner(
     if config.execution_mode == "materialized":
         projected = ProjectedAttentionRunner(
             plan,
-            attention_config,
             ProjectionPipelineConfig(
                 projection_tile_tokens=config.projection_tile_tokens,
             ),
@@ -38,7 +36,6 @@ def build_h3_runner(
     recomputed = RecomputedAttentionRunner(
         plan,
         hidden_features=hidden_features,
-        attention_config=attention_config,
     )
     return H3RecomputeRunner(
         recomputed,

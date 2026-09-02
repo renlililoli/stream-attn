@@ -1,6 +1,6 @@
 # SeqAttn architecture
 
-Status: current for `seqattn-core 0.3.0a4` on 2026-08-28.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
 
 SeqAttn is an inference-only exact dense-attention runtime for workloads whose
 complete Q/K/V working set does not fit in GPU memory. The core package owns
@@ -15,7 +15,7 @@ src/seqattn_core/    public API and implementation; no compat facades
   _config_file.py    shared TOML path, parsing, and scalar validation
   api.py             functional public API
   config.py          execution policy dataclasses
-  planner.py         workspace and budget planning
+  plan.py            deterministic workspace and execution planning
   stats.py           statistics dataclasses
   reference.py       FP32 online-softmax CPU reference
   validation.py      host tensor and sequence validation
@@ -43,13 +43,13 @@ src/seqattn_core/    public API and implementation; no compat facades
     qkv_writer.py    streaming Q/KV store construction
     output.py        paged output writer and loader
   projection/        hidden-state projection attention pipeline
-    types.py         projection callback contracts
-    workspace.py     persistent projection streams and buffers
-    runner.py        materialized projected attention orchestration
-    cross.py         independent query/context materialized projection
-    recompute.py     large-tile Q-only/KV-only attention orchestration
-    cross_recompute.py independent query/context direct-write recompute
     api.py           functional convenience API
+    contracts.py     projection callbacks and immutable lease descriptors
+    materialized.py  shared asynchronous materialization producer
+    runners.py       materialized self/cross runner facades
+    recomputed.py    shared self/cross direct-write recompute runners
+    memory.py        host QKV arena and persistent CUDA staging
+    validation.py    hidden and projected tensor contracts
   dit/               model-specific fixed-order DiT integrations
     common/          internal consumers, tiled stages, masks, and validation
     minimax_h3/      H3 materialized and recompute runners
@@ -63,7 +63,12 @@ src/seqattn_core/    public API and implementation; no compat facades
   kernels/           Triton kernels and launch helpers
 
 packages/seqattn-multigpu/
-  optional static and dynamic multi-GPU execution
+  planning.py       immutable per-device plans and static query partitioning
+  streaming.py      static and feedback-driven multi-device execution
+  dynamic.py        measured dynamic Q controller and query cursor
+  projection.py     multi-device materialized QKV producer
+  dit.py            specialized fused H3 consumer pipeline
+  stats.py          plugin-owned execution statistics
 ```
 
 `seqattn_core` exports the single-GPU API. It does not export `MultiGpu*`
@@ -121,7 +126,7 @@ Causal alignment uses bottom-right positions when Q and K lengths differ.
 - a fixed allocator and launch margin.
 
 It excludes the CUDA context, model weights, caller tensors, callback
-temporaries, and the whole-process memory peak. The planner aligns manually
+temporaries, and the whole-process memory peak. The plan builder aligns manually
 specified tiles to the selected kernel block dimensions.
 
 Chunk axes are independent:
