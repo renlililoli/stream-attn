@@ -21,6 +21,8 @@ if triton is not None:
         q_ptr,
         k_ptr,
         v_ptr,
+        k_scale_ptr,
+        v_scale_ptr,
         k_centroid_ptr,
         v_sum_ptr,
         threshold_ptr,
@@ -44,6 +46,10 @@ if triton is not None:
         stride_vt,
         stride_vh,
         stride_vd,
+        stride_ksb,
+        stride_ksh,
+        stride_vscb,
+        stride_vsch,
         stride_kcb,
         stride_kch,
         stride_kcd,
@@ -57,8 +63,12 @@ if triton is not None:
         stride_at,
         stride_ah,
         stride_ad,
+        stride_rcb,
+        stride_rch,
+        stride_rcc,
         TILE_BLOCKS: tl.constexpr,
         INITIALIZE: tl.constexpr,
+        KV_QUANTIZED: tl.constexpr,
     ):
         q_block = tl.program_id(0)
         head = tl.program_id(1)
@@ -80,10 +90,14 @@ if triton is not None:
         acc_offsets = (
             token_offsets[:, None] * stride_at + head * stride_ah + dim_offsets[None, :] * stride_ad
         )
+        route_lane = tl.arange(0, 1)
+        route_offset = q_block * stride_rcb + head * stride_rch
         if INITIALIZE:
             running_max = tl.full((_BLOCK_TOKENS,), -float("inf"), tl.float32)
             running_sum = tl.zeros((_BLOCK_TOKENS,), tl.float32)
             accumulator = tl.zeros((_BLOCK_TOKENS, _HEAD_DIM), tl.float32)
+            exact_routes = tl.zeros((1,), tl.int32)
+            approximate_routes = tl.zeros((1,), tl.int32)
         else:
             running_max = tl.load(max_ptr + state_offsets, mask=q_mask, other=-float("inf"))
             running_sum = tl.load(sum_ptr + state_offsets, mask=q_mask, other=0.0)
@@ -92,6 +106,10 @@ if triton is not None:
                 mask=q_mask[:, None],
                 other=0.0,
             ).to(tl.float32)
+            exact_routes = tl.load(route_counts_ptr + route_offset + route_lane * stride_rcc)
+            approximate_routes = tl.load(
+                route_counts_ptr + route_offset + (route_lane + 1) * stride_rcc
+            )
 
         group_offsets = tl.arange(0, _ROUTE_GROUP)
         dense_query_block = local_q_block < exact_prefix_blocks
@@ -191,7 +209,15 @@ if triton is not None:
                     + dim_offsets[None, :] * stride_vd
                 )
                 k = tl.load(k_ptr + k_offsets, mask=kv_mask[:, None], other=0.0)
-                logits = tl.dot(q, tl.trans(k)).to(tl.float32) * scale_log2
+                if KV_QUANTIZED:
+                    # A route block shares one scale, so factor it out of QK
+                    # instead of dequantizing every K element.
+                    k_scale = tl.load(k_scale_ptr + tile_block * stride_ksb + head * stride_ksh)
+                    logits = tl.dot(q, tl.trans(k.to(q.dtype))).to(tl.float32) * (
+                        scale_log2 * k_scale
+                    )
+                else:
+                    logits = tl.dot(q, tl.trans(k)).to(tl.float32) * scale_log2
                 valid = q_mask[:, None] & kv_mask[None, :]
                 logits = tl.where(valid, logits, -float("inf"))
                 tile_max = tl.max(logits, axis=1)
@@ -208,25 +234,39 @@ if triton is not None:
                     0.0,
                 )
                 v = tl.load(v_ptr + v_offsets, mask=kv_mask[:, None], other=0.0)
-                accumulator = accumulator * exact_alpha[:, None] + tl.dot(
-                    exact_probabilities.to(v.dtype),
-                    v,
-                )
+                accumulator *= exact_alpha[:, None]
+                if KV_QUANTIZED:
+                    # Fold the block scale into P so P@V can accumulate without
+                    # materializing a separate scaled result.
+                    v_scale = tl.load(v_scale_ptr + tile_block * stride_vscb + head * stride_vsch)
+                    accumulator = tl.dot(
+                        (exact_probabilities * v_scale).to(q.dtype),
+                        v.to(q.dtype),
+                        accumulator,
+                    )
+                else:
+                    accumulator = tl.dot(
+                        exact_probabilities.to(v.dtype),
+                        v,
+                        accumulator,
+                    )
                 running_sum = running_sum * exact_alpha + tl.sum(
                     exact_probabilities,
                     axis=1,
                 )
                 running_max = tl.where(row_valid, new_max, running_max)
 
-            tl.atomic_add(route_counts_ptr, tl.sum(exact.to(tl.int64), axis=0))
-            tl.atomic_add(
-                route_counts_ptr + 1,
-                tl.sum(approximate.to(tl.int64), axis=0),
-            )
+            exact_routes += tl.sum(exact.to(tl.int32), axis=0)
+            approximate_routes += tl.sum(approximate.to(tl.int32), axis=0)
 
         tl.store(max_ptr + state_offsets, running_max, mask=q_mask)
         tl.store(sum_ptr + state_offsets, running_sum, mask=q_mask)
         tl.store(acc_ptr + acc_offsets, accumulator, mask=q_mask[:, None])
+        tl.store(route_counts_ptr + route_offset + route_lane * stride_rcc, exact_routes)
+        tl.store(
+            route_counts_ptr + route_offset + (route_lane + 1) * stride_rcc,
+            approximate_routes,
+        )
 
 
 def update_sol_attention_state(
@@ -250,8 +290,111 @@ def update_sol_attention_state(
     softmax_scale: float,
     initialize: bool,
 ) -> None:
+    _update_sol_attention_state(
+        q,
+        k,
+        v,
+        None,
+        None,
+        k_centroids,
+        value_sums,
+        thresholds,
+        running_max,
+        running_sum,
+        accumulator,
+        route_counts,
+        q_tokens=q_tokens,
+        kv_tokens=kv_tokens,
+        q_block_offset=q_block_offset,
+        kv_block_offset=kv_block_offset,
+        segment_tokens=segment_tokens,
+        exact_prefix_tokens=exact_prefix_tokens,
+        softmax_scale=softmax_scale,
+        initialize=initialize,
+    )
+
+
+def update_sol_attention_state_int8(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    k_scales: torch.Tensor,
+    v_scales: torch.Tensor,
+    k_centroids: torch.Tensor,
+    value_sums: torch.Tensor,
+    thresholds: torch.Tensor,
+    running_max: torch.Tensor,
+    running_sum: torch.Tensor,
+    accumulator: torch.Tensor,
+    route_counts: torch.Tensor,
+    *,
+    q_tokens: int,
+    kv_tokens: int,
+    q_block_offset: int,
+    kv_block_offset: int,
+    segment_tokens: int,
+    exact_prefix_tokens: int,
+    softmax_scale: float,
+    initialize: bool,
+) -> None:
+    if k.dtype != torch.int8 or v.dtype != torch.int8:
+        raise ValueError("quantized Sol K/V buffers must use int8")
+    if k_scales.dtype != torch.float16 or v_scales.dtype != torch.float16:
+        raise ValueError("quantized Sol K/V scales must use float16")
+    _update_sol_attention_state(
+        q,
+        k,
+        v,
+        k_scales,
+        v_scales,
+        k_centroids,
+        value_sums,
+        thresholds,
+        running_max,
+        running_sum,
+        accumulator,
+        route_counts,
+        q_tokens=q_tokens,
+        kv_tokens=kv_tokens,
+        q_block_offset=q_block_offset,
+        kv_block_offset=kv_block_offset,
+        segment_tokens=segment_tokens,
+        exact_prefix_tokens=exact_prefix_tokens,
+        softmax_scale=softmax_scale,
+        initialize=initialize,
+    )
+
+
+def _update_sol_attention_state(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    k_scales: torch.Tensor | None,
+    v_scales: torch.Tensor | None,
+    k_centroids: torch.Tensor,
+    value_sums: torch.Tensor,
+    thresholds: torch.Tensor,
+    running_max: torch.Tensor,
+    running_sum: torch.Tensor,
+    accumulator: torch.Tensor,
+    route_counts: torch.Tensor,
+    *,
+    q_tokens: int,
+    kv_tokens: int,
+    q_block_offset: int,
+    kv_block_offset: int,
+    segment_tokens: int,
+    exact_prefix_tokens: int,
+    softmax_scale: float,
+    initialize: bool,
+) -> None:
     if triton is None:
         raise RuntimeError("the Triton backend is not installed")
+    quantized = k_scales is not None
+    scale_k = k if k_scales is None else k_scales
+    scale_v = v if v_scales is None else v_scales
+    scale_strides_k = (0, 0) if k_scales is None else k_scales.stride()
+    scale_strides_v = (0, 0) if v_scales is None else v_scales.stride()
     q_blocks = triton.cdiv(q_tokens, SOL_BLOCK_TOKENS)
     tile_blocks = triton.cdiv(kv_tokens, SOL_BLOCK_TOKENS)
     segment_blocks = triton.cdiv(segment_tokens, SOL_BLOCK_TOKENS)
@@ -260,6 +403,8 @@ def update_sol_attention_state(
         q,
         k,
         v,
+        scale_k,
+        scale_v,
         k_centroids,
         value_sums,
         thresholds,
@@ -277,18 +422,23 @@ def update_sol_attention_state(
         *q.stride(),
         *k.stride(),
         *v.stride(),
+        *scale_strides_k,
+        *scale_strides_v,
         *k_centroids.stride(),
         *value_sums.stride(),
         *thresholds.stride(),
         *running_max.stride(),
         *accumulator.stride(),
+        *route_counts.stride(),
         TILE_BLOCKS=tile_blocks,
         INITIALIZE=initialize,
-        num_warps=8,
+        KV_QUANTIZED=quantized,
+        num_warps=4 if quantized else 8,
         num_stages=1,
     )
 
 
 __all__ = [
     "update_sol_attention_state",
+    "update_sol_attention_state_int8",
 ]

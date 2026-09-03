@@ -8,6 +8,7 @@ import torch
 from ..._single_flight import init_single_flight, single_flight
 from ...projection import ProjectedAttentionRunner
 from ...sparse import SolStreamingAttentionRunner
+from ...sparse.materialized import SolMaterializedQKVProducer, SolMaterializedSource
 from ..common import validate_hidden_host
 from .config import H3Config, use_sol_streaming
 from .consumer import H3DeviceOutputConsumer
@@ -58,6 +59,15 @@ class H3MaterializedRunner:
         self.projected_attention = projected_attention
         self.config = config
         self.sol_attention = sol_attention
+        self.sol_materializer = (
+            None
+            if sol_attention is None
+            else SolMaterializedQKVProducer(
+                projected_attention,
+                sol_attention.plan,
+                sol_attention.workspace.dense,
+            )
+        )
         self.hidden_features = hidden_features
         self.ffn_tile_tokens = ffn_tile_tokens
         attention_plan = projected_attention.plan
@@ -126,13 +136,26 @@ class H3MaterializedRunner:
         stats.estimated_workspace_bytes = self.plan.estimated_workspace_bytes
         started = time.perf_counter()
 
+        materialized_source: SolMaterializedSource | None = None
         with projection.context():
-            q_cpu, k_cpu, v_cpu = self.projected_attention.project_qkv_to_host(
-                hidden_host,
-                projection.project_qkv,
-                stats=stats.projection,
-            )
-        qkv_host_bytes = self.projected_attention.arena.allocated_bytes
+            if sparse:
+                assert self.sol_materializer is not None
+                materialized_source = self.sol_materializer.materialize(
+                    hidden_host,
+                    sequence_meta.cu_seqlens,
+                    projection.project_qkv,
+                    stats.projection,
+                )
+                assert materialized_source.q is not None
+                q_cpu = materialized_source.q[: hidden_host.shape[0]]
+                k_cpu = v_cpu = None
+            else:
+                q_cpu, k_cpu, v_cpu = self.projected_attention.project_qkv_to_host(
+                    hidden_host,
+                    projection.project_qkv,
+                    stats=stats.projection,
+                )
+        qkv_host_bytes = stats.projection.qkv_host_bytes
         stats.qkv_host_bytes_peak = max(stats.qkv_host_bytes_peak, qkv_host_bytes)
         hidden_bytes = hidden_host.numel() * hidden_host.element_size()
         stats.hidden_host_bytes_peak = max(stats.hidden_host_bytes_peak, hidden_bytes)
@@ -149,11 +172,11 @@ class H3MaterializedRunner:
         with ops.consumer_context():
             if sparse:
                 assert self.sol_attention is not None
+                assert materialized_source is not None
                 assert sequence_meta.exact_prefix_tokens is not None
-                self.sol_attention.run_with_device_consumer(
-                    q_cpu,
-                    k_cpu,
-                    v_cpu,
+                self.sol_attention.run_with_qkv_source(
+                    materialized_source,
+                    hidden_host.shape[0],
                     sequence_meta.cu_seqlens,
                     exact_prefix_tokens=sequence_meta.exact_prefix_tokens,
                     output_consumer=self.consumer,
@@ -163,6 +186,7 @@ class H3MaterializedRunner:
                 )
                 stats.sol_streaming_blocks += 1
             else:
+                assert k_cpu is not None and v_cpu is not None
                 self.projected_attention.attention.run_with_device_consumer(
                     q_cpu,
                     k_cpu,

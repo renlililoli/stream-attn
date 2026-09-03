@@ -45,15 +45,29 @@ def _aligned_chunk(tokens: int, maximum: int, name: str) -> int:
     return aligned
 
 
-def _sparse_workspace_bytes(plan: AttentionPlan, q_chunk_tokens: int) -> int:
+def _sparse_workspace_bytes(
+    plan: AttentionPlan,
+    q_chunk_tokens: int,
+    kv_chunk_tokens: int,
+) -> int:
     element_size = torch.empty((), dtype=plan.dtype).element_size()
     max_kv_blocks = math.ceil(plan.max_kv_tokens / SOL_BLOCK_TOKENS)
     max_q_blocks = math.ceil(q_chunk_tokens / SOL_BLOCK_TOKENS)
     summaries = 2 * max_kv_blocks * plan.q_heads * plan.head_dim * element_size
     k_statistics = 2 * plan.q_heads * plan.head_dim * 4
     thresholds = max_q_blocks * plan.q_heads * 4
-    route_counts = 2 * 8
-    return summaries + k_statistics + thresholds + route_counts
+    route_counts = max_q_blocks * plan.q_heads * 2 * 4
+    route_totals = 2 * 2 * 8
+    route_counts += route_totals
+    quantized_kv = (
+        plan.num_kv_buffers
+        * 2
+        * (
+            kv_chunk_tokens * plan.kv_heads * plan.head_dim
+            + math.ceil(kv_chunk_tokens / SOL_BLOCK_TOKENS) * plan.kv_heads * 2
+        )
+    )
+    return summaries + k_statistics + thresholds + route_counts + quantized_kv
 
 
 def _dense_workspace_bytes(
@@ -102,7 +116,7 @@ def build_sol_streaming_plan(plan: AttentionPlan) -> SolStreamingPlan:
             q_chunk_tokens=q_chunk,
             kv_chunk_tokens=kv_chunk,
         )
-        sparse_bytes = _sparse_workspace_bytes(plan, q_chunk)
+        sparse_bytes = _sparse_workspace_bytes(plan, q_chunk, kv_chunk)
         total_bytes = dense_bytes + sparse_bytes
         if budget is None or total_bytes <= budget:
             break

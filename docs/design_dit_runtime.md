@@ -1,6 +1,6 @@
 # H3 DiT runtime contracts
 
-Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-03.
 
 The H3 runtime schedules a generic transformer block through consumer-provided
 callbacks. SeqAttn owns tiling, host/device buffers, attention execution,
@@ -64,8 +64,10 @@ intentional; missing metadata, causal attention, unsupported hardware/dtype/head
 layout, and insufficient workspace raise errors without a compatibility fallback.
 
 Sol V1 is single-GPU BF16 non-causal self-attention on SM80 or newer, with head
-dimension 128 and equal Q/KV head counts. Every Q chunk still scans all K/V.
-Each segment adds one K/V summary prepass before routed attention.
+dimension 128 and equal Q/KV head counts. Every Q chunk still consumes all K/V.
+Materialized execution uses projection-time BF16 summaries and INT8 K/V
+transport. Recompute uses BF16 transport and adds one K/V summary projection
+pass before routed attention.
 
 ## Public callback types
 
@@ -124,7 +126,8 @@ place:
 ```text
 hidden host source
   -> projection tiles
-  -> complete pinned host Q/K/V
+  -> dense: complete pinned host BF16 Q/K/V
+  -> Sol: pinned BF16 Q, BF16 summaries, and INT8 K/V
   -> configured dense or Sol attention with device output consumer
   -> attention epilogue
   -> MLP tiles
@@ -136,8 +139,11 @@ the original hidden values remain available as residual input. A complete raw
 attention output and complete post-attention hidden tensor are never stored on
 the host.
 
-In Sol mode, the complete materialized K/V is streamed once for summary creation
-and again for each resident Q chunk.
+In Sol mode, each projection tile is fused with summary generation and INT8 K/V
+encoding before D2H. The runner reuses the existing BF16 K/V arena byte storage
+for the smaller INT8 payload, so switching between policy-selected dense and Sol
+blocks does not require a second sequence-sized K/V allocation. Attention loads
+the precomputed summaries once per segment and encoded K/V for each Q chunk.
 
 `run_blocks_` repeats this in-place contract over an iterable of
 `(H3MaterializedProjection, H3BlockOps)` pairs and returns the original hidden
@@ -188,7 +194,7 @@ and K/V and rounds outward to complete 64-token route blocks.
 | Axis | Used by | Selection basis |
 |---|---|---|
 | `projection_tile_tokens` | Materialized QKV producer | Projection kernel saturation and producer workspace |
-| `q_chunk_tokens` | Attention resident Q | Measured host-memory roofline and CUDA workspace |
+| `q_chunk_tokens` | Maximum attention resident Q; Sol balances 64-token blocks across chunks | Measured host-memory roofline and CUDA workspace |
 | `kv_chunk_tokens` | Attention K/V tile | Copy/update overlap after Q is calibrated |
 | `ffn_tile_tokens` | Attention consumer and FFN | Consumer kernel saturation and auxiliary workspace |
 | 64-token Sol route block | Sparse routing only | Fixed V1 algorithm contract |
@@ -223,6 +229,11 @@ dimension `D`, and element size `s`:
 materialized host activation ~= N * s * (H + (Aq + 2*Akv) * D)
 recompute host activation    ~= 2 * N * H * s
 ```
+
+For materialized Sol, the existing BF16 K/V arena storage is reused as the INT8
+payload backing and small per-block scale/summary arrays are added. This keeps
+dense and Sol available on one runner without another sequence-sized host K/V
+allocation.
 
 This compares logical sequence-sized activation storage only. It excludes
 allocator overhead, model weights, callback-owned buffers, CUDA context, and

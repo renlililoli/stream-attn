@@ -1,6 +1,6 @@
 # Backend selection and validation
 
-Status: current for `seqattn-core 0.4.0a1` on 2026-09-02.
+Status: current for `seqattn-core 0.4.0a1` on 2026-09-03.
 
 ## Backend names
 
@@ -87,7 +87,7 @@ requires Blackwell-class SM100 or newer.
 | Projected attention | Built-in Triton only |
 | Recomputed attention | Built-in Triton only |
 | H3 dense materialized or recompute runner | Built-in Triton only |
-| H3 `sol_streaming` | Built-in Triton, BF16, head dimension 128, equal Q/KV heads, non-causal self-attention, SM80+, single GPU |
+| H3 `sol_streaming` | Built-in Triton, BF16 projection, head dimension 128, equal Q/KV heads, non-causal self-attention, SM80+, single GPU; materialized K/V transport is INT8 |
 | Paged CUDA runtime | Built-in Triton only |
 | Paged CPU runtime | `reference` only |
 
@@ -95,9 +95,12 @@ The Flash adapters produce a partial normalized output and FP32 LSE for one Q
 tile and one K/V tile. SeqAttn owns the common streaming schedule and FP32
 log-sum-exp combine path.
 
-The Sol path adds one K/V summary prepass per packed segment. It still scans and
-transfers every K/V tile for every resident Q chunk, and recompute mode must
-project K/V once more for the summary. `effective_density` measures exact route
+Materialized Sol creates BF16 summaries and symmetric per-64-token/head INT8
+K/V during QKV projection. Attention loads each segment summary once and
+transfers encoded K/V for every resident Q chunk. Recompute and standalone
+host-QKV calls retain BF16 K/V and add a complete summary pass; recompute must
+project K/V once more for that pass. `kv_storage_dtype` and the backend string
+identify the selected transport. `effective_density` measures exact route
 blocks divided by all routed blocks; it is not a transfer-density or end-to-end
 speedup metric.
 

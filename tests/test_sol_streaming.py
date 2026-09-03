@@ -43,6 +43,51 @@ def _reference_inputs(tokens=193, heads=2):
     return tuple(torch.randn(shape, generator=generator).to(torch.bfloat16) for _ in range(3))
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@torch.inference_mode()
+def test_sol_int8_encoder_preserves_tail_summaries_and_quantization_bounds():
+    from seqattn_core.kernels.sol_preprocess import encode_sol_kv
+
+    _, k_cpu, v_cpu = _reference_inputs(tokens=65, heads=2)
+    k = k_cpu.cuda()
+    v = v_cpu.cuda()
+    encoded = encode_sol_kv(k, v)
+    k_quantized, v_quantized, k_scales, v_scales, k_centroids, value_sums = encoded
+
+    assert k_quantized.shape == k.shape
+    assert v_quantized.shape == v.shape
+    assert k_quantized.dtype == v_quantized.dtype == torch.int8
+    assert k_scales.shape == v_scales.shape == (2, 2)
+    assert k_scales.dtype == v_scales.dtype == torch.float16
+    assert k_centroids.shape == value_sums.shape == (2, 2, 128)
+
+    for source, quantized, scales in (
+        (k, k_quantized, k_scales),
+        (v, v_quantized, v_scales),
+    ):
+        token_scales = scales.repeat_interleave(64, dim=0)[: source.shape[0]]
+        reconstructed = quantized.float() * token_scales[:, :, None].float()
+        error = (reconstructed - source.float()).abs()
+        # The quantizer computes its scale in FP32 and stores it as FP16. The
+        # bound therefore includes both half-step rounding and scale storage error.
+        assert torch.all(error <= token_scales[:, :, None].float() * 0.57 + 1.0e-6)
+
+    torch.testing.assert_close(
+        k_centroids[0].float(),
+        k[:64].float().mean(dim=0),
+        atol=2e-2,
+        rtol=2e-2,
+    )
+    torch.testing.assert_close(
+        value_sums[0].float(),
+        v[:64].float().sum(dim=0),
+        atol=2e-1,
+        rtol=2e-2,
+    )
+    torch.testing.assert_close(k_centroids[1], k[64], atol=0, rtol=0)
+    torch.testing.assert_close(value_sums[1], v[64], atol=0, rtol=0)
+
+
 def test_sol_reference_all_exact_matches_segmented_dense():
     q, k, v = _reference_inputs()
     bounds = [0, 65, 65, 193]
@@ -105,6 +150,20 @@ def test_sol_stats_reports_effective_density():
     stats = SolStreamingStats(exact_route_blocks=3, approximate_route_blocks=1)
     assert stats.effective_density == 0.75
     assert stats.as_dict()["effective_density"] == 0.75
+
+
+def test_sol_q_ranges_balance_route_aligned_tail_without_exceeding_plan_chunk():
+    from seqattn_core.sparse.runner import _balanced_q_ranges
+
+    ranges = _balanced_q_ranges(100_000, 8192)
+    sizes = [stop - start for start, stop in ranges]
+    assert len(ranges) == math.ceil(100_000 / 8192)
+    assert ranges[0][0] == 0
+    assert ranges[-1][1] == 100_000
+    assert all(left[1] == right[0] for left, right in pairwise(ranges))
+    assert all(start % 64 == 0 for start, _ in ranges)
+    assert max(sizes) <= 8192
+    assert min(sizes) >= 7680
 
 
 class _CollectDeviceOutput:
@@ -176,6 +235,8 @@ def test_sol_streaming_cuda_matches_semantic_reference(tau):
     assert stats.summary_kv_tokens == tokens
     assert stats.q_chunks == math.ceil(193 / 128) + 1
     assert stats.exact_route_blocks + stats.approximate_route_blocks > 0
+    assert stats.kv_storage_dtype == "bf16"
+    assert stats.backend == "sol_streaming:triton:bf16"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")

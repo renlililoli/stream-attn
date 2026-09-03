@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Iterable
 
 import torch
 
@@ -106,6 +107,38 @@ class ProjectedAttentionRunner(_MaterializedAttentionRunner):
         q, k, v = self._producer.project_qkv(hidden_cpu, project_qkv, stats)
         stats.qkv_host_bytes = self.arena.allocated_bytes
         return q, k, v
+
+    @single_flight
+    def project_qkv_encoded_to_host(
+        self,
+        hidden_cpu: torch.Tensor,
+        project_qkv: QKVProjector,
+        *,
+        ranges: Iterable[tuple[int, int]],
+        encode: Callable[
+            [torch.Tensor, torch.Tensor, torch.Tensor, int, int],
+            tuple[torch.Tensor, ...],
+        ],
+        copy_to_host: Callable[[int, int, tuple[torch.Tensor, ...]], None],
+        stats: ProjectedAttentionStats | None = None,
+    ) -> None:
+        """Project an encoded Q/K/V representation into caller-owned host storage."""
+
+        stats = ProjectedAttentionStats() if stats is None else stats
+        validate_projection_hidden(
+            hidden_cpu,
+            plan=self.plan,
+            require_pinned=self.pipeline_config.require_pinned_hidden,
+        )
+        stats.backend = self.attention.backend
+        self._producer.project_qkv_encoded(
+            hidden_cpu,
+            project_qkv,
+            ranges=ranges,
+            encode=encode,
+            copy_to_host=copy_to_host,
+            stats=stats,
+        )
 
     @single_flight
     @torch.inference_mode()

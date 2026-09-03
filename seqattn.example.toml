@@ -15,7 +15,9 @@ ffn_tile_tokens = 4096
 # It requires seqattn-core[sparse], BF16, head dimension 128, equal Q/KV heads,
 # non-causal attention, explicit denoising metadata, and one exact prefix per
 # packed segment. These values keep the first 20% of steps and first two blocks
-# dense before enabling the approximate route policy.
+# dense before enabling the approximate route policy. Materialized execution
+# uses projection-time summaries and INT8 K/V transport; recompute keeps BF16
+# K/V and performs a separate summary projection pass.
 # attention_mode = "sol_streaming"
 # sol_tau = 1.0
 # sol_first_dense_step_fraction = 0.2

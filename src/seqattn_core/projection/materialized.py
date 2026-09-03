@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import nullcontext
 
 import torch
@@ -70,14 +70,22 @@ class MaterializedProjectionProducer:
         copy_to_host: Callable[[int, int, ProjectedTile], None],
         record_chunk: Callable[[int], None],
         stats: MaterializedStats,
+        ranges: Iterable[tuple[int, int]] | None = None,
     ) -> None:
         tokens, hidden_features = hidden_host.shape
         chunk = self.config.projection_tile_tokens
+        if ranges is None:
+            ranges = ((start, min(start + chunk, tokens)) for start in range(0, tokens, chunk))
         started = time.perf_counter()
+        expected_start = 0
         try:
-            for chunk_index, start in enumerate(range(0, tokens, chunk)):
-                stop = min(start + chunk, tokens)
+            for chunk_index, (start, stop) in enumerate(ranges):
+                if start != expected_start or not start < stop <= tokens:
+                    raise ValueError("projection ranges must cover tokens contiguously in order")
                 tile_tokens = stop - start
+                if tile_tokens > chunk:
+                    raise ValueError("a projection range exceeds projection_tile_tokens")
+                expected_start = stop
                 slot = chunk_index % len(workspace.hidden)
                 if workspace.busy[slot]:
                     workspace.copy_done[slot].synchronize()
@@ -110,6 +118,8 @@ class MaterializedProjectionProducer:
                 stats.projection_qkv_d2h_bytes += sum(
                     tensor.numel() * tensor.element_size() for tensor in projected
                 )
+            if expected_start != tokens:
+                raise ValueError("projection ranges must cover every input token")
             workspace.d2h_stream.synchronize()
         except Exception:
             workspace.recover()
@@ -161,6 +171,55 @@ class MaterializedProjectionProducer:
             stats=stats,
         )
         return self.arena.views(hidden_host.shape[0], hidden_host.shape[0])
+
+    def project_qkv_encoded(
+        self,
+        hidden_host: torch.Tensor,
+        project_qkv: QKVProjector,
+        *,
+        ranges: Iterable[tuple[int, int]],
+        encode: Callable[
+            [torch.Tensor, torch.Tensor, torch.Tensor, int, int],
+            ProjectedTile,
+        ],
+        copy_to_host: Callable[[int, int, ProjectedTile], None],
+        stats: ProjectedAttentionStats,
+    ) -> None:
+        """Project Q/K/V and send an encoded payload to caller-owned host storage."""
+
+        self.self_workspace = self._workspace_for(
+            self.self_workspace,
+            hidden_host.shape[1],
+            "self",
+        )
+
+        def project(tile: torch.Tensor, start: int, stop: int) -> ProjectedTile:
+            q, k, v = project_qkv(tile, start, stop)
+            validate_projected_qkv(q, k, v, tokens=stop - start, plan=self.plan)
+            return encode(q, k, v, start, stop)
+
+        def validate(projected: ProjectedTile, tokens: int) -> None:
+            del tokens
+            if not projected or any(not isinstance(tensor, torch.Tensor) for tensor in projected):
+                raise TypeError("encoded Q/K/V payload must contain tensors")
+
+        def record_chunk(tokens: int) -> None:
+            stats.projection_chunks += 1
+            stats.projection_tokens += tokens
+
+        self._run_tiles(
+            hidden_host,
+            workspace=self.self_workspace,
+            h2d_range="seqattn:projection_hidden_h2d",
+            projection_range="seqattn:qkv_projection_encode",
+            d2h_range="seqattn:projection_encoded_qkv_d2h",
+            project=project,
+            validate=validate,
+            copy_to_host=copy_to_host,
+            record_chunk=record_chunk,
+            stats=stats,
+            ranges=ranges,
+        )
 
     def project_q(
         self,

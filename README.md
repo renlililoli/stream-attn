@@ -129,13 +129,13 @@ It is an approximate H3 attention algorithm selected with
 head dimension 128, equal Q/KV head counts, packed segments, and SM80 or newer.
 It fails on unsupported contracts instead of falling back to dense attention.
 
-Every resident Q chunk still loads or projects every K/V tile. The algorithm
-adds one complete K/V summary prepass per packed segment, then routes each
-64-token interaction block to either exact attention or a K-centroid/V-sum
-approximation. It can reduce attention arithmetic, but it does not remove the
-full K/V transfer traffic; recompute mode also repeats K/V projection for the
-summary prepass. No speedup is claimed without model- and hardware-specific
-measurement.
+Every resident Q chunk still consumes every K/V tile. Materialized execution
+fuses summary generation and per-64-token/head INT8 K/V encoding into QKV
+projection, then transports the encoded K/V while keeping Q and summaries in
+BF16. Recompute and standalone host-QKV execution retain the BF16 transport and
+complete summary prepass. Statistics name the selected transport explicitly;
+INT8 storage adds quantization error on top of Sol routing approximation.
+Performance remains model- and hardware-specific.
 
 ## Installation
 

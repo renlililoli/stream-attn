@@ -97,7 +97,7 @@ Q/KV chunks remain runtime inputs rather than deployment-wide model settings.
 | Recomputed attention | Caller-owned pinned hidden | Q and K/V regenerated directly into CUDA tiles | Required device consumer |
 | Paged attention | `PageSource` and `PageSink` | Bounded staging and optional bounded K/V cache | Page sink |
 | H3 block runtime | Consumer callbacks and pinned hidden | Explicit materialized or recompute policy | Attention epilogue and MLP tiles |
-| H3 Sol streaming | Same H3 callbacks | Full KV summary pass plus exact/centroid-routed streaming | Required device consumer |
+| H3 Sol streaming | Same H3 callbacks | Projection-time materialized summaries or a BF16 summary pass, then exact/centroid-routed streaming | Required device consumer |
 
 Choose a family from data ownership and capacity constraints. Paged execution
 is for bounded host memory or page-backed storage; it is not a faster wrapper
@@ -126,8 +126,9 @@ Causal alignment uses bottom-right positions when Q and K lengths differ.
 `sol_streaming` preserves the same resident-Q bound and FP32 online-softmax
 state but changes the contribution of selected 64-token K/V blocks:
 
-1. A per-segment prepass computes BF16 K centroids, BF16 V sums, and FP32
-   diagonal K-centroid statistics.
+1. Each segment obtains BF16 K centroids and BF16 V sums, then computes FP32
+   diagonal K-centroid statistics. Materialized H3 creates the summaries while
+   projected K/V is still resident; BF16 sources use a separate prepass.
 2. Each resident 64-token Q block computes a route threshold from its centroid.
 3. The local +/-1 block band, configured exact Q/KV prefixes, and blocks above
    the threshold use exact token attention.
@@ -139,11 +140,19 @@ and key/value blocks and round outward to a full 64-token block. The path is
 approximate because unrouted tokens share a block score and averaged value.
 
 This changes arithmetic, not data availability: every Q chunk still consumes
-all K/V blocks, and a complete K/V summary pass is required first. Materialized
-H3 reads complete host K/V for that extra pass. Recompute H3 performs one extra
-complete K/V projection pass, then continues to regenerate K/V for each Q
-chunk. Missing metadata, unsupported shape/dtype/device contracts, causal mode,
-and insufficient workspace fail explicitly.
+all K/V blocks. Materialized H3 quantizes K/V with one symmetric FP16 scale per
+64-token/head block during projection and transports INT8 K/V during attention;
+its precomputed summaries avoid a raw BF16 K/V scan. Exact INT8 updates factor
+the shared K scale through the QK product and the shared V scale into the
+probability tile before PV, avoiding full elementwise K/V dequantization.
+Recompute H3 performs one extra complete BF16 K/V projection pass for summaries,
+then continues to regenerate BF16 K/V for each Q chunk. Standalone host-QKV uses
+the BF16 summary prepass. Missing metadata, unsupported shape/dtype/device
+contracts, causal mode, and insufficient workspace fail explicitly.
+
+Sol query scheduling treats `q_chunk_tokens` as a maximum resident-Q capacity.
+For multi-chunk segments it balances complete 64-token route blocks across the
+same number of chunks, avoiding a short final Q tile that cannot cover K/V H2D.
 
 ## Workspace ownership
 

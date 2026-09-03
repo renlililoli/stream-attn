@@ -12,24 +12,25 @@ from .._single_flight import single_flight
 from ..kernels import finalize_attention
 from ..kernels.sol_preprocess import (
     SOL_BLOCK_TOKENS,
-    compute_sol_k_stats,
     compute_sol_thresholds,
-    summarize_sol_kv,
 )
-from ..kernels.sol_streaming import update_sol_attention_state
 from ..stats import StreamingAttentionStats
 from ..streaming import StreamingAttentionRunner
 from ..streaming.protocols import DeviceOutputConsumer
 from ..streaming.tile_source import QKVTileSource
 from ..streaming.workspace import CudaWorkspace
 from ..validation import validate_cu_seqlens
+from .materialized import SolMaterializedSource
 from .plan import SolStreamingPlan, _validate_exact_prefix_tokens
+from .transport import resolve_sol_transport
 
 
 @dataclass
 class SolStreamingStats(StreamingAttentionStats):
+    kv_storage_dtype: str = ""
     summary_kv_tiles: int = 0
     summary_kv_tokens: int = 0
+    precomputed_summary_blocks: int = 0
     summary_seconds: float = 0.0
     threshold_seconds: float = 0.0
     sparse_update_seconds: float = 0.0
@@ -47,9 +48,29 @@ class SolStreamingStats(StreamingAttentionStats):
         return result
 
 
+def _balanced_q_ranges(tokens: int, max_chunk_tokens: int) -> tuple[tuple[int, int], ...]:
+    """Split a segment into route-aligned chunks without a small final Q tail."""
+
+    chunks = math.ceil(tokens / max_chunk_tokens)
+    route_blocks = math.ceil(tokens / SOL_BLOCK_TOKENS)
+    blocks_per_chunk, larger_chunks = divmod(route_blocks, chunks)
+    block_counts = [blocks_per_chunk] * (chunks - larger_chunks) + [
+        blocks_per_chunk + 1
+    ] * larger_chunks
+    ranges = []
+    start = 0
+    for chunk_index, block_count in enumerate(block_counts):
+        stop = tokens if chunk_index == chunks - 1 else start + block_count * SOL_BLOCK_TOKENS
+        ranges.append((start, stop))
+        start = stop
+    return tuple(ranges)
+
+
 class _SolStreamingWorkspace:
     def __init__(self, plan: SolStreamingPlan, dense: CudaWorkspace) -> None:
         attention = plan.attention
+        self.plan = plan
+        self.route_block_tokens = plan.route_block_tokens
         self.dense = dense
         device = attention.device
         summary_shape = (plan.max_kv_blocks, attention.q_heads, attention.head_dim)
@@ -62,7 +83,32 @@ class _SolStreamingWorkspace:
         self.thresholds = torch.empty(
             (plan.max_q_blocks, attention.q_heads), dtype=torch.float32, device=device
         )
-        self.route_counts = torch.empty((2,), dtype=torch.int64, device=device)
+        self.route_counts = torch.empty(
+            (plan.max_q_blocks, attention.q_heads, 2),
+            dtype=torch.int32,
+            device=device,
+        )
+        self.route_chunk_totals = torch.empty((2,), dtype=torch.int64, device=device)
+        self.route_totals = torch.empty((2,), dtype=torch.int64, device=device)
+        quantized_shape = (
+            attention.kv_chunk_tokens,
+            attention.kv_heads,
+            attention.head_dim,
+        )
+        self.quantized_k = [
+            torch.empty(quantized_shape, dtype=torch.int8, device=device)
+            for _ in range(attention.num_kv_buffers)
+        ]
+        self.quantized_v = [torch.empty_like(tensor) for tensor in self.quantized_k]
+        scale_shape = (
+            math.ceil(attention.kv_chunk_tokens / SOL_BLOCK_TOKENS),
+            attention.kv_heads,
+        )
+        self.k_scales = [
+            torch.empty(scale_shape, dtype=torch.float16, device=device)
+            for _ in range(attention.num_kv_buffers)
+        ]
+        self.v_scales = [torch.empty_like(tensor) for tensor in self.k_scales]
 
     def recover(self) -> None:
         self.dense.recover()
@@ -144,7 +190,7 @@ class SolStreamingAttentionRunner:
     @torch.inference_mode()
     def run_with_qkv_source(
         self,
-        source: QKVTileSource,
+        source: QKVTileSource | SolMaterializedSource,
         tokens: int,
         cu_seqlens: torch.Tensor,
         *,
@@ -167,7 +213,7 @@ class SolStreamingAttentionRunner:
 
     def _run_from_source(
         self,
-        source: QKVTileSource,
+        source: QKVTileSource | SolMaterializedSource,
         tokens: int,
         cu_seqlens: torch.Tensor,
         *,
@@ -211,7 +257,7 @@ class SolStreamingAttentionRunner:
 
     def _execute(
         self,
-        source: QKVTileSource,
+        source: QKVTileSource | SolMaterializedSource,
         bounds: list[int],
         exact_prefix_tokens: tuple[int, ...],
         output_consumer: DeviceOutputConsumer,
@@ -226,11 +272,14 @@ class SolStreamingAttentionRunner:
         summary_events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
         threshold_events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
         update_events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+        transport = resolve_sol_transport(source, workspace, stats)
+        stats.kv_storage_dtype = transport.storage_dtype
+        stats.backend = f"sol_streaming:triton:{transport.storage_dtype}"
 
         with torch.cuda.device(plan.device):
             dense.pipeline_start.record(compute_stream)
             with torch.cuda.stream(compute_stream):
-                workspace.route_counts.zero_()
+                workspace.route_totals.zero_()
                 for segment_id, (segment_start, segment_stop) in enumerate(pairwise(bounds)):
                     segment_tokens = segment_stop - segment_start
                     if segment_tokens == 0:
@@ -241,46 +290,20 @@ class SolStreamingAttentionRunner:
                     summary_end = torch.cuda.Event(enable_timing=True)
                     summary_events.append((summary_start, summary_end))
                     summary_start.record(compute_stream)
-                    summary_block_offset = 0
-                    for tile_index, local_start in enumerate(
-                        range(0, segment_tokens, plan.kv_chunk_tokens)
-                    ):
-                        local_stop = min(local_start + plan.kv_chunk_tokens, segment_tokens)
-                        kv_tokens = local_stop - local_start
-                        buffer_index = tile_index % plan.num_kv_buffers
-                        source.load_kv(
-                            dense.k[buffer_index][:kv_tokens],
-                            dense.v[buffer_index][:kv_tokens],
-                            buffer_index,
-                            segment_start + local_start,
-                            segment_start + local_stop,
-                            compute_stream,
-                            stats,
+                    with self._range("seqattn:sol_kv_summary"):
+                        transport.prepare_segment(
+                            segment_id=segment_id,
+                            segment_start=segment_start,
+                            segment_tokens=segment_tokens,
+                            segment_blocks=segment_blocks,
+                            compute_stream=compute_stream,
                         )
-                        with self._range("seqattn:sol_kv_summary"):
-                            summary_block_offset += summarize_sol_kv(
-                                dense.k[buffer_index],
-                                dense.v[buffer_index],
-                                workspace.k_centroids,
-                                workspace.value_sums,
-                                kv_tokens=kv_tokens,
-                                summary_block_offset=summary_block_offset,
-                            )
-                        source.release_kv(buffer_index, compute_stream)
-                        stats.summary_kv_tiles += 1
-                        stats.summary_kv_tokens += kv_tokens
-                    if summary_block_offset != segment_blocks:
-                        raise RuntimeError("sol_streaming summary block accounting failed")
-                    compute_sol_k_stats(
-                        workspace.k_centroids,
-                        workspace.k_mean,
-                        workspace.k_variance,
-                        num_blocks=segment_blocks,
-                    )
                     summary_end.record(compute_stream)
 
-                    for q_local_start in range(0, segment_tokens, plan.q_chunk_tokens):
-                        q_local_stop = min(q_local_start + plan.q_chunk_tokens, segment_tokens)
+                    for q_local_start, q_local_stop in _balanced_q_ranges(
+                        segment_tokens,
+                        plan.q_chunk_tokens,
+                    ):
                         q_tokens = q_local_stop - q_local_start
                         stats.q_chunks += 1
                         stats.max_resident_q_tokens = max(stats.max_resident_q_tokens, q_tokens)
@@ -319,42 +342,31 @@ class SolStreamingAttentionRunner:
                                 kv_local_start + plan.kv_chunk_tokens,
                                 segment_tokens,
                             )
-                            kv_tokens = kv_local_stop - kv_local_start
-                            buffer_index = tile_index % plan.num_kv_buffers
-                            source.load_kv(
-                                dense.k[buffer_index][:kv_tokens],
-                                dense.v[buffer_index][:kv_tokens],
-                                buffer_index,
-                                segment_start + kv_local_start,
-                                segment_start + kv_local_stop,
-                                compute_stream,
-                                stats,
-                            )
                             with self._range("seqattn:sol_streaming_update"):
-                                update_sol_attention_state(
-                                    dense.q,
-                                    dense.k[buffer_index],
-                                    dense.v[buffer_index],
-                                    workspace.k_centroids,
-                                    workspace.value_sums,
-                                    workspace.thresholds,
-                                    dense.running_max,
-                                    dense.running_sum,
-                                    dense.accumulator,
-                                    workspace.route_counts,
-                                    q_tokens=q_tokens,
-                                    kv_tokens=kv_tokens,
-                                    q_block_offset=q_local_start // SOL_BLOCK_TOKENS,
-                                    kv_block_offset=kv_local_start // SOL_BLOCK_TOKENS,
+                                transport.update_tile(
+                                    segment_id=segment_id,
+                                    segment_start=segment_start,
                                     segment_tokens=segment_tokens,
                                     exact_prefix_tokens=exact_prefix_tokens[segment_id],
+                                    q_tokens=q_tokens,
+                                    q_block_offset=q_local_start // SOL_BLOCK_TOKENS,
+                                    kv_local_start=kv_local_start,
+                                    kv_local_stop=kv_local_stop,
+                                    tile_index=tile_index,
                                     softmax_scale=scale,
                                     initialize=initialize,
+                                    compute_stream=compute_stream,
                                 )
                             initialize = False
-                            source.release_kv(buffer_index, compute_stream)
-                            stats.kv_tiles += 1
                         update_end.record(compute_stream)
+                        q_blocks = math.ceil(q_tokens / SOL_BLOCK_TOKENS)
+                        torch.sum(
+                            workspace.route_counts[:q_blocks],
+                            dim=(0, 1),
+                            dtype=torch.int64,
+                            out=workspace.route_chunk_totals,
+                        )
+                        workspace.route_totals.add_(workspace.route_chunk_totals)
 
                         with self._range("seqattn:sol_finalize"):
                             finalize_attention(
@@ -374,7 +386,7 @@ class SolStreamingAttentionRunner:
             dense.pipeline_end.record(compute_stream)
             output_consumer.synchronize()
             dense.pipeline_end.synchronize()
-            counts = workspace.route_counts.cpu().tolist()
+            counts = workspace.route_totals.cpu().tolist()
             stats.exact_route_blocks += int(counts[0])
             stats.approximate_route_blocks += int(counts[1])
             stats.compute_pipeline_seconds += (

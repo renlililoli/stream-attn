@@ -69,6 +69,92 @@ if triton is not None:
         tl.store(v_sum_ptr + v_summary_offsets, tl.sum(v.to(tl.float32), axis=0))
 
     @triton.jit
+    def _encode_kv_kernel(
+        k_ptr,
+        v_ptr,
+        k_quantized_ptr,
+        v_quantized_ptr,
+        k_scale_ptr,
+        v_scale_ptr,
+        k_centroid_ptr,
+        v_sum_ptr,
+        kv_tokens,
+        stride_kt,
+        stride_kh,
+        stride_kd,
+        stride_vt,
+        stride_vh,
+        stride_vd,
+        stride_kqt,
+        stride_kqh,
+        stride_kqd,
+        stride_vqt,
+        stride_vqh,
+        stride_vqd,
+        stride_ksb,
+        stride_ksh,
+        stride_vsb,
+        stride_vsh,
+        stride_kcb,
+        stride_kch,
+        stride_kcd,
+        stride_vumb,
+        stride_vumh,
+        stride_vumd,
+    ):
+        block = tl.program_id(0)
+        head = tl.program_id(1)
+        token_offsets = block * _BLOCK_TOKENS + tl.arange(0, _BLOCK_TOKENS)
+        dim_offsets = tl.arange(0, _HEAD_DIM)
+        token_mask = token_offsets < kv_tokens
+        value_mask = token_mask[:, None]
+        k_offsets = (
+            token_offsets[:, None] * stride_kt + head * stride_kh + dim_offsets[None, :] * stride_kd
+        )
+        v_offsets = (
+            token_offsets[:, None] * stride_vt + head * stride_vh + dim_offsets[None, :] * stride_vd
+        )
+        k = tl.load(k_ptr + k_offsets, mask=value_mask, other=0.0).to(tl.float32)
+        v = tl.load(v_ptr + v_offsets, mask=value_mask, other=0.0).to(tl.float32)
+
+        k_max = tl.max(tl.max(tl.abs(k), axis=1), axis=0)
+        v_max = tl.max(tl.max(tl.abs(v), axis=1), axis=0)
+        k_scale = tl.where(k_max > 0, k_max / 127.0, 1.0)
+        v_scale = tl.where(v_max > 0, v_max / 127.0, 1.0)
+        k_scaled = tl.maximum(-127.0, tl.minimum(127.0, k / k_scale))
+        v_scaled = tl.maximum(-127.0, tl.minimum(127.0, v / v_scale))
+        k_rounded = tl.where(k_scaled >= 0, tl.floor(k_scaled + 0.5), tl.ceil(k_scaled - 0.5))
+        v_rounded = tl.where(v_scaled >= 0, tl.floor(v_scaled + 0.5), tl.ceil(v_scaled - 0.5))
+        k_quantized_offsets = (
+            token_offsets[:, None] * stride_kqt
+            + head * stride_kqh
+            + dim_offsets[None, :] * stride_kqd
+        )
+        v_quantized_offsets = (
+            token_offsets[:, None] * stride_vqt
+            + head * stride_vqh
+            + dim_offsets[None, :] * stride_vqd
+        )
+        tl.store(
+            k_quantized_ptr + k_quantized_offsets,
+            k_rounded.to(tl.int8),
+            mask=value_mask,
+        )
+        tl.store(
+            v_quantized_ptr + v_quantized_offsets,
+            v_rounded.to(tl.int8),
+            mask=value_mask,
+        )
+        tl.store(k_scale_ptr + block * stride_ksb + head * stride_ksh, k_scale)
+        tl.store(v_scale_ptr + block * stride_vsb + head * stride_vsh, v_scale)
+
+        block_tokens = tl.minimum(_BLOCK_TOKENS, kv_tokens - block * _BLOCK_TOKENS).to(tl.float32)
+        summary_k_offsets = block * stride_kcb + head * stride_kch + dim_offsets * stride_kcd
+        summary_v_offsets = block * stride_vumb + head * stride_vumh + dim_offsets * stride_vumd
+        tl.store(k_centroid_ptr + summary_k_offsets, tl.sum(k, axis=0) / block_tokens)
+        tl.store(v_sum_ptr + summary_v_offsets, tl.sum(v, axis=0))
+
+    @triton.jit
     def _k_diag_stats_kernel(
         k_centroid_ptr,
         mean_ptr,
@@ -178,6 +264,63 @@ def summarize_sol_kv(
     return blocks
 
 
+def encode_sol_kv(
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    kv_tokens: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Encode one segment-aligned K/V tile for INT8 Sol transport."""
+
+    if triton is None:
+        raise RuntimeError("the Triton backend is not installed")
+    if k.shape != v.shape or k.ndim != 3:
+        raise ValueError("k and v must use matching [tokens, heads, head_dim] layouts")
+    if k.device.type != "cuda" or v.device != k.device:
+        raise ValueError("Sol K/V encoding requires matching CUDA tensors")
+    if k.dtype != torch.bfloat16:
+        raise ValueError("Sol K/V encoding requires bfloat16 inputs")
+    if k.shape[2] != SOL_HEAD_DIM:
+        raise ValueError(f"Sol K/V encoding requires head_dim={SOL_HEAD_DIM}")
+    kv_tokens = k.shape[0] if kv_tokens is None else kv_tokens
+    if not 0 < kv_tokens <= k.shape[0]:
+        raise ValueError("kv_tokens must fit the K/V tile")
+
+    blocks = triton.cdiv(kv_tokens, SOL_BLOCK_TOKENS)
+    k_quantized = torch.empty_like(k, dtype=torch.int8)
+    v_quantized = torch.empty_like(v, dtype=torch.int8)
+    k_scales = torch.empty((blocks, k.shape[1]), dtype=torch.float16, device=k.device)
+    v_scales = torch.empty_like(k_scales)
+    k_centroids = torch.empty(
+        (blocks, k.shape[1], SOL_HEAD_DIM),
+        dtype=k.dtype,
+        device=k.device,
+    )
+    value_sums = torch.empty_like(k_centroids)
+    _encode_kv_kernel[(blocks, k.shape[1])](
+        k,
+        v,
+        k_quantized,
+        v_quantized,
+        k_scales,
+        v_scales,
+        k_centroids,
+        value_sums,
+        kv_tokens,
+        *k.stride(),
+        *v.stride(),
+        *k_quantized.stride(),
+        *v_quantized.stride(),
+        *k_scales.stride(),
+        *v_scales.stride(),
+        *k_centroids.stride(),
+        *value_sums.stride(),
+        num_warps=4,
+        num_stages=1,
+    )
+    return k_quantized, v_quantized, k_scales, v_scales, k_centroids, value_sums
+
+
 def compute_sol_k_stats(
     k_centroids: torch.Tensor,
     mean: torch.Tensor,
@@ -235,5 +378,6 @@ __all__ = [
     "SOL_HEAD_DIM",
     "compute_sol_k_stats",
     "compute_sol_thresholds",
+    "encode_sol_kv",
     "summarize_sol_kv",
 ]

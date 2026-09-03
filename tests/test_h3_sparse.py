@@ -300,7 +300,17 @@ def test_h3_materialized_switches_dense_and_sol_without_summary_fallback():
     assert sparse_stats.dense_attention_blocks == 0
     assert sparse_stats.sol_streaming_blocks == 1
     assert sparse_stats.sol_attention.summary_kv_tokens == hidden.shape[0]
+    assert sparse_stats.sol_attention.summary_kv_tiles == 0
+    assert sparse_stats.sol_attention.precomputed_summary_blocks == 4
+    assert sparse_stats.sol_attention.kv_storage_dtype == "int8"
     assert sparse_stats.sol_attention.approximate_route_blocks > 0
+    assert runner.sol_materializer is not None
+    source = runner.sol_materializer.source
+    assert source.k_quantized.data_ptr() == runner.projected_attention.arena.k.data_ptr()
+    assert source.v_quantized.data_ptr() == runner.projected_attention.arena.v.data_ptr()
+    assert sparse_stats.projection.qkv_host_bytes == (
+        runner.projected_attention.arena.allocated_bytes + source.allocated_bytes
+    )
 
     calls_before_failure = projection_calls
     with pytest.raises(ValueError, match="does not support causal"):
@@ -314,6 +324,69 @@ def test_h3_materialized_switches_dense_and_sol_without_summary_fallback():
             causal=True,
         )
     assert projection_calls == calls_before_failure
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@torch.inference_mode()
+def test_h3_materialized_sol_preserves_unaligned_packed_segment_boundaries():
+    from seqattn_core.dit.minimax_h3 import (
+        H3BlockOps,
+        H3DenoisingStep,
+        H3DiTStats,
+        H3MaterializedProjection,
+        H3SequenceMeta,
+    )
+    from seqattn_core.sparse import sol_streaming_reference
+
+    torch.manual_seed(1815)
+    hidden, qkv, output, runner = _build_sparse_h3_case(
+        execution_mode="materialized",
+        first_dense_step_fraction=0.0,
+    )
+    original = hidden.clone()
+    cu = torch.tensor([0, 65, hidden.shape[0]], dtype=torch.int32)
+    meta = H3SequenceMeta(cu, exact_prefix_tokens=(0, 0))
+    projection_ranges = []
+
+    def project_qkv(tile, start, stop):
+        projection_ranges.append((start, stop))
+        projected = qkv(tile).view(-1, 3, 1, 128)
+        return tuple(projected[:, index].contiguous() for index in range(3))
+
+    def attention_epilogue(attention, residual_host, start, stop):
+        return output(attention).add_(residual_host[start:stop].to(output.weight.device))
+
+    stats = H3DiTStats()
+    runner.run_block_(
+        hidden,
+        meta,
+        H3MaterializedProjection(project_qkv),
+        H3BlockOps(attention_epilogue, lambda tile, start, stop: tile),
+        block_index=0,
+        denoising_step=H3DenoisingStep(0, 1),
+        stats=stats,
+    )
+
+    q, k, v = _project_reference(original, qkv, chunk_tokens=193)
+    expected_attention = sol_streaming_reference(
+        q,
+        k,
+        v,
+        cu,
+        exact_prefix_tokens=(0, 0),
+        tau=1000.0,
+    )
+    expected = _apply_attention_epilogue(expected_attention, original, output)
+    torch.testing.assert_close(hidden, expected, atol=8e-2, rtol=2e-2)
+    assert projection_ranges == [(0, 65), (65, 193)]
+    assert runner.sol_materializer is not None
+    assert [
+        (segment.token_start, segment.token_stop, segment.block_start, segment.block_stop)
+        for segment in runner.sol_materializer.source.segments
+    ] == [(0, 65, 0, 2), (65, 193, 2, 4)]
+    assert stats.sol_attention.summary_kv_tiles == 0
+    assert stats.sol_attention.precomputed_summary_blocks == 4
+    assert stats.sol_attention.kv_storage_dtype == "int8"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
@@ -380,6 +453,7 @@ def test_h3_recompute_sol_uses_one_extra_kv_summary_pass():
     assert stats.sol_streaming_blocks == 1
     assert stats.sol_attention.summary_kv_tokens == source.shape[0]
     assert stats.sol_attention.summary_kv_tiles == 2
+    assert stats.sol_attention.kv_storage_dtype == "bf16"
     assert stats.recompute.q_projection_chunks == 2
     assert stats.recompute.kv_projection_chunks == 6
     assert q_ranges == [(0, 128), (128, 193)]
