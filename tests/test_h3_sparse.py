@@ -312,6 +312,16 @@ def test_h3_materialized_switches_dense_and_sol_without_summary_fallback():
         runner.projected_attention.arena.allocated_bytes + source.allocated_bytes
     )
 
+    with pytest.raises(ValueError, match="segments must match"):
+        runner.sol_attention.run_with_qkv_source(
+            source,
+            hidden.shape[0],
+            torch.tensor([0, 65, hidden.shape[0]], dtype=torch.int32),
+            exact_prefix_tokens=(0, 0),
+            output_consumer=runner.consumer,
+            tau=1000.0,
+        )
+
     calls_before_failure = projection_calls
     with pytest.raises(ValueError, match="does not support causal"):
         runner.run_block_(

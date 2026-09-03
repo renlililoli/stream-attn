@@ -101,6 +101,16 @@ class SolMaterializedSource:
             raise RuntimeError("Sol materialized source has not been prepared")
         return self._segments
 
+    def validate_layout(self, plan: SolStreamingPlan, bounds: list[int]) -> None:
+        """Require execution metadata to match the layout used for encoding."""
+
+        if plan != self.plan:
+            raise ValueError("Sol materialized source and attention plans must match")
+        expected = tuple((segment.token_start, segment.token_stop) for segment in self.segments)
+        actual = tuple(pairwise(bounds))
+        if actual != expected:
+            raise ValueError("Sol materialized source segments must match the execution cu_seqlens")
+
     def _ensure_storage(self, total_blocks: int) -> None:
         attention = self.plan.attention
         if total_blocks <= self._block_capacity:
@@ -137,6 +147,14 @@ class SolMaterializedSource:
             raise ValueError("Sol materialized Q storage must be a matching CPU tensor")
         if projection_tile_tokens <= 0:
             raise ValueError("projection_tile_tokens must be positive")
+        if (
+            len(bounds) < 2
+            or bounds[0] != 0
+            or bounds[-1] <= 0
+            or bounds[-1] > q.shape[0]
+            or any(start > stop for start, stop in pairwise(bounds))
+        ):
+            raise ValueError("Sol materialized bounds must fit Q storage and be non-decreasing")
 
         segments: list[_SegmentLayout] = []
         total_blocks = 0

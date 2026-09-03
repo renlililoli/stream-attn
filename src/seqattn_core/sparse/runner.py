@@ -232,6 +232,8 @@ class SolStreamingAttentionRunner:
             raise ValueError("tau must be finite")
         bounds = validate_cu_seqlens(cu_seqlens, tokens, "cu_seqlens")
         _validate_exact_prefix_tokens(exact_prefix_tokens, bounds)
+        if isinstance(source, SolMaterializedSource):
+            source.validate_layout(self.plan, bounds)
         stats = self._prepare_stats(stats)
         started = time.perf_counter()
         try:
