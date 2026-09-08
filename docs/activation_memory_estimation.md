@@ -117,14 +117,25 @@ synchronization milestones remain in JSON but are not drawn as compute work.
 
 ```python
 from seqattn_core.estimation import (
-    H3BlockShape, H3CallbackConfig, H3DeviceProfile, H3ExecutionConfig,
-    MemoryPool, RateProfile, build_h3_block_execution,
-    estimate_activation_memory, write_timeline_report,
+    H3BlockShape,
+    H3CallbackConfig,
+    H3DeviceProfile,
+    H3ExecutionConfig,
+    MemoryPool,
+    RateProfile,
+    build_h3_block_execution,
+    estimate_activation_memory,
+    write_timeline_report,
 )
 
 shape = H3BlockShape(
-    segments=(81159,), hidden_features=5376, ffn_features=14336,
-    heads=56, head_dim=128, activation_dtype="bfloat16", element_bytes=2,
+    segments=(81159,),
+    hidden_features=5376,
+    ffn_features=14336,
+    heads=56,
+    head_dim=128,
+    activation_dtype="bfloat16",
+    element_bytes=2,
 )
 # Illustrative values only. Use effective measured rates, not advertised peaks.
 profile = H3DeviceProfile.from_rates(
@@ -139,18 +150,22 @@ profile = H3DeviceProfile.from_rates(
     d2d=RateProfile("D2D byte/s", 500e9, ("compute",)),
 )
 callbacks = H3CallbackConfig(
-    variant="modulated", linear_memory="int8_eager",
+    variant="modulated",
+    linear_memory="int8_eager",
     per_channel_weight_scale=True,
 )
 specs = [
     build_h3_block_execution(
-        shape, H3ExecutionConfig(3840, 4096, 4096, ffn), profile,
+        shape,
+        H3ExecutionConfig(3840, 4096, 4096, ffn),
+        profile,
         callbacks=callbacks,
     )
     for ffn in (2048, 4096, 8192, 16384)
 ]
 result = estimate_activation_memory(
-    specs, objective_pool="accelerator.memory",
+    specs,
+    objective_pool="accelerator.memory",
     objective_owners=frozenset({"operator", "callback", "caller"}),
     target_throughput_fraction=0.95,
 )
@@ -228,15 +243,20 @@ measurement = measure_cuda_h3_operator(
     lambda: fc1(x),
     tokens=x.shape[0],
     output_allocation_bytes=x.shape[0] * (2 * ffn_features) * x.element_size(),
-    warmup=2, repeats=5,
+    warmup=2,
+    repeats=5,
     provenance="record GPU, backend/compiler, dtype, tile and weight layout here",
 )
-profile = replace(profile, operators={
-    **profile.operators,
-    "fc1": H3OperatorProfile(
-        samples=(measurement.sample,), provenance=measurement.provenance,
-    ),
-}).for_shape(shape)
+profile = replace(
+    profile,
+    operators={
+        **profile.operators,
+        "fc1": H3OperatorProfile(
+            samples=(measurement.sample,),
+            provenance=measurement.provenance,
+        ),
+    },
+).for_shape(shape)
 ```
 
 Supply one sample for every used full/tail shape, or explicitly retain a rate
