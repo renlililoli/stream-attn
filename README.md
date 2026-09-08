@@ -92,6 +92,32 @@ Both experiments currently have one independent process per Q point. The knee
 agreement supports the host-memory roofline model, but additional independent
 process rounds are still required to quantify run-to-run and thermal variance.
 
+## Activation memory estimation
+
+The optional offline estimator models full dense H3 blocks, including projection,
+normalization/RoPE, attention, cross-Q FFN carry, residuals and output transfers.
+It compares memory and latency across explicit tile candidates and
+materialized/recompute strategies. User-defined
+memory pools and compute/copy profiles can describe GPU, NPU or TPU resources.
+It exports a standalone interactive HTML timeline with compute/I/O lanes,
+per-pool component memory curves and physical buffer lifetimes, plus canonical
+JSON. This provides estimates; it does not add execution backends or hardware
+calibration defaults. See the [estimation guide](docs/activation_memory_estimation.md).
+
+For live parameter editing and automatic timeline updates:
+
+```bash
+PYTHONPATH=src python -m seqattn_core.estimation.web --port 8765
+```
+
+Open `http://127.0.0.1:8765`. The page uses the same Python estimator and supports
+parameter/Profile import, candidate comparison and standalone report export.
+For a report generated directly from the command line:
+
+```bash
+PYTHONPATH=src python benchmarks/activation_timeline.py --output /tmp/activation-timeline.html
+```
+
 ## Backends
 
 The contiguous host-memory runner has one shared copy/compute schedule and FP32

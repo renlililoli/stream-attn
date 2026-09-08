@@ -1,0 +1,730 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-09-08",
+  "source_directory": "workspace/benchmarks/results/seqattn_single_block25_81159_20260825",
+  "source_repository": "../..",
+  "rows": [
+    {
+      "source": "block25_native_fa4.json",
+      "sha256": "9d0a5e07cac01080bf98ebc8555430393ad526cfa63c390e09c3f18b168c247d",
+      "configuration": {
+        "mode": "native",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "output": "/results/block25_native_fa4.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 2048,
+        "mlp_tile_tokens": 2048,
+        "estimated_workspace_bytes": 545406976
+      },
+      "kind": "native",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.2876832908950746,
+        1.3437846088781953,
+        1.290119620040059,
+        1.2923342799767852,
+        1.2917333701625466
+      ],
+      "wall_median_seconds": 1.2917333701625466,
+      "wall_mean_seconds": 1.3011310339905322,
+      "wall_min_seconds": 1.2876832908950746,
+      "wall_max_seconds": 1.3437846088781953,
+      "wall_range_over_min_percent": 4.356763684036347,
+      "torch_peak_allocated_bytes": null,
+      "torch_peak_reserved_bytes": null,
+      "native_cuda_stage_seconds": [
+        {
+          "qkv_projection": 0.1242823715209961,
+          "attention": 0.86239501953125,
+          "out_projection": 0.04710886383056641,
+          "mlp": 0.2537391357421875
+        },
+        {
+          "qkv_projection": 0.12498937225341797,
+          "attention": 0.862050537109375,
+          "out_projection": 0.04735078430175781,
+          "mlp": 0.30927911376953127
+        },
+        {
+          "qkv_projection": 0.12455888366699219,
+          "attention": 0.864289306640625,
+          "out_projection": 0.047180767059326174,
+          "mlp": 0.25398294067382815
+        },
+        {
+          "qkv_projection": 0.12457071685791016,
+          "attention": 0.8661807861328125,
+          "out_projection": 0.04731548690795898,
+          "mlp": 0.25415510559082033
+        },
+        {
+          "qkv_projection": 0.12481407928466796,
+          "attention": 0.8656329345703125,
+          "out_projection": 0.04715315246582031,
+          "mlp": 0.25401791381835936
+        }
+      ],
+      "native_cuda_stage_means": {
+        "qkv_projection_mean_seconds": 0.12464308471679687,
+        "attention_mean_seconds": 0.864109716796875,
+        "out_projection_mean_seconds": 0.047221810913085936,
+        "mlp_mean_seconds": 0.26503484191894533
+      },
+      "observed_q_chunks": null,
+      "observed_ffn_calls": null,
+      "observed_ffn_cross_q_boundaries": null,
+      "generic_template_ffn_calls": null,
+      "expected_carry_ffn_calls": null
+    },
+    {
+      "source": "block25_native_fa4_profile.json",
+      "sha256": "53f3e50f4bf667af7b814ed62aa616402e945bde49ed2ebd5806064bcad1ecd0",
+      "configuration": {
+        "mode": "native",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "output": "/results/block25_native_fa4_profile.json",
+        "cuda_profiler_capture": true
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 2048,
+        "mlp_tile_tokens": 2048,
+        "estimated_workspace_bytes": 545406976
+      },
+      "kind": "native",
+      "profile_capture": true,
+      "wall_seconds": [
+        1.2982704192399979,
+        1.3566487072966993,
+        1.3025363441556692,
+        1.3042665808461607,
+        1.3052679658867419
+      ],
+      "wall_median_seconds": 1.3042665808461607,
+      "wall_mean_seconds": 1.3133980034850539,
+      "wall_min_seconds": 1.2982704192399979,
+      "wall_max_seconds": 1.3566487072966993,
+      "wall_range_over_min_percent": 4.496620056311218,
+      "torch_peak_allocated_bytes": null,
+      "torch_peak_reserved_bytes": null,
+      "native_cuda_stage_seconds": [
+        {
+          "qkv_projection": 0.12469004821777344,
+          "attention": 0.8665745849609375,
+          "out_projection": 0.04827936172485352,
+          "mlp": 0.25852761840820315
+        },
+        {
+          "qkv_projection": 0.12762850952148438,
+          "attention": 0.8672380981445312,
+          "out_projection": 0.04893667221069336,
+          "mlp": 0.31272573852539065
+        },
+        {
+          "qkv_projection": 0.12654431915283204,
+          "attention": 0.8666322021484375,
+          "out_projection": 0.0491519660949707,
+          "mlp": 0.2600870056152344
+        },
+        {
+          "qkv_projection": 0.12770326232910156,
+          "attention": 0.8671465454101562,
+          "out_projection": 0.04909827041625976,
+          "mlp": 0.26017724609375
+        },
+        {
+          "qkv_projection": 0.12787849426269532,
+          "attention": 0.8678181762695313,
+          "out_projection": 0.04909056091308594,
+          "mlp": 0.2603409729003906
+        }
+      ],
+      "native_cuda_stage_means": {
+        "qkv_projection_mean_seconds": 0.12688892669677734,
+        "attention_mean_seconds": 0.8670819213867188,
+        "out_projection_mean_seconds": 0.04891136627197266,
+        "mlp_mean_seconds": 0.27037171630859375
+      },
+      "observed_q_chunks": null,
+      "observed_ffn_calls": null,
+      "observed_ffn_cross_q_boundaries": null,
+      "generic_template_ffn_calls": null,
+      "expected_carry_ffn_calls": null
+    },
+    {
+      "source": "block25_q3840_kv4096.json",
+      "sha256": "1c37ee2ad18337b5264e85b2e4af76a53c82b986198b94e5aaa53cbae64893fa",
+      "configuration": {
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "output": "/results/block25_q3840_kv4096.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 2048,
+        "mlp_tile_tokens": 2048,
+        "estimated_workspace_bytes": 545406976
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.5355157651938498,
+        1.5345618119463325,
+        1.5348041728138924,
+        1.5355400568805635,
+        1.5381299029104412
+      ],
+      "wall_median_seconds": 1.5355157651938498,
+      "wall_mean_seconds": 1.535710341949016,
+      "wall_min_seconds": 1.5345618119463325,
+      "wall_max_seconds": 1.5381299029104412,
+      "wall_range_over_min_percent": 0.2325152976134115,
+      "torch_peak_allocated_bytes": null,
+      "torch_peak_reserved_bytes": null,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 40,
+      "observed_ffn_cross_q_boundaries": 19,
+      "generic_template_ffn_calls": 43,
+      "expected_carry_ffn_calls": 40
+    },
+    {
+      "source": "block25_q3840_kv4096_config_qkv4096_mlp4096.json",
+      "sha256": "1b3e4843446a0afd7193cb32a01a0651ebc5009801c95e15273b4375ae78020b",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": null,
+        "mlp_tile_tokens": null,
+        "output": "/results/block25_q3840_kv4096_config_qkv4096_mlp4096.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 4096,
+        "estimated_workspace_bytes": 655507456
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.5630018669180572,
+        1.9384678597562015,
+        2.253628281876445,
+        2.394844717346132,
+        2.3382308087311685
+      ],
+      "wall_median_seconds": 2.253628281876445,
+      "wall_mean_seconds": 2.097634706925601,
+      "wall_min_seconds": 1.5630018669180572,
+      "wall_max_seconds": 2.394844717346132,
+      "wall_range_over_min_percent": 53.22084816624759,
+      "torch_peak_allocated_bytes": 2192295936,
+      "torch_peak_reserved_bytes": 2520776704,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 20,
+      "observed_ffn_cross_q_boundaries": 20,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 20
+    },
+    {
+      "source": "block25_q3840_kv4096_mlp4096.json",
+      "sha256": "c97e074f30df8bc737bed807eaf0cb7cc2fa618fa51c9b4f7a4d7c89972139ba",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "mlp_tile_tokens": 4096,
+        "output": "/results/block25_q3840_kv4096_mlp4096.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 2048,
+        "mlp_tile_tokens": 4096,
+        "estimated_workspace_bytes": 611467264
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.503784654662013,
+        1.5056997970677912,
+        1.5053008422255516,
+        1.504347577225417,
+        1.5047783311456442
+      ],
+      "wall_median_seconds": 1.5047783311456442,
+      "wall_mean_seconds": 1.5047822404652833,
+      "wall_min_seconds": 1.503784654662013,
+      "wall_max_seconds": 1.5056997970677912,
+      "wall_range_over_min_percent": 0.12735483101524725,
+      "torch_peak_allocated_bytes": 2148255744,
+      "torch_peak_reserved_bytes": 2394947584,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 20,
+      "observed_ffn_cross_q_boundaries": 20,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 20
+    },
+    {
+      "source": "block25_q3840_kv4096_mlp8192.json",
+      "sha256": "d7996c288c4804879a0c46956e92d353b834f858a59aebb826f7230ca4ed0fe6",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "mlp_tile_tokens": 8192,
+        "output": "/results/block25_q3840_kv4096_mlp8192.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 2048,
+        "mlp_tile_tokens": 8192,
+        "estimated_workspace_bytes": 743587840
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.4881807989440858,
+        1.4898690250702202,
+        1.493018614128232,
+        1.4904341879300773,
+        1.4911437700502574
+      ],
+      "wall_median_seconds": 1.4904341879300773,
+      "wall_mean_seconds": 1.4905292792245746,
+      "wall_min_seconds": 1.4881807989440858,
+      "wall_max_seconds": 1.493018614128232,
+      "wall_range_over_min_percent": 0.3250824891423587,
+      "torch_peak_allocated_bytes": 3129313280,
+      "torch_peak_reserved_bytes": 3317694464,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 10,
+      "observed_ffn_cross_q_boundaries": 21,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 10
+    },
+    {
+      "source": "block25_q3840_kv4096_profile.json",
+      "sha256": "6695a78068f5a222d4351d835984f6f6f045a9db16de5160fd9631ddd471807e",
+      "configuration": {
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "output": "/results/block25_q3840_kv4096_profile.json",
+        "cuda_profiler_capture": true
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 2048,
+        "mlp_tile_tokens": 2048,
+        "estimated_workspace_bytes": 545406976
+      },
+      "kind": "streaming",
+      "profile_capture": true,
+      "wall_seconds": [
+        1.5423395461402833,
+        1.541561822872609,
+        1.5416584857739508,
+        1.5431616459973156,
+        1.5438288478180766
+      ],
+      "wall_median_seconds": 1.5423395461402833,
+      "wall_mean_seconds": 1.542510069720447,
+      "wall_min_seconds": 1.541561822872609,
+      "wall_max_seconds": 1.5438288478180766,
+      "wall_range_over_min_percent": 0.1470602678291133,
+      "torch_peak_allocated_bytes": null,
+      "torch_peak_reserved_bytes": null,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 40,
+      "observed_ffn_cross_q_boundaries": 19,
+      "generic_template_ffn_calls": 43,
+      "expected_carry_ffn_calls": 40
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv4096_mlp12288.json",
+      "sha256": "4ac5447e335d29e71f11f5fa693f28186657cc479a1294f3a78a9c0610fbd649",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 12288,
+        "output": "/results/block25_q3840_kv4096_qkv4096_mlp12288.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 12288,
+        "estimated_workspace_bytes": 919748608
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.4623562516644597,
+        1.4624970839358866,
+        1.462648226879537,
+        1.461835864931345,
+        1.4622978861443698
+      ],
+      "wall_median_seconds": 1.4623562516644597,
+      "wall_mean_seconds": 1.4623270627111196,
+      "wall_min_seconds": 1.461835864931345,
+      "wall_max_seconds": 1.462648226879537,
+      "wall_range_over_min_percent": 0.05557135159153237,
+      "torch_peak_allocated_bytes": 4221159424,
+      "torch_peak_reserved_bytes": 5079302144,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 7,
+      "observed_ffn_cross_q_boundaries": 20,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 7
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv4096_mlp16384.json",
+      "sha256": "f6e240b335b86127cfc6f2d818a2fd104c88a36021ceb98edf1f9d00e52ba4ab",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 16384,
+        "output": "/results/block25_q3840_kv4096_qkv4096_mlp16384.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 16384,
+        "estimated_workspace_bytes": 1051869184
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.462360859848559,
+        1.4652499500662088,
+        1.4650561483576894,
+        1.4626203025691211,
+        1.462318236939609
+      ],
+      "wall_median_seconds": 1.4626203025691211,
+      "wall_mean_seconds": 1.4635210995562375,
+      "wall_min_seconds": 1.462318236939609,
+      "wall_max_seconds": 1.4652499500662088,
+      "wall_range_over_min_percent": 0.20048393383476082,
+      "torch_peak_allocated_bytes": 5397716480,
+      "torch_peak_reserved_bytes": 6192889856,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 5,
+      "observed_ffn_cross_q_boundaries": 21,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 5
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv4096_mlp8192.json",
+      "sha256": "b1b4c81633f4df7f4cc07d2dc2e456a4c9f7c0fe8fd5ab60d09a77872340ba49",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 8192,
+        "output": "/results/block25_q3840_kv4096_qkv4096_mlp8192.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 4096,
+        "mlp_tile_tokens": 8192,
+        "estimated_workspace_bytes": 787628032
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.4703077622689307,
+        1.4720047158189118,
+        1.4718807679601014,
+        1.4712531161494553,
+        1.4705466232262552
+      ],
+      "wall_median_seconds": 1.4712531161494553,
+      "wall_mean_seconds": 1.4711985970847308,
+      "wall_min_seconds": 1.4703077622689307,
+      "wall_max_seconds": 1.4720047158189118,
+      "wall_range_over_min_percent": 0.11541485351083125,
+      "torch_peak_allocated_bytes": 3173353472,
+      "torch_peak_reserved_bytes": 3359637504,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 10,
+      "observed_ffn_cross_q_boundaries": 21,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 10
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv8192_mlp8192.json",
+      "sha256": "649dad4df8c5f9a3b2999a72e65b5a50372d0185371f42fca15b6f02274f97d8",
+      "configuration": {
+        "mode": "streaming",
+        "tokens": 81159,
+        "block_index": 25,
+        "warmup": 1,
+        "repeats": 5,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 8192,
+        "mlp_tile_tokens": 8192,
+        "output": "/results/block25_q3840_kv4096_qkv8192_mlp8192.json",
+        "cuda_profiler_capture": false
+      },
+      "model": {
+        "block_index": 25,
+        "hidden_features": 5376,
+        "heads": 56,
+        "head_dim": 128,
+        "attention_features": 7168,
+        "dtype": "torch.bfloat16"
+      },
+      "plan": {
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "qkv_tile_tokens": 8192,
+        "mlp_tile_tokens": 8192,
+        "estimated_workspace_bytes": 875708416
+      },
+      "kind": "streaming",
+      "profile_capture": false,
+      "wall_seconds": [
+        1.4825202492065728,
+        1.4831907376646996,
+        1.4845387609675527,
+        1.4842153429053724,
+        1.4840302900411189
+      ],
+      "wall_median_seconds": 1.4840302900411189,
+      "wall_mean_seconds": 1.4836990761570632,
+      "wall_min_seconds": 1.4825202492065728,
+      "wall_max_seconds": 1.4845387609675527,
+      "wall_range_over_min_percent": 0.1361540769551084,
+      "torch_peak_allocated_bytes": 3261433856,
+      "torch_peak_reserved_bytes": 3883925504,
+      "native_cuda_stage_seconds": null,
+      "native_cuda_stage_means": null,
+      "observed_q_chunks": 22,
+      "observed_ffn_calls": 10,
+      "observed_ffn_cross_q_boundaries": 21,
+      "generic_template_ffn_calls": 22,
+      "expected_carry_ffn_calls": 10
+    }
+  ],
+  "profiles": [
+    {
+      "source": "block25_native_fa4_steady.sqlite",
+      "sha256": "5b4a5f9209eb06f6fa163b3d521f05d0d8e5126613277f3b68f9a75df0e38cbd",
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 5090",
+        "pci_bus": "0000:e1:00.0",
+        "uuid": "35d69b8c-779a-bb45-263c-27587354c413"
+      },
+      "environment": {
+        "CUDA_VERSION": "13.1.1.006",
+        "PYTORCH_VERSION": "2.10.0a0+a36e1d3",
+        "NVIDIA_PYTORCH_VERSION": "26.01"
+      },
+      "kernel_events": 2025,
+      "memcpy_events": 175,
+      "has_allocation_events": false,
+      "use": "hardware/environment and scheduling attribution; not primary latency"
+    },
+    {
+      "source": "block25_q3840_kv4096_steady.sqlite",
+      "sha256": "1847309f2836b6985a665dc3bc010e2cb3861d9722f1ca41960ebe6bbaa9f41b",
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 5090",
+        "pci_bus": "0000:e1:00.0",
+        "uuid": "35d69b8c-779a-bb45-263c-27587354c413"
+      },
+      "environment": {
+        "CUDA_VERSION": "13.1.1.006",
+        "PYTORCH_VERSION": "2.10.0a0+a36e1d3",
+        "NVIDIA_PYTORCH_VERSION": "26.01"
+      },
+      "kernel_events": 18060,
+      "memcpy_events": 6720,
+      "has_allocation_events": false,
+      "use": "hardware/environment and scheduling attribution; not primary latency"
+    }
+  ],
+  "incremental_memory_mapping_check": {
+    "lower_source": "block25_q3840_kv4096_qkv4096_mlp8192.json",
+    "upper_source": "block25_q3840_kv4096_qkv4096_mlp16384.json",
+    "measured_torch_peak_growth_bytes": 2224363008,
+    "recorded_core_workspace_growth_bytes": 264241152,
+    "h3_carry_growth_bytes_missing_from_template": 88080384,
+    "current_template_output_slot_growth_bytes": 176160768,
+    "incremental_growth_error_percent": -92.08039482016058,
+    "interpretation": "Mapping mismatch: current per-Q FFN template does not reproduce H3 carry batching. This is an incremental peak comparison, not an absolute activation-only error."
+  },
+  "estimator_template_sha256": "6a0b1a76f60fcfc807b9238d3e151d661bc9a5efe5480926fad43e791ddc674c",
+  "audit_script_sha256": "50fa81f14d2d3c7208e637e43f0a8f23a149d702b5c7cf2d99b4fdb217246cbd",
+  "limitations": [
+    "Native unprofiled JSON contains independent CUDA-event stage measurements at full sequence shape.",
+    "Profiled SQLite has CUDA 13.1/NGC metadata; do not silently reuse CUDA 12.8 calibration from the other experiment.",
+    "Native stage rates are not a measured small-tile GEMM saturation curve.",
+    "Torch peaks include all live allocator tensors; weight-only baselines and allocation event traces are absent.",
+    "All raw repeats are retained, including the visibly variable config_qkv4096_mlp4096 run."
+  ]
+}

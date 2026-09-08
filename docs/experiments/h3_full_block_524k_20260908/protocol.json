@@ -1,0 +1,19 @@
+{
+  "tokens": 524288,
+  "block_index": 25,
+  "callback": "full production modulated, no LoRA",
+  "mode": "materialized",
+  "warmup_full_blocks": 2,
+  "timed_full_blocks": 3,
+  "prediction_frozen_before_measurement": true,
+  "calibration_process": "seqattn-h3-524k-cal-20260908",
+  "measurement_process": "seqattn-h3-524k-run-20260908",
+  "physical_gpu": 3,
+  "cpu_affinity": "160-191,416-447",
+  "numa_policy": "interleave=5,7",
+  "other_gpu_observation": "GPU 0 had another active job after calibration; GPU 3 was idle before measurement",
+  "prediction_sha256": "58fb1c0eb11b304282e4b871d93bf44bf17733fa0afa6d720258ce42b937b3d0",
+  "docker_image_id": "sha256:2ae518ea71d53d7c167a1d46b195281d4c6e5bc42b370568bf91280d3ef81385",
+  "docker_image_tag": "minimax-h3-seqattn:checks-release-0.4.4",
+  "gpu3_after_test": "2 MiB used, 0% utilization; both experiment containers exited 0"
+}

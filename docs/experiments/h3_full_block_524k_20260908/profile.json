@@ -1,0 +1,533 @@
+{
+  "name": "RTX 5090 GPU3 real H3 524K calibration",
+  "device_pool": {
+    "name": "GPU.HBM",
+    "capacity_bytes": null,
+    "allocation_alignment_bytes": 512
+  },
+  "host_pool": {
+    "name": "host.DRAM",
+    "capacity_bytes": null,
+    "allocation_alignment_bytes": 1
+  },
+  "operators": {
+    "adaln": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 1,
+          "seconds": 0.00011097600311040878,
+          "extra_workspace_bytes": 3483648,
+          "kv_tokens": 0,
+          "work": 1548288
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: adaln",
+      "additional_workspaces": []
+    },
+    "attention": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 2048,
+          "seconds": 0.0012773120403289796,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 4096,
+          "work": 240518168576
+        },
+        {
+          "tokens": 3840,
+          "seconds": 0.0020903999805450438,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 4096,
+          "work": 450971566080
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: attention",
+      "additional_workspaces": []
+    },
+    "attention_residual": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 2048,
+          "seconds": 4.643199965357781e-05,
+          "extra_workspace_bytes": 10752,
+          "kv_tokens": 0,
+          "work": 11010048
+        },
+        {
+          "tokens": 3840,
+          "seconds": 5.8559998869895935e-05,
+          "extra_workspace_bytes": 10752,
+          "kv_tokens": 0,
+          "work": 20643840
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: attention_residual",
+      "additional_workspaces": []
+    },
+    "d2d": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 256,
+          "seconds": 1.500799972563982e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 2752512
+        },
+        {
+          "tokens": 512,
+          "seconds": 1.408000010997057e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 5505024
+        },
+        {
+          "tokens": 768,
+          "seconds": 1.4655999839305878e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 8257536
+        },
+        {
+          "tokens": 1024,
+          "seconds": 1.5552000142633914e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 11010048
+        },
+        {
+          "tokens": 1280,
+          "seconds": 1.484800036996603e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 13762560
+        },
+        {
+          "tokens": 1536,
+          "seconds": 1.456000003963709e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 16515072
+        },
+        {
+          "tokens": 1792,
+          "seconds": 1.4399999752640724e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 19267584
+        },
+        {
+          "tokens": 2048,
+          "seconds": 1.5680000185966492e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 22020096
+        },
+        {
+          "tokens": 2304,
+          "seconds": 1.6704000532627105e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 24772608
+        },
+        {
+          "tokens": 2560,
+          "seconds": 1.8400000408291815e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 27525120
+        },
+        {
+          "tokens": 2816,
+          "seconds": 1.9680000841617586e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 30277632
+        },
+        {
+          "tokens": 3072,
+          "seconds": 2.0287999883294106e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 33030144
+        },
+        {
+          "tokens": 3328,
+          "seconds": 2.0511999726295472e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 35782656
+        },
+        {
+          "tokens": 3584,
+          "seconds": 2.2528000175952913e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 38535168
+        },
+        {
+          "tokens": 3840,
+          "seconds": 2.2784000262618063e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 41287680
+        },
+        {
+          "tokens": 4096,
+          "seconds": 2.4512000381946565e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 44040192
+        },
+        {
+          "tokens": 4096,
+          "seconds": 8.079999685287475e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 58720256
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: d2d",
+      "additional_workspaces": []
+    },
+    "d2h": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 0.0012656320333480835,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 44040192
+        },
+        {
+          "tokens": 4096,
+          "seconds": 0.001679263949394226,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 58720256
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: d2h",
+      "additional_workspaces": []
+    },
+    "fc1": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 0.009405055999755859,
+          "extra_workspace_bytes": 1240252416,
+          "kv_tokens": 0,
+          "work": 1262720385024
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: fc1",
+      "additional_workspaces": []
+    },
+    "ffn_residual": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 6.1023999005556104e-05,
+          "extra_workspace_bytes": 10752,
+          "kv_tokens": 0,
+          "work": 22020096
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: ffn_residual",
+      "additional_workspaces": []
+    },
+    "finalize": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 2048,
+          "seconds": 4.11520004272461e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 14680064
+        },
+        {
+          "tokens": 3840,
+          "seconds": 0.00011059200018644332,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 27525120
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: finalize",
+      "additional_workspaces": []
+    },
+    "h2d": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 2048,
+          "seconds": 0.0007299519777297974,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 22020096
+        },
+        {
+          "tokens": 2048,
+          "seconds": 0.0009052159786224366,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 29360128
+        },
+        {
+          "tokens": 3840,
+          "seconds": 0.0012296960353851318,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 41287680
+        },
+        {
+          "tokens": 3840,
+          "seconds": 0.0016476160287857056,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 55050240
+        },
+        {
+          "tokens": 4096,
+          "seconds": 1.8912000581622124e-05,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 49152
+        },
+        {
+          "tokens": 4096,
+          "seconds": 0.0013249280452728271,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 44040192
+        },
+        {
+          "tokens": 4096,
+          "seconds": 0.0017295039892196655,
+          "extra_workspace_bytes": 0,
+          "kv_tokens": 0,
+          "work": 58720256
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: h2d",
+      "additional_workspaces": []
+    },
+    "modulate1": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 9.440000355243683e-05,
+          "extra_workspace_bytes": 21504,
+          "kv_tokens": 0,
+          "work": 22020096
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: modulate1",
+      "additional_workspaces": []
+    },
+    "modulate2": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 9.424000233411789e-05,
+          "extra_workspace_bytes": 21504,
+          "kv_tokens": 0,
+          "work": 22020096
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: modulate2",
+      "additional_workspaces": []
+    },
+    "norm1": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 4.787199944257736e-05,
+          "extra_workspace_bytes": 16384,
+          "kv_tokens": 0,
+          "work": 22020096
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: norm1",
+      "additional_workspaces": []
+    },
+    "norm2": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 4.6080000698566435e-05,
+          "extra_workspace_bytes": 16384,
+          "kv_tokens": 0,
+          "work": 22020096
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: norm2",
+      "additional_workspaces": []
+    },
+    "out": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 2048,
+          "seconds": 0.0014347200393676758,
+          "extra_workspace_bytes": 220209152,
+          "kv_tokens": 0,
+          "work": 157840048128
+        },
+        {
+          "tokens": 3840,
+          "seconds": 0.0023850879669189452,
+          "extra_workspace_bytes": 412892160,
+          "kv_tokens": 0,
+          "work": 295950090240
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: out",
+      "additional_workspaces": []
+    },
+    "qk_rope": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 0.001214176058769226,
+          "extra_workspace_bytes": 249561088,
+          "kv_tokens": 0,
+          "work": 58720256
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: qk_rope",
+      "additional_workspaces": []
+    },
+    "qkv": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 0.007106847763061523,
+          "extra_workspace_bytes": 1181532160,
+          "kv_tokens": 0,
+          "work": 947040288768
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: qkv",
+      "additional_workspaces": []
+    },
+    "rope_angles": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 5.417599901556969e-05,
+          "extra_workspace_bytes": 1572864,
+          "kv_tokens": 0,
+          "work": 393216
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: rope_angles",
+      "additional_workspaces": []
+    },
+    "rope_table": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 6.595200300216675e-05,
+          "extra_workspace_bytes": 4718592,
+          "kv_tokens": 0,
+          "work": 393216
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: rope_table",
+      "additional_workspaces": []
+    },
+    "swiglu_fc2": {
+      "rate": null,
+      "samples": [
+        {
+          "tokens": 4096,
+          "seconds": 0.005053247928619385,
+          "extra_workspace_bytes": 528498688,
+          "kv_tokens": 0,
+          "work": 631360192512
+        }
+      ],
+      "extra_workspace_bytes": 0,
+      "extra_bytes_per_token": 0,
+      "provenance": "exact-shape CUDA-event calibration: swiglu_fc2",
+      "additional_workspaces": []
+    }
+  },
+  "compute_resources": [
+    "compute"
+  ],
+  "h2d_resources": [
+    "H2D"
+  ],
+  "d2h_resources": [
+    "D2H"
+  ],
+  "q_alignment": 1,
+  "kv_alignment": 1,
+  "local_pools": [],
+  "shape_signature": {
+    "hidden_features": 5376,
+    "ffn_features": 14336,
+    "heads": 56,
+    "head_dim": 128,
+    "element_bytes": 2,
+    "activation_dtype": "bfloat16",
+    "rope_dim": 96,
+    "modulation_rows": 3,
+    "timestep_features": 8,
+    "modulation_modalities": 3,
+    "modulation_element_bytes": 4
+  }
+}

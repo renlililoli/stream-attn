@@ -1,0 +1,749 @@
+{
+  "schema_version": 1,
+  "regular_repeat_rule": "max/min <= 1.1, based only on raw repeats; all rows retained",
+  "regular_repeat_timing": {
+    "count": 7,
+    "mape_percent": 1.4373893523413752,
+    "max_absolute_percent": 3.122463593096203
+  },
+  "source_sha256": {
+    "src/seqattn_core/estimation/specs.py": "4c33ce3c339d5728eb265fa6868a9011443c28ed255d4c2650ccc34a90d469ec",
+    "src/seqattn_core/estimation/schedule.py": "fcbb8d323b31b45fc65f29b09dd77c7917495324f8563c2e30293f94708da6eb",
+    "src/seqattn_core/estimation/memory.py": "80feef0867cfce696868a99ffe16bcac79c228bc4a29d30f3a9505b7a3752b75",
+    "src/seqattn_core/estimation/search.py": "0a92be6260a2bf3aec3dbbcb896b08368e5dfae04300dffa25350c62d360d10d",
+    "src/seqattn_core/estimation/report.py": "de8b5e9a47af9b76a0c11934af404fd91cfedb9f54317724d2735b07990cc46e",
+    "src/seqattn_core/estimation/_report_template.py": "aabc4fd5df31e24bc9a624626ae754f15fb342696e921f95e6e45d698314730d",
+    "src/seqattn_core/estimation/__init__.py": "66724eeb7142d20669ed56ae3656243864b2b6a61d0541aa8d02544e0b1ece9a",
+    "src/seqattn_core/estimation/h3/profiles.py": "09e248b20e667097ceecec1adc1bbfd4213efc92dd7124a947af70ce696e2429",
+    "src/seqattn_core/estimation/h3/graph.py": "9876f973faa4ace34c019cab265fcb0c65778c30d9cf37b58efaa4cb748c2184",
+    "src/seqattn_core/estimation/h3/callbacks.py": "eecef3c52662458a25bdff4219f27bade4494a6e304d34957e78ea05ecd97ce7",
+    "src/seqattn_core/estimation/h3/linear_memory.py": "137939bfda36dc0f3f1ddfe01629d259bb9accffcc675a779a121558b74dfb97",
+    "src/seqattn_core/estimation/h3/consumer.py": "f9e6fdea6a22e70d2ce7e918aeee5f04ae2cd0d4f6e12d144a3493da39bbff7d",
+    "src/seqattn_core/estimation/h3/pipeline.py": "5714d2b77be86d349684f032c7d0fccd047e8841a3247856bb7a1ac74e1361ad",
+    "src/seqattn_core/estimation/h3/__init__.py": "68270c2e3563d84ada7d10474c2dfcc7193c4b342b00b9f14fa4de10a78eb477",
+    "src/seqattn_core/estimation/h3/calibration.py": "5de3f712661cb9bb67764a752ea5ba0aad976aa219deaf678cff790108a84a45"
+  },
+  "date": "2026-09-08",
+  "calibration": {
+    "native_json_sha256": "9d0a5e07cac01080bf98ebc8555430393ad526cfa63c390e09c3f18b168c247d",
+    "profile_sqlite_sha256": "1847309f2836b6985a665dc3bc010e2cb3861d9722f1ca41960ebe6bbaa9f41b",
+    "native_rates": {
+      "attention": 218555869193201.28,
+      "qkv": 150548698637456.4,
+      "out": 132458948068225.2,
+      "ffn": 141602923316858.0
+    },
+    "profile_copy_bytes_per_second": {
+      "1": 56191339730.8924,
+      "2": 50379618769.07678,
+      "8": 914197864201.0182
+    },
+    "profile_vector_elements_per_second": 390293205107.78577,
+    "gpu": [
+      "NVIDIA GeForce RTX 5090",
+      "35d69b8c-779a-bb45-263c-27587354c413"
+    ],
+    "scope": "Rate transfer diagnostic. No unprofiled streaming wall time or memory peak was fitted."
+  },
+  "rows": [
+    {
+      "source": "block25_q3840_kv4096.json",
+      "sha256": "1c37ee2ad18337b5264e85b2e4af76a53c82b986198b94e5aaa53cbae64893fa",
+      "projection_tile": 2048,
+      "ffn_tile": 2048,
+      "predicted_seconds": 1.4875698444594192,
+      "observed_median_seconds": 1.5355157651938498,
+      "time_error_percent": -3.122463593096203,
+      "predicted_activation_peak_bytes": 1665294336,
+      "observed_torch_peak_bytes": null,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 545406976,
+      "observed_core_workspace_bytes": 545406976,
+      "ffn_ranges": [
+        [
+          0,
+          2048
+        ],
+        [
+          2048,
+          4096
+        ],
+        [
+          4096,
+          6144
+        ],
+        [
+          6144,
+          8192
+        ],
+        [
+          8192,
+          10240
+        ],
+        [
+          10240,
+          12288
+        ],
+        [
+          12288,
+          14336
+        ],
+        [
+          14336,
+          16384
+        ],
+        [
+          16384,
+          18432
+        ],
+        [
+          18432,
+          20480
+        ],
+        [
+          20480,
+          22528
+        ],
+        [
+          22528,
+          24576
+        ],
+        [
+          24576,
+          26624
+        ],
+        [
+          26624,
+          28672
+        ],
+        [
+          28672,
+          30720
+        ],
+        [
+          30720,
+          32768
+        ],
+        [
+          32768,
+          34816
+        ],
+        [
+          34816,
+          36864
+        ],
+        [
+          36864,
+          38912
+        ],
+        [
+          38912,
+          40960
+        ],
+        [
+          40960,
+          43008
+        ],
+        [
+          43008,
+          45056
+        ],
+        [
+          45056,
+          47104
+        ],
+        [
+          47104,
+          49152
+        ],
+        [
+          49152,
+          51200
+        ],
+        [
+          51200,
+          53248
+        ],
+        [
+          53248,
+          55296
+        ],
+        [
+          55296,
+          57344
+        ],
+        [
+          57344,
+          59392
+        ],
+        [
+          59392,
+          61440
+        ],
+        [
+          61440,
+          63488
+        ],
+        [
+          63488,
+          65536
+        ],
+        [
+          65536,
+          67584
+        ],
+        [
+          67584,
+          69632
+        ],
+        [
+          69632,
+          71680
+        ],
+        [
+          71680,
+          73728
+        ],
+        [
+          73728,
+          75776
+        ],
+        [
+          75776,
+          77824
+        ],
+        [
+          77824,
+          79872
+        ],
+        [
+          79872,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 40,
+      "wall_samples": [
+        1.5355157651938498,
+        1.5345618119463325,
+        1.5348041728138924,
+        1.5355400568805635,
+        1.5381299029104412
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_config_qkv4096_mlp4096.json",
+      "sha256": "1b3e4843446a0afd7193cb32a01a0651ebc5009801c95e15273b4375ae78020b",
+      "projection_tile": 4096,
+      "ffn_tile": 4096,
+      "predicted_seconds": 1.489487405494014,
+      "observed_median_seconds": 2.253628281876445,
+      "time_error_percent": -33.907139102202876,
+      "predicted_activation_peak_bytes": 2214658048,
+      "observed_torch_peak_bytes": 2192295936,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 655507456,
+      "observed_core_workspace_bytes": 655507456,
+      "ffn_ranges": [
+        [
+          0,
+          4096
+        ],
+        [
+          4096,
+          8192
+        ],
+        [
+          8192,
+          12288
+        ],
+        [
+          12288,
+          16384
+        ],
+        [
+          16384,
+          20480
+        ],
+        [
+          20480,
+          24576
+        ],
+        [
+          24576,
+          28672
+        ],
+        [
+          28672,
+          32768
+        ],
+        [
+          32768,
+          36864
+        ],
+        [
+          36864,
+          40960
+        ],
+        [
+          40960,
+          45056
+        ],
+        [
+          45056,
+          49152
+        ],
+        [
+          49152,
+          53248
+        ],
+        [
+          53248,
+          57344
+        ],
+        [
+          57344,
+          61440
+        ],
+        [
+          61440,
+          65536
+        ],
+        [
+          65536,
+          69632
+        ],
+        [
+          69632,
+          73728
+        ],
+        [
+          73728,
+          77824
+        ],
+        [
+          77824,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 20,
+      "wall_samples": [
+        1.5630018669180572,
+        1.9384678597562015,
+        2.253628281876445,
+        2.394844717346132,
+        2.3382308087311685
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_mlp4096.json",
+      "sha256": "c97e074f30df8bc737bed807eaf0cb7cc2fa618fa51c9b4f7a4d7c89972139ba",
+      "projection_tile": 2048,
+      "ffn_tile": 4096,
+      "predicted_seconds": 1.4885127505605256,
+      "observed_median_seconds": 1.5047783311456442,
+      "time_error_percent": -1.0809286822156094,
+      "predicted_activation_peak_bytes": 2138505216,
+      "observed_torch_peak_bytes": 2148255744,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 611467264,
+      "observed_core_workspace_bytes": 611467264,
+      "ffn_ranges": [
+        [
+          0,
+          4096
+        ],
+        [
+          4096,
+          8192
+        ],
+        [
+          8192,
+          12288
+        ],
+        [
+          12288,
+          16384
+        ],
+        [
+          16384,
+          20480
+        ],
+        [
+          20480,
+          24576
+        ],
+        [
+          24576,
+          28672
+        ],
+        [
+          28672,
+          32768
+        ],
+        [
+          32768,
+          36864
+        ],
+        [
+          36864,
+          40960
+        ],
+        [
+          40960,
+          45056
+        ],
+        [
+          45056,
+          49152
+        ],
+        [
+          49152,
+          53248
+        ],
+        [
+          53248,
+          57344
+        ],
+        [
+          57344,
+          61440
+        ],
+        [
+          61440,
+          65536
+        ],
+        [
+          65536,
+          69632
+        ],
+        [
+          69632,
+          73728
+        ],
+        [
+          73728,
+          77824
+        ],
+        [
+          77824,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 20,
+      "wall_samples": [
+        1.503784654662013,
+        1.5056997970677912,
+        1.5053008422255516,
+        1.504347577225417,
+        1.5047783311456442
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_mlp8192.json",
+      "sha256": "d7996c288c4804879a0c46956e92d353b834f858a59aebb826f7230ca4ed0fe6",
+      "projection_tile": 2048,
+      "ffn_tile": 8192,
+      "predicted_seconds": 1.489386917397751,
+      "observed_median_seconds": 1.4904341879300773,
+      "time_error_percent": -0.07026613726438535,
+      "predicted_activation_peak_bytes": 3119562752,
+      "observed_torch_peak_bytes": 3129313280,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 743587840,
+      "observed_core_workspace_bytes": 743587840,
+      "ffn_ranges": [
+        [
+          0,
+          8192
+        ],
+        [
+          8192,
+          16384
+        ],
+        [
+          16384,
+          24576
+        ],
+        [
+          24576,
+          32768
+        ],
+        [
+          32768,
+          40960
+        ],
+        [
+          40960,
+          49152
+        ],
+        [
+          49152,
+          57344
+        ],
+        [
+          57344,
+          65536
+        ],
+        [
+          65536,
+          73728
+        ],
+        [
+          73728,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 10,
+      "wall_samples": [
+        1.4881807989440858,
+        1.4898690250702202,
+        1.493018614128232,
+        1.4904341879300773,
+        1.4911437700502574
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv4096_mlp12288.json",
+      "sha256": "4ac5447e335d29e71f11f5fa693f28186657cc479a1294f3a78a9c0610fbd649",
+      "projection_tile": 4096,
+      "ffn_tile": 12288,
+      "predicted_seconds": 1.4903615723312393,
+      "observed_median_seconds": 1.4623562516644597,
+      "time_error_percent": 1.915081953176867,
+      "predicted_activation_peak_bytes": 4211408896,
+      "observed_torch_peak_bytes": 4221159424,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 919748608,
+      "observed_core_workspace_bytes": 919748608,
+      "ffn_ranges": [
+        [
+          0,
+          12288
+        ],
+        [
+          12288,
+          24576
+        ],
+        [
+          24576,
+          36864
+        ],
+        [
+          36864,
+          49152
+        ],
+        [
+          49152,
+          61440
+        ],
+        [
+          61440,
+          73728
+        ],
+        [
+          73728,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 7,
+      "wall_samples": [
+        1.4623562516644597,
+        1.4624970839358866,
+        1.462648226879537,
+        1.461835864931345,
+        1.4622978861443698
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv4096_mlp16384.json",
+      "sha256": "f6e240b335b86127cfc6f2d818a2fd104c88a36021ceb98edf1f9d00e52ba4ab",
+      "projection_tile": 4096,
+      "ffn_tile": 16384,
+      "predicted_seconds": 1.4921099060056908,
+      "observed_median_seconds": 1.4626203025691211,
+      "time_error_percent": 2.016217290623601,
+      "predicted_activation_peak_bytes": 5387965440,
+      "observed_torch_peak_bytes": 5397716480,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 1051869184,
+      "observed_core_workspace_bytes": 1051869184,
+      "ffn_ranges": [
+        [
+          0,
+          16384
+        ],
+        [
+          16384,
+          32768
+        ],
+        [
+          32768,
+          49152
+        ],
+        [
+          49152,
+          65536
+        ],
+        [
+          65536,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 5,
+      "wall_samples": [
+        1.462360859848559,
+        1.4652499500662088,
+        1.4650561483576894,
+        1.4626203025691211,
+        1.462318236939609
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv4096_mlp8192.json",
+      "sha256": "b1b4c81633f4df7f4cc07d2dc2e456a4c9f7c0fe8fd5ab60d09a77872340ba49",
+      "projection_tile": 4096,
+      "ffn_tile": 8192,
+      "predicted_seconds": 1.4903615723312391,
+      "observed_median_seconds": 1.4712531161494553,
+      "time_error_percent": 1.2987878137376008,
+      "predicted_activation_peak_bytes": 3163602944,
+      "observed_torch_peak_bytes": 3173353472,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 787628032,
+      "observed_core_workspace_bytes": 787628032,
+      "ffn_ranges": [
+        [
+          0,
+          8192
+        ],
+        [
+          8192,
+          16384
+        ],
+        [
+          16384,
+          24576
+        ],
+        [
+          24576,
+          32768
+        ],
+        [
+          32768,
+          40960
+        ],
+        [
+          40960,
+          49152
+        ],
+        [
+          49152,
+          57344
+        ],
+        [
+          57344,
+          65536
+        ],
+        [
+          65536,
+          73728
+        ],
+        [
+          73728,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 10,
+      "wall_samples": [
+        1.4703077622689307,
+        1.4720047158189118,
+        1.4718807679601014,
+        1.4712531161494553,
+        1.4705466232262552
+      ]
+    },
+    {
+      "source": "block25_q3840_kv4096_qkv8192_mlp8192.json",
+      "sha256": "649dad4df8c5f9a3b2999a72e65b5a50372d0185371f42fca15b6f02274f97d8",
+      "projection_tile": 8192,
+      "ffn_tile": 8192,
+      "predicted_seconds": 1.4923108821982156,
+      "observed_median_seconds": 1.4840302900411189,
+      "time_error_percent": 0.5579799962753595,
+      "predicted_activation_peak_bytes": 3251683328,
+      "observed_torch_peak_bytes": 3261433856,
+      "absolute_memory_error_percent": null,
+      "memory_scope": "Predicted activations exclude weights; observed Torch peak includes all live tensors.",
+      "predicted_core_workspace_bytes": 875708416,
+      "observed_core_workspace_bytes": 875708416,
+      "ffn_ranges": [
+        [
+          0,
+          8192
+        ],
+        [
+          8192,
+          16384
+        ],
+        [
+          16384,
+          24576
+        ],
+        [
+          24576,
+          32768
+        ],
+        [
+          32768,
+          40960
+        ],
+        [
+          40960,
+          49152
+        ],
+        [
+          49152,
+          57344
+        ],
+        [
+          57344,
+          65536
+        ],
+        [
+          65536,
+          73728
+        ],
+        [
+          73728,
+          81159
+        ]
+      ],
+      "observed_ffn_calls": 10,
+      "wall_samples": [
+        1.4825202492065728,
+        1.4831907376646996,
+        1.4845387609675527,
+        1.4842153429053724,
+        1.4840302900411189
+      ]
+    }
+  ],
+  "incremental_memory": {
+    "predicted_growth_bytes": 2224362496,
+    "observed_growth_bytes": 2224363008,
+    "growth_error_percent": -2.301782568991939e-05
+  },
+  "limitations": [
+    "Native full-sequence stage rates are not measured small-tile rates; vector and transfer rates use profiling proxies.",
+    "Primary latency is the unprofiled wall-time JSON. The unstable configuration-file run is retained.",
+    "Eager INT8 workspace is an analytical envelope for the selected implementation, not a measured per-operator sample.",
+    "No absolute activation-only memory error is claimed against whole-process Torch peaks."
+  ]
+}

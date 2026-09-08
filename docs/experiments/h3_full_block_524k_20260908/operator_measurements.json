@@ -1,0 +1,1420 @@
+{
+  "adaln": [
+    {
+      "sample": {
+        "tokens": 1,
+        "seconds": 0.00011097600311040878,
+        "extra_workspace_bytes": 3483648,
+        "kv_tokens": 0,
+        "work": 1548288
+      },
+      "seconds": [
+        0.00011884800344705582,
+        0.00011097600311040878,
+        0.00011302399635314942,
+        0.00010380800068378448,
+        9.90080013871193e-05,
+        0.00011395200341939927,
+        0.00010255999863147736
+      ],
+      "extra_workspace_bytes": [
+        3483648,
+        3483648,
+        3483648,
+        3483648,
+        3483648,
+        3483648,
+        3483648
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; adaln; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "attention": [
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 0.0012773120403289796,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 4096,
+        "work": 240518168576
+      },
+      "seconds": [
+        0.0012916799783706666,
+        0.001283136010169983,
+        0.0012773120403289796,
+        0.001274399995803833,
+        0.0012782399654388428,
+        0.0012714560031890868,
+        0.0012649919986724855
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; attention; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 0.0020903999805450438,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 4096,
+        "work": 450971566080
+      },
+      "seconds": [
+        0.002098623991012573,
+        0.002096287965774536,
+        0.0020974400043487548,
+        0.002084415912628174,
+        0.002081376075744629,
+        0.002088063955307007,
+        0.0020903999805450438
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; attention; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "attention_residual": [
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 4.643199965357781e-05,
+        "extra_workspace_bytes": 10752,
+        "kv_tokens": 0,
+        "work": 11010048
+      },
+      "seconds": [
+        5.263999849557876e-05,
+        5.104000121355057e-05,
+        4.694399982690811e-05,
+        4.5343998819589614e-05,
+        4.643199965357781e-05,
+        4.611200094223022e-05,
+        4.441599920392036e-05
+      ],
+      "extra_workspace_bytes": [
+        10752,
+        10752,
+        10752,
+        10752,
+        10752,
+        10752,
+        10752
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; attention_residual; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 5.8559998869895935e-05,
+        "extra_workspace_bytes": 10752,
+        "kv_tokens": 0,
+        "work": 20643840
+      },
+      "seconds": [
+        6.086400151252747e-05,
+        6.032000109553337e-05,
+        5.923200026154518e-05,
+        5.7151999324560164e-05,
+        5.676800012588501e-05,
+        5.8559998869895935e-05,
+        5.632000043988228e-05
+      ],
+      "extra_workspace_bytes": [
+        10752,
+        10752,
+        10752,
+        10752,
+        10752,
+        10752,
+        10752
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; attention_residual; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "d2d": [
+    {
+      "sample": {
+        "tokens": 256,
+        "seconds": 1.500799972563982e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 2752512
+      },
+      "seconds": [
+        1.8239999189972877e-05,
+        1.5584000386297702e-05,
+        1.603199914097786e-05,
+        1.500799972563982e-05,
+        1.4112000353634358e-05,
+        1.3728000223636627e-05,
+        1.3535999692976475e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 512,
+        "seconds": 1.408000010997057e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 5505024
+      },
+      "seconds": [
+        1.6127999871969224e-05,
+        1.5200000256299973e-05,
+        1.4783999882638455e-05,
+        1.3791999779641629e-05,
+        1.3791999779641629e-05,
+        1.408000010997057e-05,
+        1.327999960631132e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 768,
+        "seconds": 1.4655999839305878e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 8257536
+      },
+      "seconds": [
+        1.5680000185966492e-05,
+        1.5296000055968763e-05,
+        1.571200042963028e-05,
+        1.4655999839305878e-05,
+        1.44640002399683e-05,
+        1.436800044029951e-05,
+        1.4208000153303147e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 1024,
+        "seconds": 1.5552000142633914e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 11010048
+      },
+      "seconds": [
+        1.8783999606966973e-05,
+        1.6287999227643013e-05,
+        1.5807999297976493e-05,
+        1.5104000456631184e-05,
+        1.5552000142633914e-05,
+        1.4720000326633453e-05,
+        1.4944000169634819e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 1280,
+        "seconds": 1.484800036996603e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 13762560
+      },
+      "seconds": [
+        1.8335999920964242e-05,
+        1.500799972563982e-05,
+        1.484800036996603e-05,
+        1.4592000283300876e-05,
+        1.500799972563982e-05,
+        1.375999953597784e-05,
+        1.3567999936640263e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 1536,
+        "seconds": 1.456000003963709e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 16515072
+      },
+      "seconds": [
+        1.8912000581622124e-05,
+        1.5647999942302704e-05,
+        1.4495999552309512e-05,
+        1.6192000359296797e-05,
+        1.456000003963709e-05,
+        1.4336000196635724e-05,
+        1.4495999552309512e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 1792,
+        "seconds": 1.4399999752640724e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 19267584
+      },
+      "seconds": [
+        1.900799944996834e-05,
+        1.6704000532627105e-05,
+        1.5328000299632548e-05,
+        1.3952000066637992e-05,
+        1.4047999866306781e-05,
+        1.4399999752640724e-05,
+        1.3919999822974206e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 1.5680000185966492e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        1.5680000185966492e-05,
+        1.865600049495697e-05,
+        1.548799965530634e-05,
+        1.8239999189972877e-05,
+        1.5584000386297702e-05,
+        1.5584000386297702e-05,
+        1.635199971497059e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 2304,
+        "seconds": 1.6704000532627105e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 24772608
+      },
+      "seconds": [
+        1.6224000602960586e-05,
+        1.942400075495243e-05,
+        1.8112000077962876e-05,
+        1.7599999904632568e-05,
+        1.6287999227643013e-05,
+        1.539199985563755e-05,
+        1.6704000532627105e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 2560,
+        "seconds": 1.8400000408291815e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 27525120
+      },
+      "seconds": [
+        1.801599934697151e-05,
+        2.0896000787615776e-05,
+        2.009600028395653e-05,
+        1.8815999850630762e-05,
+        1.79200004786253e-05,
+        1.8400000408291815e-05,
+        1.7823999747633934e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 2816,
+        "seconds": 1.9680000841617586e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 30277632
+      },
+      "seconds": [
+        1.9680000841617586e-05,
+        2.223999984562397e-05,
+        2.009600028395653e-05,
+        2.0735999569296837e-05,
+        1.8303999677300454e-05,
+        1.8783999606966973e-05,
+        1.7503999173641206e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3072,
+        "seconds": 2.0287999883294106e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 33030144
+      },
+      "seconds": [
+        1.9551999866962432e-05,
+        2.54720002412796e-05,
+        2.08320003002882e-05,
+        2.0959999412298203e-05,
+        1.948799937963486e-05,
+        2.0287999883294106e-05,
+        2.022399939596653e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3328,
+        "seconds": 2.0511999726295472e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 35782656
+      },
+      "seconds": [
+        2.1471999585628508e-05,
+        2.179200015962124e-05,
+        2.0511999726295472e-05,
+        2.08320003002882e-05,
+        2.0416000857949256e-05,
+        2.0255999639630318e-05,
+        2.0031999796628952e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3584,
+        "seconds": 2.2528000175952913e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 38535168
+      },
+      "seconds": [
+        2.2304000332951547e-05,
+        2.5439999997615813e-05,
+        2.2975999861955644e-05,
+        2.3072000592947006e-05,
+        2.2528000175952913e-05,
+        2.2304000332951547e-05,
+        2.223999984562397e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 2.2784000262618063e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 41287680
+      },
+      "seconds": [
+        2.2784000262618063e-05,
+        2.54720002412796e-05,
+        2.3264000192284583e-05,
+        2.175999991595745e-05,
+        2.2048000246286393e-05,
+        2.2784000262618063e-05,
+        2.2528000175952913e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 2.4512000381946565e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 44040192
+      },
+      "seconds": [
+        2.3072000592947006e-05,
+        2.9472000896930694e-05,
+        2.6240000501275063e-05,
+        2.4127999320626257e-05,
+        2.4671999737620354e-05,
+        2.4512000381946565e-05,
+        2.2943999618291856e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 8.079999685287475e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 58720256
+      },
+      "seconds": [
+        8.003199845552444e-05,
+        8.079999685287475e-05,
+        8.179199695587158e-05,
+        8.1727996468544e-05,
+        8.051200211048127e-05,
+        8.1216000020504e-05,
+        7.903999835252761e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2d; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "d2h": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.0012656320333480835,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 44040192
+      },
+      "seconds": [
+        0.001259328007698059,
+        0.0012731839418411255,
+        0.0012807040214538575,
+        0.0012889599800109863,
+        0.001256767988204956,
+        0.0012368960380554198,
+        0.0012656320333480835
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2h; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.001679263949394226,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 58720256
+      },
+      "seconds": [
+        0.001679263949394226,
+        0.0016715840101242066,
+        0.0016559360027313232,
+        0.001695263981819153,
+        0.0016615359783172608,
+        0.0016817920207977295,
+        0.0016945600509643555
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; d2h; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "fc1": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.009405055999755859,
+        "extra_workspace_bytes": 1240252416,
+        "kv_tokens": 0,
+        "work": 1262720385024
+      },
+      "seconds": [
+        0.009426112174987794,
+        0.009405344009399415,
+        0.009405055999755859,
+        0.009403200149536132,
+        0.009389280319213867,
+        0.009396832466125488,
+        0.009412863731384277
+      ],
+      "extra_workspace_bytes": [
+        1240252416,
+        1240252416,
+        1240252416,
+        1240252416,
+        1240252416,
+        1240252416,
+        1240252416
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; fc1; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "ffn_residual": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 6.1023999005556104e-05,
+        "extra_workspace_bytes": 10752,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        6.1023999005556104e-05,
+        6.169600039720535e-05,
+        6.630399823188782e-05,
+        6.176000088453293e-05,
+        5.980800092220306e-05,
+        5.9296000748872755e-05,
+        6.067200005054474e-05
+      ],
+      "extra_workspace_bytes": [
+        10752,
+        10752,
+        10752,
+        10752,
+        10752,
+        10752,
+        10752
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; ffn_residual; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "finalize": [
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 4.11520004272461e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 14680064
+      },
+      "seconds": [
+        5.427199974656105e-05,
+        4.6528000384569166e-05,
+        4.5823998749256134e-05,
+        4.11520004272461e-05,
+        4.0543999522924424e-05,
+        3.9776001125574114e-05,
+        3.817600011825561e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; finalize; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 0.00011059200018644332,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 27525120
+      },
+      "seconds": [
+        0.00010892800241708755,
+        0.0001117120012640953,
+        0.00011059200018644332,
+        0.00010924799740314484,
+        0.00011158400028944015,
+        0.00010806400328874588,
+        0.00011078400164842605
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; finalize; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "h2d": [
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 0.0007299519777297974,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        0.0008085439801216126,
+        0.000759552001953125,
+        0.000758624017238617,
+        0.0007299519777297974,
+        0.000729695975780487,
+        0.0007104319930076599,
+        0.0007138879895210266
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 0.0009052159786224366,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 29360128
+      },
+      "seconds": [
+        0.0009089919924736023,
+        0.000900991976261139,
+        0.0009136319756507873,
+        0.0009052159786224366,
+        0.0009096639752388001,
+        0.0008956159949302673,
+        0.0009010239839553834
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 0.0012296960353851318,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 41287680
+      },
+      "seconds": [
+        0.0012296960353851318,
+        0.001240831971168518,
+        0.0012275199890136718,
+        0.001272096037864685,
+        0.0012923840284347534,
+        0.0012238399982452393,
+        0.001221343994140625
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 0.0016476160287857056,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 55050240
+      },
+      "seconds": [
+        0.0016620800495147706,
+        0.0016476160287857056,
+        0.0016480640172958374,
+        0.0016143679618835448,
+        0.0016810560226440429,
+        0.0015951679944992065,
+        0.001629631996154785
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 1.8912000581622124e-05,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 49152
+      },
+      "seconds": [
+        2.2911999374628067e-05,
+        2.0896000787615776e-05,
+        1.8815999850630762e-05,
+        1.8271999433636665e-05,
+        1.8912000581622124e-05,
+        1.948799937963486e-05,
+        1.852799952030182e-05
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.0013249280452728271,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 44040192
+      },
+      "seconds": [
+        0.001387231945991516,
+        0.0013249280452728271,
+        0.0013097920417785645,
+        0.0013274879455566406,
+        0.0013511040210723876,
+        0.001307968020439148,
+        0.0013155839443206787
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.0017295039892196655,
+        "extra_workspace_bytes": 0,
+        "kv_tokens": 0,
+        "work": 58720256
+      },
+      "seconds": [
+        0.0017546559572219848,
+        0.0017706559896469116,
+        0.0017561919689178466,
+        0.0017146240472793578,
+        0.0017295039892196655,
+        0.0017191359996795654,
+        0.0017074559926986694
+      ],
+      "extra_workspace_bytes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; h2d; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "modulate1": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 9.440000355243683e-05,
+        "extra_workspace_bytes": 21504,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        9.779199957847595e-05,
+        9.692800045013428e-05,
+        9.440000355243683e-05,
+        9.222400188446045e-05,
+        0.00010009600222110748,
+        9.433600306510926e-05,
+        9.427200257778168e-05
+      ],
+      "extra_workspace_bytes": [
+        21504,
+        21504,
+        21504,
+        21504,
+        21504,
+        21504,
+        21504
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; modulate1; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "modulate2": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 9.424000233411789e-05,
+        "extra_workspace_bytes": 21504,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        9.561599791049957e-05,
+        9.632000327110291e-05,
+        9.679999947547912e-05,
+        9.424000233411789e-05,
+        9.39520001411438e-05,
+        9.350399672985077e-05,
+        9.308800101280212e-05
+      ],
+      "extra_workspace_bytes": [
+        21504,
+        21504,
+        21504,
+        21504,
+        21504,
+        21504,
+        21504
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; modulate2; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "norm1": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 4.787199944257736e-05,
+        "extra_workspace_bytes": 16384,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        5.6095998734235766e-05,
+        5.577600002288818e-05,
+        5.14880008995533e-05,
+        4.787199944257736e-05,
+        4.662400111556053e-05,
+        4.662400111556053e-05,
+        4.668800160288811e-05
+      ],
+      "extra_workspace_bytes": [
+        16384,
+        16384,
+        16384,
+        16384,
+        16384,
+        16384,
+        16384
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; norm1; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "norm2": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 4.6080000698566435e-05,
+        "extra_workspace_bytes": 16384,
+        "kv_tokens": 0,
+        "work": 22020096
+      },
+      "seconds": [
+        5.744000151753426e-05,
+        4.8448000103235245e-05,
+        5.142400041222572e-05,
+        4.5791998505592346e-05,
+        4.6080000698566435e-05,
+        4.59199994802475e-05,
+        4.489599913358688e-05
+      ],
+      "extra_workspace_bytes": [
+        16384,
+        16384,
+        16384,
+        16384,
+        16384,
+        16384,
+        16384
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; norm2; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "out": [
+    {
+      "sample": {
+        "tokens": 2048,
+        "seconds": 0.0014347200393676758,
+        "extra_workspace_bytes": 220209152,
+        "kv_tokens": 0,
+        "work": 157840048128
+      },
+      "seconds": [
+        0.001452255964279175,
+        0.0014383039474487305,
+        0.0014326720237731933,
+        0.0014388159513473511,
+        0.0014251199960708617,
+        0.0014347200393676758,
+        0.001426367998123169
+      ],
+      "extra_workspace_bytes": [
+        220209152,
+        220209152,
+        220209152,
+        220209152,
+        220209152,
+        220209152,
+        220209152
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; out; real H3 block25 checkpoint; before full-block evaluation"
+    },
+    {
+      "sample": {
+        "tokens": 3840,
+        "seconds": 0.0023850879669189452,
+        "extra_workspace_bytes": 412892160,
+        "kv_tokens": 0,
+        "work": 295950090240
+      },
+      "seconds": [
+        0.0023869121074676512,
+        0.002385312080383301,
+        0.0023808960914611815,
+        0.0023850879669189452,
+        0.002384320020675659,
+        0.002380928039550781,
+        0.0023868160247802733
+      ],
+      "extra_workspace_bytes": [
+        412892160,
+        412892160,
+        412892160,
+        412892160,
+        412892160,
+        412892160,
+        412892160
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; out; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "qk_rope": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.001214176058769226,
+        "extra_workspace_bytes": 249561088,
+        "kv_tokens": 0,
+        "work": 58720256
+      },
+      "seconds": [
+        0.0012295360565185546,
+        0.0012164160013198853,
+        0.001214176058769226,
+        0.0012147519588470458,
+        0.0012132480144500732,
+        0.0012111999988555907,
+        0.0012138559818267822
+      ],
+      "extra_workspace_bytes": [
+        249561088,
+        249561088,
+        249561088,
+        249561088,
+        249561088,
+        249561088,
+        249561088
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; qk_rope; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "qkv": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.007106847763061523,
+        "extra_workspace_bytes": 1181532160,
+        "kv_tokens": 0,
+        "work": 947040288768
+      },
+      "seconds": [
+        0.007136703968048096,
+        0.007118207931518555,
+        0.007106847763061523,
+        0.007111008167266846,
+        0.007104479789733887,
+        0.007104383945465088,
+        0.0071047677993774415
+      ],
+      "extra_workspace_bytes": [
+        1181532160,
+        1181532160,
+        1181532160,
+        1181532160,
+        1181532160,
+        1181532160,
+        1181532160
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; qkv; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "rope_angles": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 5.417599901556969e-05,
+        "extra_workspace_bytes": 1572864,
+        "kv_tokens": 0,
+        "work": 393216
+      },
+      "seconds": [
+        6.447999924421311e-05,
+        6.339199841022491e-05,
+        5.552000179886818e-05,
+        5.369599908590317e-05,
+        5.315199866890907e-05,
+        5.152000114321709e-05,
+        5.417599901556969e-05
+      ],
+      "extra_workspace_bytes": [
+        1572864,
+        1572864,
+        1572864,
+        1572864,
+        1572864,
+        1572864,
+        1572864
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; rope_angles; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "rope_table": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 6.595200300216675e-05,
+        "extra_workspace_bytes": 4718592,
+        "kv_tokens": 0,
+        "work": 393216
+      },
+      "seconds": [
+        9.238400310277939e-05,
+        7.449600100517272e-05,
+        6.812799721956253e-05,
+        6.595200300216675e-05,
+        6.435199826955795e-05,
+        6.521599739789963e-05,
+        6.547199934720993e-05
+      ],
+      "extra_workspace_bytes": [
+        4718592,
+        4718592,
+        4718592,
+        4718592,
+        4718592,
+        4718592,
+        4718592
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; rope_table; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ],
+  "swiglu_fc2": [
+    {
+      "sample": {
+        "tokens": 4096,
+        "seconds": 0.005053247928619385,
+        "extra_workspace_bytes": 528498688,
+        "kv_tokens": 0,
+        "work": 631360192512
+      },
+      "seconds": [
+        0.00505782413482666,
+        0.005053247928619385,
+        0.005048480033874512,
+        0.00505295991897583,
+        0.00505404806137085,
+        0.005052256107330322,
+        0.005054336071014404
+      ],
+      "extra_workspace_bytes": [
+        528498688,
+        528498688,
+        528498688,
+        528498688,
+        528498688,
+        528498688,
+        528498688
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "torch_version": "2.10.0+cu128",
+      "provenance": "GPU3 exact-shape calibration; swiglu_fc2; real H3 block25 checkpoint; before full-block evaluation"
+    }
+  ]
+}

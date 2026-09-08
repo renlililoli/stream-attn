@@ -1,0 +1,368 @@
+"""Consumer-side, real-checkpoint H3 validation. No framework code is added to core."""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import statistics
+import struct
+import sys
+import time
+import traceback
+from types import SimpleNamespace
+
+OUT = Path('/artifacts')
+CHECKPOINT = Path('/models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors')
+TOKENS = 524288
+BLOCK = 25
+Q, KV, PROJECTION, FFN = 3840, 4096, 4096, 4096
+
+
+def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def save(path, data):
+    path = Path(path)
+    temp = path.with_suffix(path.suffix+'.tmp')
+    temp.write_text(json.dumps(data,indent=2,allow_nan=False)+'\n')
+    os.replace(temp,path)
+def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def log(text): print(utc(),text,flush=True)
+
+
+def fingerprint():
+    with CHECKPOINT.open('rb') as f:
+        size = struct.unpack('<Q',f.read(8))[0]
+        raw = f.read(size)
+        header = json.loads(raw)
+        hasher = hashlib.sha256()
+        keys=[]
+        for key,item in sorted(header.items()):
+            if not key.startswith(f'blocks.{BLOCK}.'): continue
+            begin,end = item['data_offsets']
+            f.seek(8+size+begin)
+            left=end-begin
+            hasher.update(key.encode())
+            while left:
+                chunk=f.read(min(left,8*2**20)); hasher.update(chunk); left-=len(chunk)
+            keys.append({'key':key,'dtype':item['dtype'],'shape':item['shape']})
+    return {'path':str(CHECKPOINT),'file_bytes':CHECKPOINT.stat().st_size,
+            'header_sha256':hashlib.sha256(raw).hexdigest(),'block_sha256':hasher.hexdigest(),'tensors':keys}
+
+
+def initialize():
+    import comfy_aimdo.control
+    if not comfy_aimdo.control.init(nvml_pressure=False):
+        raise RuntimeError('aimdo initialization failed')
+    sys.argv=[sys.argv[0]]
+    sys.path.insert(0,'/opt/ComfyUI')
+    os.chdir('/opt/ComfyUI')
+    import torch
+    import comfy.sd
+    import comfy.ops
+    from comfy import memory_management,model_management,model_patcher
+    from comfyui_seqattn import minimax_h3 as adapter
+    from seqattn_core import StreamingAttentionConfig,build_attention_plan
+    from seqattn_core.dit.minimax_h3 import H3Config,build_h3_runner
+    from seqattn_core.estimation import H3BlockShape,H3CallbackConfig,H3ExecutionConfig
+    if not torch.cuda.is_available(): raise RuntimeError('CUDA is unavailable')
+    torch.set_num_threads(1)
+    torch.set_grad_enabled(False)
+    devices=model_management.get_all_torch_devices()
+    if not comfy_aimdo.control.init_devices((d.index,0) for d in devices):
+        raise RuntimeError('aimdo device initialization failed')
+    model_patcher.CoreModelPatcher=model_patcher.ModelPatcherDynamic
+    memory_management.aimdo_enabled=True
+    log('Loading real checkpoint')
+    started=time.perf_counter()
+    patcher=comfy.sd.load_diffusion_model(str(CHECKPOINT))
+    model_management.load_models_gpu([patcher])
+    model=patcher.model.diffusion_model
+    block=model.blocks[BLOCK]
+    device=torch.device(patcher.load_device)
+    modules=[]; seen=set()
+    for module in block.modules():
+        if hasattr(module,'_v') and id(module) not in seen:
+            modules.append(module); seen.add(id(module))
+    stream=comfy.ops.cast_modules_with_vbar(modules,None,device,None,True)
+    if not model_management.args.fast_disk:
+        size=sum(memory_management.vram_aligned_size([m.weight,m.bias]) for m in modules)
+        model_management.ensure_pin_registerable(size)
+    if stream is not None: stream.synchronize()
+    torch.cuda.synchronize(device)
+    log(f'Block weights prepared in {time.perf_counter()-started:.3f}s')
+    dtype=torch.bfloat16
+    if hasattr(model,'adaln_t_table'):
+        table=model.adaln_t_table
+        temb=table[table.shape[0]//2:table.shape[0]//2+1].to(device=device,dtype=torch.float32).contiguous()
+    else:
+        temb=torch.zeros((1,block.adaln_proj.linear.weight.shape[1]),device=device,dtype=torch.float32)
+    modulation=block.adaln_proj(temb)
+    torch.cuda.synchronize(device)
+    shape=H3BlockShape((TOKENS,),int(model.hidden_size),int(block.mlp.fc2.weight.shape[1]),
+                       int(block.attn.heads),int(block.attn.head_dim),
+                       timestep_features=temb.shape[1],modulation_rows=modulation[0].shape[0],
+                       modulation_modalities=block.adaln_proj.modalities,
+                       modulation_element_bytes=modulation[0].element_size(),rope_dim=model.rope.inv_freq.numel()*6)
+    config=H3ExecutionConfig(Q,KV,PROJECTION,FFN)
+    callbacks=H3CallbackConfig(variant='modulated',linear_memory='profile',fused_swiglu_fc2=True,
+                               compute_modulation=True,per_channel_weight_scale=True)
+    plan=build_attention_plan(q_heads=shape.heads,kv_heads=shape.heads,head_dim=shape.head_dim,dtype=dtype,
+                              device=device,max_q_tokens=TOKENS,max_kv_tokens=TOKENS,
+                              config=StreamingAttentionConfig(backend='triton',q_chunk_tokens=Q,kv_chunk_tokens=KV,
+                                                              output_mode='device_consumer'))
+    runner=build_h3_runner(plan,hidden_features=shape.hidden_features,
+                           config=H3Config(execution_mode='materialized',projection_tile_tokens=PROJECTION,ffn_tile_tokens=FFN))
+    return SimpleNamespace(torch=torch,comfy_ops=comfy.ops,adapter=adapter,model=model,block=block,
+                           device=device,dtype=dtype,shape=shape,config=config,callbacks=callbacks,
+                           plan=plan,runner=runner,temb=temb,modulation=modulation,patcher=patcher)
+
+
+def environment(ctx):
+    import importlib.metadata
+    import comfyui_version
+    import triton
+    status=Path('/proc/self/status').read_text().splitlines()
+    return {'utc':utc(),'gpu':ctx.torch.cuda.get_device_name(ctx.device),
+            'gpu_uuid':str(ctx.torch.cuda.get_device_properties(ctx.device).uuid),
+            'torch':ctx.torch.__version__,'cuda':ctx.torch.version.cuda,'triton':triton.__version__,
+            'comfyui':comfyui_version.__version__,'comfy_kitchen':importlib.metadata.version('comfy-kitchen'),
+            'comfy_aimdo':importlib.metadata.version('comfy-aimdo'),'cpu_affinity':sorted(os.sched_getaffinity(0)),
+            'memory_policy':[s for s in status if s.startswith(('Mems_allowed_list','Cpus_allowed_list'))],
+            'numa_policy':'numactl --interleave=5,7, CPU affinity 160-191,416-447',
+            'driver_sha256':sha('/artifacts/driver.py')}
+
+
+def update_fn(ctx,q,k,v,state,initialize=False):
+    from seqattn_core.kernels import update_attention_state
+    def run():
+        update_attention_state(q,k,v,*state,q_tokens=q.shape[0],kv_tokens=k.shape[0],q_local_offset=0,
+            kv_local_offset=0,causal_shift=0,softmax_scale=ctx.shape.head_dim**-.5,causal=False,initialize=initialize,
+            block_m=ctx.plan.block_m,block_n=ctx.plan.block_n,num_warps=ctx.plan.num_warps,num_stages=ctx.plan.num_stages)
+    return run
+
+
+def attention_tensors(ctx,tokens,kv):
+    t=ctx.torch; h,d=ctx.shape.heads,ctx.shape.head_dim
+    q=t.randn(tokens,h,d,device=ctx.device,dtype=ctx.dtype)
+    k=t.randn(kv,h,d,device=ctx.device,dtype=ctx.dtype);v=t.randn_like(k)
+    state=(t.empty(tokens,h,device=ctx.device,dtype=t.float32),t.empty(tokens,h,device=ctx.device,dtype=t.float32),
+           t.empty(tokens,h,d,device=ctx.device,dtype=t.float32))
+    update_fn(ctx,q,k,v,state,True)();t.cuda.synchronize()
+    return q,k,v,state
+
+
+def factory(ctx,key,tokens,work,kv_tokens,load):
+    t=ctx.torch;s=ctx.shape;a=s.attention_features;h=s.hidden_features;f=s.ffn_features
+    rand=lambda *dims:t.randn(*dims,device=ctx.device,dtype=ctx.dtype)*.02
+    if key in ('h2d','d2h','d2d'):
+        size=int(work)
+        if key=='h2d':
+            pageable=size==tokens*3*4
+            src=t.empty(size,dtype=t.uint8,device='cpu',pin_memory=not pageable).fill_(3)
+            dst=t.empty(size,dtype=t.uint8,device=ctx.device)
+            def copy():
+                if not pageable:
+                    with t.cuda.stream(load.stream):
+                        load.update();load.update()
+                dst.copy_(src,non_blocking=not pageable)
+                return dst
+            return copy,0
+        if key=='d2h':
+            src=t.empty(size,dtype=t.uint8,device=ctx.device)
+            dst=t.empty(size,dtype=t.uint8,device='cpu',pin_memory=True)
+            return lambda:dst.copy_(src,non_blocking=True),0
+        width=size//(tokens*2)
+        if width==a:
+            src=rand(tokens,3*a)[:,:a];dst=t.empty(tokens,a,device=ctx.device,dtype=ctx.dtype)
+        else:
+            src=rand(tokens,width);dst=t.empty_like(src)
+        return lambda:dst.copy_(src),0
+    if key=='attention':
+        q,k,v,state=attention_tensors(ctx,tokens,kv_tokens)
+        return update_fn(ctx,q,k,v,state,False),0
+    if key=='finalize':
+        from seqattn_core.kernels import finalize_attention
+        accum=t.randn(tokens,s.heads,s.head_dim,device=ctx.device,dtype=t.float32)
+        sums=t.ones(tokens,s.heads,device=ctx.device,dtype=t.float32)
+        dst=t.empty(tokens,s.heads,s.head_dim,device=ctx.device,dtype=ctx.dtype)
+        return lambda:finalize_attention(accum,sums,dst,q_tokens=tokens),0
+    if key=='adaln': return lambda:ctx.block.adaln_proj(ctx.temb),6*s.modulation_rows*h*s.modulation_element_bytes
+    if key in ('qkv','out','fc1'):
+        module,width,outwidth={'qkv':(ctx.block.attn.qkv_proj,h,3*a),
+                               'out':(ctx.block.attn.out_proj,a,h),
+                               'fc1':(ctx.block.mlp.fc1,h,2*f)}[key]
+        x=rand(tokens,width)
+        return lambda:module(x),tokens*outwidth*2
+    if key=='swiglu_fc2':
+        x=rand(tokens,2*f)
+        return lambda:ctx.comfy_ops.linear_input_act(ctx.block.mlp.fc2,x,'swiglu'),tokens*h*2
+    if key in ('norm1','norm2'):
+        x=rand(tokens,h);module=getattr(ctx.block,key)
+        return lambda:module(x),tokens*h*2
+    if key in ('modulate1','modulate2'):
+        x=rand(tokens,h);offset=0 if key=='modulate1' else 3
+        shift,scale=ctx.modulation[offset:offset+2]
+        return lambda:ctx.adapter._modulate_tile(x,shift,scale,[(0,tokens,0)],0,tokens),0
+    if key in ('attention_residual','ffn_residual'):
+        x=rand(tokens,h);y=rand(tokens,h);gate=ctx.modulation[2 if key=='attention_residual' else 5]
+        return lambda:ctx.adapter._gate_tile(x,y,gate,[(0,tokens,0)],0,tokens),0
+    if key=='rope_angles':
+        positions=t.zeros(tokens,3,device=ctx.device,dtype=t.float32)
+        positions[:,0]=t.arange(tokens,device=ctx.device)
+        return lambda:ctx.model.rope_freqs(positions,ctx.device),tokens*s.rope_dim*4
+    if key=='rope_table':
+        from comfy.ldm.minimax.model import rope_rotation_table
+        angles=t.randn(tokens,s.rope_dim,device=ctx.device,dtype=t.float32)
+        return lambda:rope_rotation_table(angles,ctx.dtype),tokens*2*s.rope_dim*2
+    if key=='qk_rope':
+        import comfy.quant_ops
+        packed=rand(tokens,3*a)
+        q,k,_=packed.split(a,dim=-1)
+        q=q.view(1,tokens,s.heads,s.head_dim);k=k.view_as(q)
+        positions=t.zeros(tokens,3,dtype=t.float64)
+        rope=ctx.adapter._rope_for_tile(ctx.block,positions,ctx.model,q[0])
+        qw=ctx.adapter.comfy.model_management.cast_to(ctx.block.attn.q_norm.weight,device=ctx.device)
+        kw=ctx.adapter.comfy.model_management.cast_to(ctx.block.attn.k_norm.weight,device=ctx.device)
+        return lambda:comfy.quant_ops.ck.rms_rope_split_half_(q,k,rope,qw,kw,epsilon=ctx.block.attn.q_norm.eps,rot_dim=s.rope_dim),0
+    raise ValueError('unhandled operator '+key)
+
+
+def calibrate(ctx):
+    from dataclasses import asdict,replace
+    from seqattn_core.estimation import (H3DeviceProfile,H3OperatorProfile,MemoryPool,RateProfile,
+                                         build_h3_block_execution,measure_cuda_h3_operator,schedule_execution)
+    seen={}
+    class Recorder(H3OperatorProfile):
+        def resolve(self,tokens,work,kv_tokens=0):
+            seen.setdefault(self.provenance,set()).add((tokens,work,kv_tokens))
+            return super().resolve(tokens,work,kv_tokens)
+    r=RateProfile('shape enumeration only',1e12,('compute',))
+    io=RateProfile('shape enumeration only',1e10,('H2D',),kind='io')
+    proto=H3DeviceProfile.from_rates('enumerate',device_pool=MemoryPool('GPU.HBM',allocation_alignment_bytes=512),
+        host_pool=MemoryPool('host.DRAM'),attention=r,gemm=r,vector=r,h2d=io,
+        d2h=replace(io,resources=('D2H',)),d2d=r)
+    operators={key:Recorder(rate=op.rate,provenance=key) for key,op in proto.operators.items()}
+    operators['swiglu_fc2']=Recorder(rate=r,provenance='swiglu_fc2')
+    proto=replace(proto,operators=operators)
+    build_h3_block_execution(ctx.shape,ctx.config,proto,callbacks=ctx.callbacks)
+    log(f'Calibrating {sum(map(len,seen.values()))} exact operator shapes')
+    bg_q,bg_k,bg_v,bg_state=attention_tensors(ctx,Q,KV)
+    load=SimpleNamespace(stream=ctx.torch.cuda.Stream(),update=update_fn(ctx,bg_q,bg_k,bg_v,bg_state,False))
+    measured={};result_ops={}
+    lease_modules=(ctx.block.attn.qkv_proj,ctx.block.attn.out_proj,ctx.block.mlp.fc1,ctx.block.mlp.fc2,
+                   ctx.block.norm1,ctx.block.norm2,ctx.block.attn.q_norm,ctx.block.attn.k_norm,ctx.block.adaln_proj.linear)
+    with ctx.adapter._lease_group(*lease_modules):
+        for key,shapes in sorted(seen.items()):
+            samples=[];measurements=[]
+            for tokens,work,kv in sorted(shapes):
+                op,outbytes=factory(ctx,key,tokens,work,kv,load)
+                with ctx.torch.inference_mode():
+                    measurement=measure_cuda_h3_operator(op,tokens=tokens,kv_tokens=kv,work=work,
+                        output_allocation_bytes=outbytes,device=ctx.device,warmup=2,repeats=7,
+                        provenance=f'GPU3 exact-shape calibration; {key}; real H3 block25 checkpoint; before full-block evaluation')
+                samples.append(measurement.sample);measurements.append(asdict(measurement))
+                del op
+            result_ops[key]=H3OperatorProfile(samples=tuple(samples),provenance=f'exact-shape CUDA-event calibration: {key}')
+            measured[key]=measurements
+            save(OUT/'operator_measurements.partial.json',measured)
+            log(f'calibrated {key}: {len(samples)} shapes')
+    profile=replace(proto,name='RTX 5090 GPU3 real H3 524K calibration',operators=result_ops).for_shape(ctx.shape)
+    profile_json=profile.to_dict()
+    save(OUT/'profile.json',profile_json)
+    save(OUT/'operator_measurements.json',measured)
+    spec=build_h3_block_execution(ctx.shape,ctx.config,profile,callbacks=ctx.callbacks)
+    trace=schedule_execution(spec)
+    from seqattn_core.estimation import memory_statistics
+    prediction={'status':'frozen','created_at_utc':utc(),'before_full_block_measurement':True,
+        'shape':asdict(ctx.shape),'execution':asdict(ctx.config),'callbacks':asdict(ctx.callbacks),
+        'profile_sha256':sha(OUT/'profile.json'),'predicted_seconds':trace.duration_seconds,
+        'metadata':spec.metadata,'predicted_allocated_bytes':memory_statistics(trace).pools[0].peak_bytes,
+        'environment':environment(ctx),'checkpoint':fingerprint(),
+        'calibration_protocol':{'warmup':2,'repeats':7,'H2D':'concurrent with two same-shape resident attention updates; positions pageable','time':'median CUDA events','memory':'maximum private allocator workspace'},
+        'notes':['Only exact-shape samples are used; no unprofiled full-block time was used for calibration.',
+                 'Attention samples use steady update kernels; first-KV initialization is a distinct runtime specialization.']}
+    save(OUT/'prediction.json',prediction)
+    log(f'FROZEN PREDICTION: {trace.duration_seconds:.6f}s')
+
+
+def run(ctx):
+    from dataclasses import asdict
+    from seqattn_core.dit.minimax_h3 import H3DiTStats,H3SequenceMeta
+    from seqattn_core.estimation import H3DeviceProfile,build_h3_block_execution,schedule_execution
+    prediction= json.loads((OUT/'prediction.json').read_text())
+    assert sha(OUT/'profile.json')==prediction['profile_sha256']
+    assert asdict(ctx.shape)==prediction['shape'] or json.loads(json.dumps(asdict(ctx.shape)))==prediction['shape']
+    checkpoint=fingerprint()
+    assert checkpoint['block_sha256']==prediction['checkpoint']['block_sha256']
+    t=ctx.torch
+    layout=SimpleNamespace(position_ids=t.zeros(TOKENS,3,dtype=t.float64))
+    layout.position_ids[:,0]=t.arange(TOKENS,dtype=t.float64)
+    mod_segments=[(0,TOKENS,0)]
+    log('Allocating and populating pinned hidden input/reset template')
+    generator=t.Generator(device='cpu').manual_seed(1234)
+    baseline=t.empty(TOKENS,ctx.shape.hidden_features,dtype=ctx.dtype,pin_memory=True)
+    baseline.normal_(mean=0,std=.02,generator=generator)
+    working=t.empty_like(baseline,pin_memory=True)
+    meta=H3SequenceMeta(t.tensor([0,TOKENS],dtype=t.int32))
+    def full_block(stats):
+        projection,ops=ctx.adapter._materialized_block_parts(ctx.model,ctx.block,BLOCK,layout,mod_segments,ctx.temb,{})
+        return ctx.runner.run_block_(working,meta,projection,ops,softmax_scale=ctx.shape.head_dim**-.5,stats=stats)
+    result={'status':'running','started_at_utc':utc(),'tokens':TOKENS,'block_index':BLOCK,
+            'prediction_sha256':sha(OUT/'prediction.json'),'profile_sha256':sha(OUT/'profile.json'),
+            'predicted_seconds':prediction['predicted_seconds'],'environment':environment(ctx),
+            'checkpoint':checkpoint,'shape':asdict(ctx.shape),'execution':asdict(ctx.config),
+            'callback_variant':'modulated real production callbacks; no LoRA, one attention segment',
+            'conditioning':'fixed checkpoint midpoint adaln basis; all tokens use modulation row 0',
+            'reset_template_bytes_excluded_from_operator':baseline.numel()*baseline.element_size(),
+            'warmup':[],'records':[]}
+    for index in range(2):
+        working.copy_(baseline);t.cuda.synchronize(ctx.device)
+        stats=H3DiTStats();start=time.perf_counter()
+        full_block(stats);t.cuda.synchronize(ctx.device)
+        elapsed=time.perf_counter()-start
+        result['warmup'].append({'iteration':index,'seconds':elapsed,'stats':stats.as_dict()})
+        save(OUT/'measurement.json',result);log(f'Warmup {index+1}/2: {elapsed:.6f}s')
+    t.cuda.reset_peak_memory_stats(ctx.device)
+    indices=[0,TOKENS//4,TOKENS//2,3*TOKENS//4,TOKENS-1]
+    for index in range(3):
+        working.copy_(baseline);t.cuda.synchronize(ctx.device)
+        stats=H3DiTStats();begin,end=t.cuda.Event(enable_timing=True),t.cuda.Event(enable_timing=True)
+        begin.record();start=time.perf_counter()
+        full_block(stats);end.record();t.cuda.synchronize(ctx.device)
+        elapsed=time.perf_counter()-start
+        signature=working[indices,:8].float().tolist()
+        result['records'].append({'repeat':index,'wall_seconds':elapsed,'cuda_seconds':begin.elapsed_time(end)/1000,
+                                   'stats':stats.as_dict(),'output_signature':signature})
+        save(OUT/'measurement.json',result);log(f'Measured {index+1}/3: {elapsed:.6f}s')
+    log('Checking complete output finiteness outside timed region')
+    finite=all(bool(t.isfinite(working[start:start+8192]).all()) for start in range(0,TOKENS,8192))
+    walls=[r['wall_seconds'] for r in result['records']]
+    result.update(status='success' if finite else 'nonfinite_output',finished_at_utc=utc(),all_output_finite=finite,
+                  signatures_equal=all(r['output_signature']==result['records'][0]['output_signature'] for r in result['records']),
+                  summary={'wall_mean_seconds':statistics.mean(walls),'wall_median_seconds':statistics.median(walls),
+                           'wall_min_seconds':min(walls),'wall_max_seconds':max(walls),
+                           'prediction_error_percent':100*(prediction['predicted_seconds']/statistics.median(walls)-1),
+                           'torch_peak_allocated_bytes':t.cuda.max_memory_allocated(ctx.device),
+                           'torch_peak_reserved_bytes':t.cuda.max_memory_reserved(ctx.device)})
+    save(OUT/'measurement.json',result);log('RESULT '+json.dumps(result['summary']))
+    if not finite: raise RuntimeError('non-finite complete block output')
+
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('phase',choices=('calibrate','run'));args=parser.parse_args()
+    save(OUT/(args.phase+'.started.json'),{'utc':utc(),'phase':args.phase,'pid':os.getpid()})
+    try:
+        ctx=initialize()
+        with ctx.torch.inference_mode():
+            calibrate(ctx) if args.phase=='calibrate' else run(ctx)
+    except Exception as error:
+        data={'status':'failure','phase':args.phase,'utc':utc(),'error':repr(error),'traceback':traceback.format_exc()}
+        save(OUT/(args.phase+'.failure.json'),data)
+        print(data['traceback'],flush=True)
+        raise
+
+
+if __name__=='__main__':main()

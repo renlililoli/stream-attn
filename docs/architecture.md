@@ -18,6 +18,9 @@ src/seqattn_core/    public API and implementation; no compat facades
   api.py             functional public API
   config.py          execution policy dataclasses
   plan.py            deterministic workspace and execution planning
+  estimation/        device-neutral event/physical-allocation engine and HTML reports
+    h3/              full dense H3 runner/callback model and operator calibration
+    web/             local parameter editor and HTTP bridge to the same estimator
   stats.py           statistics dataclasses
   reference.py       FP32 online-softmax CPU reference
   validation.py      host tensor and sequence validation

@@ -1,0 +1,309 @@
+{
+  "status": "frozen",
+  "created_at_utc": "2026-09-08T08:11:33.568879+00:00",
+  "before_full_block_measurement": true,
+  "shape": {
+    "segments": [
+      524288
+    ],
+    "hidden_features": 5376,
+    "ffn_features": 14336,
+    "heads": 56,
+    "head_dim": 128,
+    "element_bytes": 2,
+    "activation_dtype": "bfloat16",
+    "rope_dim": 96,
+    "modulation_rows": 3,
+    "timestep_features": 8,
+    "modulation_modalities": 3,
+    "modulation_element_bytes": 4
+  },
+  "execution": {
+    "q_chunk_tokens": 3840,
+    "kv_tile_tokens": 4096,
+    "projection_tile_tokens": 4096,
+    "ffn_tile_tokens": 4096,
+    "execution_mode": "materialized",
+    "num_kv_buffers": 2,
+    "num_projection_buffers": 2,
+    "num_output_buffers": 2,
+    "qkv_capacity_tokens": null,
+    "kv_capacity_tokens": null,
+    "workspace_margin_bytes": 33554432,
+    "attention_mode": "dense"
+  },
+  "callbacks": {
+    "variant": "modulated",
+    "qkv_result_layout": "strided",
+    "recompute_direct_write": false,
+    "materialized_qk_inplace": true,
+    "compute_modulation": true,
+    "fused_swiglu_fc2": true,
+    "name": "explicit H3 SwiGLU callbacks",
+    "linear_memory": "profile",
+    "convrot_group": 256,
+    "per_channel_weight_scale": true
+  },
+  "profile_sha256": "1f8fca70d273a97d07e3882eeac564fb661527b118249dee37d5d6fcb7f2304a",
+  "predicted_seconds": 65.11680591394932,
+  "predicted_allocated_bytes": 2258954752,
+  "environment": {
+    "utc": "2026-09-08T08:11:34.139765+00:00",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "gpu_uuid": "35d69b8c-779a-bb45-263c-27587354c413",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "triton": "3.6.0",
+    "comfyui": "0.30.0",
+    "comfy_kitchen": "0.2.26",
+    "comfy_aimdo": "0.4.11",
+    "cpu_affinity": [
+      160,
+      161,
+      162,
+      163,
+      164,
+      165,
+      166,
+      167,
+      168,
+      169,
+      170,
+      171,
+      172,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      416,
+      417,
+      418,
+      419,
+      420,
+      421,
+      422,
+      423,
+      424,
+      425,
+      426,
+      427,
+      428,
+      429,
+      430,
+      431,
+      432,
+      433,
+      434,
+      435,
+      436,
+      437,
+      438,
+      439,
+      440,
+      441,
+      442,
+      443,
+      444,
+      445,
+      446,
+      447
+    ],
+    "memory_policy": [
+      "Cpus_allowed_list:\t160-191,416-447",
+      "Mems_allowed_list:\t5,7"
+    ],
+    "numa_policy": "numactl --interleave=5,7, CPU affinity 160-191,416-447",
+    "driver_sha256": "082dc1f4d78c3e2ee0e9d3e1611fef716917a5b2ae46ced5b0d56f8861517fc9"
+  },
+  "checkpoint": {
+    "path": "/models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "file_bytes": 20970379616,
+    "header_sha256": "c1a65ff59085cbed8a6ea7c935ae7e58b1d2f870239df54c58a68fb7989e1cd8",
+    "block_sha256": "abdd1bc1d3587d0027f3183d0b9dc4113cefd723aa2ee0093aaf871f40ac2b18",
+    "tensors": [
+      {
+        "key": "blocks.25.adaln_proj.linear.bias",
+        "dtype": "F16",
+        "shape": [
+          96768
+        ]
+      },
+      {
+        "key": "blocks.25.adaln_proj.linear.weight",
+        "dtype": "F16",
+        "shape": [
+          96768,
+          8
+        ]
+      },
+      {
+        "key": "blocks.25.attn.k_norm.weight",
+        "dtype": "BF16",
+        "shape": [
+          128
+        ]
+      },
+      {
+        "key": "blocks.25.attn.out_proj.comfy_quant",
+        "dtype": "U8",
+        "shape": [
+          72
+        ]
+      },
+      {
+        "key": "blocks.25.attn.out_proj.weight",
+        "dtype": "I8",
+        "shape": [
+          5376,
+          7168
+        ]
+      },
+      {
+        "key": "blocks.25.attn.out_proj.weight_scale",
+        "dtype": "F32",
+        "shape": [
+          5376,
+          1
+        ]
+      },
+      {
+        "key": "blocks.25.attn.q_norm.weight",
+        "dtype": "BF16",
+        "shape": [
+          128
+        ]
+      },
+      {
+        "key": "blocks.25.attn.qkv_proj.comfy_quant",
+        "dtype": "U8",
+        "shape": [
+          72
+        ]
+      },
+      {
+        "key": "blocks.25.attn.qkv_proj.weight",
+        "dtype": "I8",
+        "shape": [
+          21504,
+          5376
+        ]
+      },
+      {
+        "key": "blocks.25.attn.qkv_proj.weight_scale",
+        "dtype": "F32",
+        "shape": [
+          21504,
+          1
+        ]
+      },
+      {
+        "key": "blocks.25.mlp.fc1.comfy_quant",
+        "dtype": "U8",
+        "shape": [
+          72
+        ]
+      },
+      {
+        "key": "blocks.25.mlp.fc1.weight",
+        "dtype": "I8",
+        "shape": [
+          28672,
+          5376
+        ]
+      },
+      {
+        "key": "blocks.25.mlp.fc1.weight_scale",
+        "dtype": "F32",
+        "shape": [
+          28672,
+          1
+        ]
+      },
+      {
+        "key": "blocks.25.mlp.fc2.comfy_quant",
+        "dtype": "U8",
+        "shape": [
+          72
+        ]
+      },
+      {
+        "key": "blocks.25.mlp.fc2.weight",
+        "dtype": "I8",
+        "shape": [
+          5376,
+          14336
+        ]
+      },
+      {
+        "key": "blocks.25.mlp.fc2.weight_scale",
+        "dtype": "F32",
+        "shape": [
+          5376,
+          1
+        ]
+      },
+      {
+        "key": "blocks.25.norm1.weight",
+        "dtype": "BF16",
+        "shape": [
+          5376
+        ]
+      },
+      {
+        "key": "blocks.25.norm2.weight",
+        "dtype": "BF16",
+        "shape": [
+          5376
+        ]
+      }
+    ]
+  },
+  "calibration_protocol": {
+    "warmup": 2,
+    "repeats": 7,
+    "H2D": "concurrent with two same-shape resident attention updates; positions pageable",
+    "time": "median CUDA events",
+    "memory": "maximum private allocator workspace"
+  },
+  "notes": [
+    "Only exact-shape samples are used; no unprofiled full-block time was used for calibration.",
+    "Attention samples use steady update kernels; first-KV initialization is a distinct runtime specialization."
+  ],
+  "operator_counts": {
+    "adaln": 1,
+    "h2d": 35602,
+    "norm1": 128,
+    "modulate1": 128,
+    "qkv": 128,
+    "rope_angles": 128,
+    "rope_table": 128,
+    "qk_rope": 128,
+    "d2d": 768,
+    "d2h": 512,
+    "attention": 17536,
+    "finalize": 137,
+    "out": 137,
+    "attention_residual": 137,
+    "norm2": 128,
+    "modulate2": 128,
+    "fc1": 128,
+    "swiglu_fc2": 128,
+    "ffn_residual": 128
+  },
+  "core_workspace_budget_bytes": 655507456
+}

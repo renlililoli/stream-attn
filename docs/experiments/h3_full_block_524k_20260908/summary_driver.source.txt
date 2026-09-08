@@ -1,0 +1,55 @@
+from pathlib import Path
+import hashlib,json,statistics
+
+root=Path(__file__).resolve().parent
+prediction=json.loads((root/'prediction.json').read_text())
+measurement=json.loads((root/'measurement.json').read_text())
+if measurement['status']!='success':
+    raise SystemExit('measurement has not completed successfully')
+assert measurement['prediction_sha256']==hashlib.sha256((root/'prediction.json').read_bytes()).hexdigest()
+assert measurement['profile_sha256']==hashlib.sha256((root/'profile.json').read_bytes()).hexdigest()
+for key in ('gpu_uuid','torch','cuda','triton','comfyui','comfy_kitchen','comfy_aimdo','cpu_affinity','memory_policy','driver_sha256'):
+    assert measurement['environment'][key]==prediction['environment'][key],key
+assert measurement['checkpoint']['block_sha256']==prediction['checkpoint']['block_sha256']
+assert len(measurement['warmup'])==2 and len(measurement['records'])==3
+expected=prediction['metadata']
+for record in measurement['records']:
+    stats=record['stats']
+    assert stats['projection']['projection_chunks']==expected['operator_counts']['qkv']
+    assert stats['ffn_tiles']==len(expected['ffn_ranges'])
+    assert stats['projection']['attention']['q_chunks']==len(expected['query_ranges'])
+    assert stats['projection']['attention']['kv_tiles']==expected['operator_counts']['attention']
+    assert stats['estimated_workspace_bytes']==expected['core_workspace_budget_bytes']
+walls=[r['wall_seconds'] for r in measurement['records']]
+project=[r['stats']['projection']['projection_seconds'] for r in measurement['records']]
+attention=[r['stats']['projection']['attention_output_seconds'] for r in measurement['records']]
+report={
+    'status':'success','tokens':measurement['tokens'],'block_index':measurement['block_index'],
+    'frozen_prediction_seconds':prediction['predicted_seconds'],
+    'warmup_seconds':[r['seconds'] for r in measurement['warmup']],
+    'measured_wall_seconds':walls,
+    'measured_cuda_seconds':[r['cuda_seconds'] for r in measurement['records']],
+    'measured_median_seconds':statistics.median(walls),'measured_mean_seconds':statistics.mean(walls),
+    'measured_stdev_seconds':statistics.stdev(walls),
+    'signed_error_percent':100*(prediction['predicted_seconds']/statistics.median(walls)-1),
+    'repeat_error_percent':[100*(prediction['predicted_seconds']/value-1) for value in walls],
+    'mean_projection_seconds':statistics.mean(project),
+    'mean_attention_and_consumer_seconds':statistics.mean(attention),
+    'shape':measurement['shape'],'execution':measurement['execution'],
+    'environment':measurement['environment'],
+    'all_output_finite':measurement['all_output_finite'],'signatures_equal':measurement['signatures_equal'],
+    'counts_and_core_workspace_match':True,
+    'query_chunks':len(expected['query_ranges']),'kv_updates':expected['operator_counts']['attention'],
+    'projection_chunks':expected['operator_counts']['qkv'],'ffn_calls':len(expected['ffn_ranges']),
+    'torch_peak_allocated_bytes':measurement['summary']['torch_peak_allocated_bytes'],
+    'torch_peak_reserved_bytes':measurement['summary']['torch_peak_reserved_bytes'],
+    'source_files':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in
+                    ('prediction.json','measurement.json','profile.json','operator_measurements.json','driver.py')},
+    'limitations':['One 524K materialized full-block configuration in one evaluation process after two warmups.',
+                   'Profile was frozen in a separate calibration process; formal timings were not fitted.',
+                   'H2D calibration was concurrent with resident attention; actual memory placement/clock/launch overhead can differ.',
+                   'GPU 3 was idle before launch; another job was active on GPU 0.',
+                   'Synthetic hidden/conditioning are used with the real checkpoint and full modulated production callbacks.'],
+}
+(root/'summary.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps({k:v for k,v in report.items() if k not in ('source_files','environment')},indent=2))
