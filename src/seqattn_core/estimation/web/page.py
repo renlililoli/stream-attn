@@ -18,10 +18,10 @@ main{min-width:0;display:flex;flex-direction:column;position:relative}.result-ba
 <header><div><div class="brand">SEQATTN / H3 SIMULATOR</div><h1>H3 Block 仿真台</h1></div><p>调整参数 → 重算完整 H3 路径 → 联动显示时间与内存</p></header>
 <div class="layout"><aside>
 <div class="actions"><button id="defaults">H3 默认参数</button><button id="import">导入参数</button><button id="save-settings">导出参数</button></div>
-<div class="notice">初始吞吐与带宽是示例值。填入对应设备、后端和 tile 的有效实测值，可提高预测可信度。</div>
+<div class="notice">初始吞吐与带宽是示例值，时间线是预测。默认打包并发路径已在 5090 观测，其他设备需验证。完整 H3 路径包含 RoPE 位置拷贝的 CPU 阻塞和 SwiGLU/FC2 联合调用。</div>
 <form id="form" novalidate><div id="fields"></div></form>
 <details id="profile-section"><summary>导入算子 Profile</summary>
-<p class="muted" style="font-size:12px;line-height:1.6">使用现有的 H3DeviceProfile JSON。导入后由 Profile 决定各算子速率和工作区，形状不匹配时会显示错误。</p>
+<p class="muted" style="font-size:12px;line-height:1.6">使用现有的 H3DeviceProfile JSON。导入后由 Profile 决定各算子速率、工作区和打包并发关系，形状不匹配时会显示错误。</p>
 <div class="actions"><button id="load-profile">选择 Profile JSON</button><button id="clear-profile" disabled>清除 Profile</button></div><div id="profile-label" class="profile-label">未导入，使用表单数值</div>
 </details><small>参数保存在当前浏览器中。仿真由本地 Python 引擎计算。</small>
 <input type="file" id="settings-file" accept="application/json,.json" hidden><input type="file" id="profile-file" accept="application/json,.json" hidden>

@@ -73,7 +73,7 @@ def main():
                                 "projection_tile_tokens": 4,
                                 "ffn_tile_tokens": 8,
                                 "linear_memory": "dense",
-                                "callback_variant": "block25",
+                                "callback_variant": "modulated",
                                 "execution_mode": "compare",
                             }
                         },

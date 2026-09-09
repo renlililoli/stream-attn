@@ -1,0 +1,14 @@
+{
+  "tokens": 65536,
+  "predicted_seconds": 0.144242493122816,
+  "actual_median_seconds": 0.16243357700295746,
+  "relative_error_percent": -11.19909086272861,
+  "concurrent_pack": true,
+  "rates_refitted": false,
+  "scope": "projection phase only; no attention/FFN or full-block accuracy claim",
+  "source_profile": "docs/experiments/h3_full_block_524k_20260908/profile.json",
+  "source_configuration": "docs/experiments/h3_full_block_524k_20260908/prediction_summary.json",
+  "profile_resolutions": {
+    "sample": 224
+  }
+}

@@ -1,0 +1,62 @@
+import argparse
+import json
+import statistics
+import time
+from dataclasses import replace
+from types import SimpleNamespace
+import base_driver as base
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--capture', action='store_true')
+args = parser.parse_args()
+base.TOKENS = 65536
+from pathlib import Path
+base.OUT = Path("/artifacts/holdout64k")
+base.OUT.mkdir(exist_ok=True)
+ctx = base.initialize()
+t = ctx.torch
+from seqattn_core.stats import ProjectedAttentionStats
+projected = ctx.runner.projected_attention
+projected._producer.config = replace(projected._producer.config, enable_nvtx=True)
+layout = SimpleNamespace(position_ids=t.zeros(base.TOKENS, 3, dtype=t.float64))
+layout.position_ids[:, 0] = t.arange(base.TOKENS, dtype=t.float64)
+working = t.empty(base.TOKENS, ctx.shape.hidden_features, dtype=ctx.dtype, pin_memory=True)
+working.normal_(mean=0, std=.02, generator=t.Generator().manual_seed(1234))
+projection, _ = ctx.adapter._materialized_block_parts(
+    ctx.model, ctx.block, base.BLOCK, layout, [(0, base.TOKENS, 0)], ctx.temb, {}
+)
+index = 0
+original = projection.project_qkv
+
+def callback(tile, start, stop):
+    with t.cuda.nvtx.range(f'actual.projection{start // base.PROJECTION}'):
+        return original(tile, start, stop)
+
+def run():
+    with projection.context():
+        return projected.project_qkv_to_host(working, callback, stats=ProjectedAttentionStats())
+
+with t.inference_mode():
+    for i in range(3):
+        run(); t.cuda.synchronize()
+        base.log(f'Warmup {i + 1}/3')
+    timings=[]
+    if args.capture:
+        t.cuda.cudart().cudaProfilerStart()
+        with t.cuda.nvtx.range('actual.materialize'):
+            result=run();t.cuda.synchronize()
+        t.cuda.cudart().cudaProfilerStop()
+    else:
+        for i in range(5):
+            begin=time.perf_counter();result=run();t.cuda.synchronize()
+            timings.append(time.perf_counter()-begin)
+            base.log(f'Measurement {i + 1}/5: {timings[-1]:.6f}s')
+    base.save(base.OUT / ('capture.json' if args.capture else 'measurement.json'), {
+        'tokens':base.TOKENS,'projection_tile_tokens':base.PROJECTION,
+        'slots':projected._producer.config.num_projection_buffers,
+        'warmup':3,'seconds':timings,'median_seconds':statistics.median(timings) if timings else None,
+        'environment':{**base.environment(ctx),'driver_sha256':base.sha(__file__)},
+        'output_shapes':[list(x.shape) for x in result],
+        'all_finite':all(bool(t.isfinite(x).all()) for x in result),
+        'driver_sha256':base.sha(__file__),
+    })

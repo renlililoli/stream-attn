@@ -6,7 +6,7 @@ in operator profiles. The default topology corresponds to no-LoRA callbacks.
 
 from __future__ import annotations
 
-from .linear_memory import eager_int8_workspace
+from .linear_memory import eager_int8_swiglu_workspace, eager_int8_workspace
 
 
 class H3Callbacks:
@@ -106,9 +106,9 @@ class H3Callbacks:
         position_host = g.allocate(
             f"{prefix}.position_cast", tokens * 3 * 4, "position FP32 cast", host=True
         )
-        cast = g.milestone(f"{prefix}.position_cast_ready", stream="compute")
+        cast = g.milestone(f"{prefix}.position_cast_ready")
         g.use((self.positions, position_host), cast)
-        g.copy(
+        position_ready = g.copy(
             f"{prefix}.position_h2d",
             "h2d",
             tokens,
@@ -118,6 +118,10 @@ class H3Callbacks:
             stream="compute",
             component="position transfer",
         )
+        # Production rope_freqs uses position_ids.float().to(device) with the
+        # blocking default. This waits on the compute stream on the CPU; future
+        # submissions on *all* streams must wait, including the next hidden H2D.
+        g.host_gate = position_ready
         angles = g.allocate(f"{prefix}.angles", tokens * s.rope_dim * 4, "RoPE angles")
         g.op(
             f"{prefix}.angles",
@@ -169,6 +173,7 @@ class H3Callbacks:
             tokens * s.attention_features,
             (normalized, rotated, result),
         )
+        g.retain(table, done)
         return result, done
 
     def project(self, prefix, hidden, tokens, mode, *, destinations=()):
@@ -213,6 +218,9 @@ class H3Callbacks:
                         tokens,
                         inplace=False,
                     )
+                    if mode == "q":
+                        # q is rebound to the RoPE result before destination.copy_.
+                        g.retain(result, done)
                     done = g.copy(
                         f"{prefix}.write_{mode[0]}",
                         "d2d",
@@ -241,7 +249,7 @@ class H3Callbacks:
                         result,
                         destination,
                     )
-            if mode != "qkv":
+            if mode == "kv" or (mode == "q" and self.c.variant == "block25"):
                 g.retain(result, done)
         # Local normalized hidden survives until the projection callback returns.
         if normalized != hidden:
@@ -291,12 +299,28 @@ class H3Callbacks:
             result = g.allocate(
                 f"{prefix}.fc2.result", tokens * s.hidden_features * s.element_bytes, "fc2 result"
             )
+            activation = tokens * s.ffn_features * s.element_bytes
+            output_bytes = tokens * s.hidden_features * s.element_bytes
+            workspace = 0
+            if self.c.linear_memory == "int8_eager":
+                workspace = eager_int8_swiglu_workspace(
+                    tokens,
+                    s.ffn_features,
+                    s.hidden_features,
+                    s.element_bytes,
+                    convrot_group=self.c.convrot_group,
+                    per_channel_scale=self.c.per_channel_weight_scale,
+                )
+            elif self.c.linear_memory == "dense":
+                workspace = max(activation, 2 * activation - output_bytes)
             g.op(
                 f"{prefix}.swiglu_fc2",
                 "swiglu_fc2",
                 tokens,
                 2 * tokens * s.ffn_features * s.hidden_features,
                 (fc1, result),
+                modeled_workspace_bytes=workspace,
+                details="linear_input_act(input_act=swiglu); internal fusion/temporaries follow selected backend profile",
             )
             activated = None
         else:

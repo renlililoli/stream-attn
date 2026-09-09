@@ -251,3 +251,21 @@ def test_desktop_launcher_can_disable_browser(monkeypatch):
 
     monkeypatch.setattr(module.SimulationServer, "serve_forever", serve)
     module.main(["--no-browser"], default_port=0, default_open_browser=True)
+
+
+def test_imported_profile_controls_packing_concurrency():
+    from dataclasses import replace
+
+    _, shape, _, profile, _, _, _ = prepare_request(SMALL)
+    imported = replace(profile, projection_pack_resources=None).for_shape(shape).to_dict()
+    result = simulate({**SMALL, "projection_pack_mode": "concurrent"}, imported)
+    operations = result["report"]["candidates"][0]["trace"]["operations"]
+    assert all(o["resources"] == ("compute",) for o in operations if o["name"].endswith(".pack"))
+
+
+def test_production_web_path_uses_actual_combined_fc2_entry_point():
+    _, _, _, profile, callbacks, _, _ = prepare_request(
+        {**SMALL, "callback_variant": "modulated", "fc2_tflops": 17}
+    )
+    assert callbacks.fused_swiglu_fc2
+    assert profile.operators["swiglu_fc2"].rate.work_per_second == 17e12

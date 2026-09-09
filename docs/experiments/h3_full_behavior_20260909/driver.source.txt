@@ -1,0 +1,107 @@
+"""Audit real production callbacks and runner decisions, not primary timings."""
+import argparse
+import dataclasses
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import base_driver as base
+
+parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['materialized','recompute']);args=parser.parse_args()
+base.TOKENS=8193
+ctx=base.initialize();t=ctx.torch
+from seqattn_core.dit.minimax_h3 import H3Config,H3DiTStats,H3SequenceMeta,H3BlockOps,H3MaterializedProjection,H3RecomputeProjection,build_h3_runner
+import seqattn_core.streaming.executor as executor
+from seqattn_core.dit.minimax_h3.consumer import H3DeviceOutputConsumer
+
+ctx.plan=dataclasses.replace(ctx.plan,enable_nvtx=True)
+ctx.runner=build_h3_runner(ctx.plan,hidden_features=ctx.shape.hidden_features,config=H3Config(execution_mode=args.mode,projection_tile_tokens=4096,ffn_tile_tokens=4096))
+if args.mode=='materialized':
+ ctx.runner.projected_attention._producer.config=dataclasses.replace(ctx.runner.projected_attention._producer.config,enable_nvtx=True)
+records=[]; enabled=False
+
+def record(name,**data):
+ if enabled:records.append({'name':name,**data})
+
+def wrap_module(module,label):
+ original=module.forward
+ def call(*a,**kw):
+  record(label,shape=list(a[0].shape))
+  with t.cuda.nvtx.range('audit.'+label):return original(*a,**kw)
+ module.forward=call
+for module,label in [(ctx.block.norm1,'norm1'),(ctx.block.norm2,'norm2'),(ctx.block.attn.qkv_proj,'qkv'),(ctx.block.attn.out_proj,'out'),(ctx.block.mlp.fc1,'fc1'),(ctx.block.adaln_proj,'adaln')]:wrap_module(module,label)
+original_act=ctx.comfy_ops.linear_input_act
+
+def act(linear,x,input_act):
+ record('swiglu_fc2',input_act=input_act,shape=list(x.shape))
+ with t.cuda.nvtx.range('audit.swiglu_fc2'):return original_act(linear,x,input_act)
+ctx.comfy_ops.linear_input_act=act
+original_rows=ctx.adapter._project_int8_rows
+
+def rows(active,tile,start,stop):
+ record('project_rows',shape=list(tile.shape),row_start=start,row_stop=stop)
+ return original_rows(active,tile,start,stop)
+ctx.adapter._project_int8_rows=rows
+original_update=executor.update_attention_state
+
+def update(q,k,v,m,l,acc,**kw):
+ record('attention',**{key:kw[key] for key in ('q_tokens','kv_tokens','q_local_offset','kv_local_offset','initialize','causal')})
+ return original_update(q,k,v,m,l,acc,**kw)
+executor.update_attention_state=update
+original_finalize=executor.finalize_attention
+
+def finalize(acc,l,out,**kw):
+ workspace=(ctx.runner.projected_attention.attention if args.mode=='materialized' else ctx.runner.recomputed_attention.attention)._workspace
+ record('finalize',tokens=kw['q_tokens'],aliases_q=out.untyped_storage().data_ptr()==workspace.q.untyped_storage().data_ptr())
+ return original_finalize(acc,l,out,**kw)
+executor.finalize_attention=finalize
+original_emit=H3DeviceOutputConsumer._emit
+
+def emit(self,tile,start,stop):
+ record('emit',start=start,stop=stop,slot=self.output_index%len(self.workspace.final_output),source='carry' if tile.untyped_storage().data_ptr()==self.workspace.carry.untyped_storage().data_ptr() else 'post',storage_offset=tile.storage_offset())
+ return original_emit(self,tile,start,stop)
+H3DeviceOutputConsumer._emit=emit
+layout=SimpleNamespace(position_ids=t.zeros(base.TOKENS,3,dtype=t.float64));layout.position_ids[:,0]=t.arange(base.TOKENS,dtype=t.float64)
+mod_segments=[(0,base.TOKENS,0)]
+host=t.empty(base.TOKENS,ctx.shape.hidden_features,dtype=ctx.dtype,pin_memory=True).normal_(mean=0,std=.02)
+dest=t.empty_like(host,pin_memory=True);baseline=host.clone()
+meta=H3SequenceMeta(t.tensor([0,4097,8193],dtype=t.int32))
+
+def full():
+ fn=ctx.adapter._materialized_block_parts if args.mode=='materialized' else ctx.adapter._recompute_block_parts
+ projection,ops=fn(ctx.model,ctx.block,base.BLOCK,layout,mod_segments,ctx.temb,{})
+ def epilogue(attention,residual,start,stop):
+  record('epilogue',start=start,stop=stop)
+  result=ops.attention_epilogue(attention,residual,start,stop)
+  record('epilogue_result',start=start,stop=stop,aliases_host=result.untyped_storage().data_ptr()==residual.untyped_storage().data_ptr())
+  return result
+ def ffn(post,start,stop):
+  record('ffn',start=start,stop=stop)
+  result=ops.ffn(post,start,stop)
+  record('ffn_result',start=start,stop=stop,aliases_input=result.untyped_storage().data_ptr()==post.untyped_storage().data_ptr())
+  return result
+ wrapped_ops=H3BlockOps(epilogue,ffn,ops.consumer_lease)
+ stats=H3DiTStats()
+ if args.mode=='materialized':
+  def qkv(tile,start,stop):
+   record('project_qkv',start=start,stop=stop)
+   result=projection.project_qkv(tile,start,stop)
+   record('qkv_result',start=start,stop=stop,contiguous=[x.is_contiguous() for x in result],one_storage=len({x.untyped_storage().data_ptr() for x in result})==1)
+   return result
+  output=ctx.runner.run_block_(host,meta,H3MaterializedProjection(qkv,projection.weight_lease),wrapped_ops,stats=stats)
+ else:
+  def q(tile,destination,start,stop):
+   record('project_q',start=start,stop=stop);return projection.project_q(tile,destination,start,stop)
+  def kv(tile,k,v,start,stop):
+   record('project_kv',start=start,stop=stop);return projection.project_kv(tile,k,v,start,stop)
+  output=ctx.runner.run_block(host,dest,meta,H3RecomputeProjection(q,kv,projection.weight_lease),wrapped_ops,stats=stats)
+ return output,stats
+with t.inference_mode():
+ for i in range(2):
+  host.copy_(baseline);full();t.cuda.synchronize();base.log(f'Warmup {i+1}/2')
+ host.copy_(baseline);t.cuda.synchronize();enabled=True
+ t.cuda.cudart().cudaProfilerStart()
+ with t.cuda.nvtx.range('audit.full_h3_block'):output,stats=full();t.cuda.synchronize()
+ t.cuda.cudart().cudaProfilerStop()
+ enabled=False
+ base.save(base.OUT/(args.mode+'.json'),{'mode':args.mode,'shape':{**dataclasses.asdict(ctx.shape),'segments':[4097,4096]},'config':{**dataclasses.asdict(ctx.config),'execution_mode':args.mode},'records':records,'stats':stats.as_dict(),'finite':bool(t.isfinite(output).all()),'output_aliases_host':output.untyped_storage().data_ptr()==host.untyped_storage().data_ptr(),'environment':base.environment(ctx)})
+ base.log(f'AUDIT {args.mode}: {len(records)} records saved')

@@ -1,0 +1,692 @@
+{
+  "mode": "recompute",
+  "shape": {
+    "segments": [
+      4097,
+      4096
+    ],
+    "hidden_features": 5376,
+    "ffn_features": 14336,
+    "heads": 56,
+    "head_dim": 128,
+    "element_bytes": 2,
+    "activation_dtype": "bfloat16",
+    "rope_dim": 96,
+    "modulation_rows": 3,
+    "timestep_features": 8,
+    "modulation_modalities": 3,
+    "modulation_element_bytes": 4
+  },
+  "config": {
+    "q_chunk_tokens": 3840,
+    "kv_tile_tokens": 4096,
+    "projection_tile_tokens": 4096,
+    "ffn_tile_tokens": 4096,
+    "execution_mode": "recompute",
+    "num_kv_buffers": 2,
+    "num_projection_buffers": 2,
+    "num_output_buffers": 2,
+    "qkv_capacity_tokens": null,
+    "kv_capacity_tokens": null,
+    "workspace_margin_bytes": 33554432,
+    "attention_mode": "dense"
+  },
+  "records": [
+    {
+      "name": "adaln",
+      "shape": [
+        1,
+        8
+      ]
+    },
+    {
+      "name": "project_q",
+      "start": 0,
+      "stop": 3840
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        3840,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        3840,
+        5376
+      ],
+      "row_start": 0,
+      "row_stop": 7168
+    },
+    {
+      "name": "project_kv",
+      "start": 0,
+      "stop": 4096
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        4096,
+        5376
+      ],
+      "row_start": 7168,
+      "row_stop": 21504
+    },
+    {
+      "name": "attention",
+      "q_tokens": 3840,
+      "kv_tokens": 4096,
+      "q_local_offset": 0,
+      "kv_local_offset": 0,
+      "initialize": true,
+      "causal": false
+    },
+    {
+      "name": "project_kv",
+      "start": 4096,
+      "stop": 4097
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        1,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        1,
+        5376
+      ],
+      "row_start": 7168,
+      "row_stop": 21504
+    },
+    {
+      "name": "attention",
+      "q_tokens": 3840,
+      "kv_tokens": 1,
+      "q_local_offset": 0,
+      "kv_local_offset": 4096,
+      "initialize": false,
+      "causal": false
+    },
+    {
+      "name": "finalize",
+      "tokens": 3840,
+      "aliases_q": true
+    },
+    {
+      "name": "epilogue",
+      "start": 0,
+      "stop": 3840
+    },
+    {
+      "name": "out",
+      "shape": [
+        3840,
+        7168
+      ]
+    },
+    {
+      "name": "epilogue_result",
+      "start": 0,
+      "stop": 3840,
+      "aliases_host": false
+    },
+    {
+      "name": "project_q",
+      "start": 3840,
+      "stop": 4097
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        257,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        257,
+        5376
+      ],
+      "row_start": 0,
+      "row_stop": 7168
+    },
+    {
+      "name": "project_kv",
+      "start": 0,
+      "stop": 4096
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        4096,
+        5376
+      ],
+      "row_start": 7168,
+      "row_stop": 21504
+    },
+    {
+      "name": "attention",
+      "q_tokens": 257,
+      "kv_tokens": 4096,
+      "q_local_offset": 3840,
+      "kv_local_offset": 0,
+      "initialize": true,
+      "causal": false
+    },
+    {
+      "name": "project_kv",
+      "start": 4096,
+      "stop": 4097
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        1,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        1,
+        5376
+      ],
+      "row_start": 7168,
+      "row_stop": 21504
+    },
+    {
+      "name": "attention",
+      "q_tokens": 257,
+      "kv_tokens": 1,
+      "q_local_offset": 3840,
+      "kv_local_offset": 4096,
+      "initialize": false,
+      "causal": false
+    },
+    {
+      "name": "finalize",
+      "tokens": 257,
+      "aliases_q": true
+    },
+    {
+      "name": "epilogue",
+      "start": 3840,
+      "stop": 4097
+    },
+    {
+      "name": "out",
+      "shape": [
+        257,
+        7168
+      ]
+    },
+    {
+      "name": "epilogue_result",
+      "start": 3840,
+      "stop": 4097,
+      "aliases_host": false
+    },
+    {
+      "name": "emit",
+      "start": 0,
+      "stop": 4096,
+      "slot": 0,
+      "source": "carry",
+      "storage_offset": 0
+    },
+    {
+      "name": "ffn",
+      "start": 0,
+      "stop": 4096
+    },
+    {
+      "name": "norm2",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "fc1",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "swiglu_fc2",
+      "input_act": "swiglu",
+      "shape": [
+        4096,
+        28672
+      ]
+    },
+    {
+      "name": "ffn_result",
+      "start": 0,
+      "stop": 4096,
+      "aliases_input": true
+    },
+    {
+      "name": "project_q",
+      "start": 4097,
+      "stop": 7937
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        3840,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        3840,
+        5376
+      ],
+      "row_start": 0,
+      "row_stop": 7168
+    },
+    {
+      "name": "project_kv",
+      "start": 4097,
+      "stop": 8193
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        4096,
+        5376
+      ],
+      "row_start": 7168,
+      "row_stop": 21504
+    },
+    {
+      "name": "attention",
+      "q_tokens": 3840,
+      "kv_tokens": 4096,
+      "q_local_offset": 0,
+      "kv_local_offset": 0,
+      "initialize": true,
+      "causal": false
+    },
+    {
+      "name": "finalize",
+      "tokens": 3840,
+      "aliases_q": true
+    },
+    {
+      "name": "epilogue",
+      "start": 4097,
+      "stop": 7937
+    },
+    {
+      "name": "out",
+      "shape": [
+        3840,
+        7168
+      ]
+    },
+    {
+      "name": "epilogue_result",
+      "start": 4097,
+      "stop": 7937,
+      "aliases_host": false
+    },
+    {
+      "name": "project_q",
+      "start": 7937,
+      "stop": 8193
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        256,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        256,
+        5376
+      ],
+      "row_start": 0,
+      "row_stop": 7168
+    },
+    {
+      "name": "project_kv",
+      "start": 4097,
+      "stop": 8193
+    },
+    {
+      "name": "norm1",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "project_rows",
+      "shape": [
+        4096,
+        5376
+      ],
+      "row_start": 7168,
+      "row_stop": 21504
+    },
+    {
+      "name": "attention",
+      "q_tokens": 256,
+      "kv_tokens": 4096,
+      "q_local_offset": 3840,
+      "kv_local_offset": 0,
+      "initialize": true,
+      "causal": false
+    },
+    {
+      "name": "finalize",
+      "tokens": 256,
+      "aliases_q": true
+    },
+    {
+      "name": "epilogue",
+      "start": 7937,
+      "stop": 8193
+    },
+    {
+      "name": "out",
+      "shape": [
+        256,
+        7168
+      ]
+    },
+    {
+      "name": "epilogue_result",
+      "start": 7937,
+      "stop": 8193,
+      "aliases_host": false
+    },
+    {
+      "name": "emit",
+      "start": 4096,
+      "stop": 8192,
+      "slot": 1,
+      "source": "carry",
+      "storage_offset": 0
+    },
+    {
+      "name": "ffn",
+      "start": 4096,
+      "stop": 8192
+    },
+    {
+      "name": "norm2",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "fc1",
+      "shape": [
+        4096,
+        5376
+      ]
+    },
+    {
+      "name": "swiglu_fc2",
+      "input_act": "swiglu",
+      "shape": [
+        4096,
+        28672
+      ]
+    },
+    {
+      "name": "ffn_result",
+      "start": 4096,
+      "stop": 8192,
+      "aliases_input": true
+    },
+    {
+      "name": "emit",
+      "start": 8192,
+      "stop": 8193,
+      "slot": 0,
+      "source": "carry",
+      "storage_offset": 0
+    },
+    {
+      "name": "ffn",
+      "start": 8192,
+      "stop": 8193
+    },
+    {
+      "name": "norm2",
+      "shape": [
+        1,
+        5376
+      ]
+    },
+    {
+      "name": "fc1",
+      "shape": [
+        1,
+        5376
+      ]
+    },
+    {
+      "name": "swiglu_fc2",
+      "input_act": "swiglu",
+      "shape": [
+        1,
+        28672
+      ]
+    },
+    {
+      "name": "ffn_result",
+      "start": 8192,
+      "stop": 8193,
+      "aliases_input": true
+    }
+  ],
+  "stats": {
+    "backend": "triton",
+    "qkv_storage_policy": "recompute",
+    "wall_seconds": 0.0821423209272325,
+    "blocks": 1,
+    "dense_attention_blocks": 1,
+    "sol_streaming_blocks": 0,
+    "ffn_tiles": 3,
+    "ffn_cross_q_boundaries": 3,
+    "final_hidden_d2h_bytes": 88091136,
+    "post_attention_roundtrip_bytes_avoided": 176182272,
+    "qkv_host_bytes_peak": 0,
+    "hidden_host_bytes_peak": 176182272,
+    "estimated_workspace_bytes": 611467264,
+    "projection": {
+      "backend": "",
+      "wall_seconds": 0.0,
+      "projection_seconds": 0.0,
+      "attention_output_seconds": 0.0,
+      "projection_chunks": 0,
+      "projection_tokens": 0,
+      "projection_hidden_h2d_bytes": 0,
+      "projection_qkv_d2h_bytes": 0,
+      "raw_attention_roundtrip_bytes_avoided": 0,
+      "qkv_host_bytes": 0,
+      "attention": {
+        "backend": "",
+        "wall_seconds": 0.0,
+        "compute_pipeline_seconds": 0.0,
+        "q_chunks": 0,
+        "kv_tiles": 0,
+        "h2d_bytes": 0,
+        "d2h_bytes": 0,
+        "estimated_workspace_bytes": 0,
+        "q_chunk_tokens": 0,
+        "kv_chunk_tokens": 0,
+        "max_resident_q_tokens": 0
+      }
+    },
+    "recompute": {
+      "backend": "triton",
+      "wall_seconds": 0.08202847302891314,
+      "q_projection_chunks": 4,
+      "kv_projection_chunks": 6,
+      "hidden_h2d_bytes": 264273408,
+      "qkv_host_bytes": 0,
+      "raw_attention_roundtrip_bytes_avoided": 234909696,
+      "attention": {
+        "backend": "triton",
+        "wall_seconds": 0.08198579400777817,
+        "compute_pipeline_seconds": 0.08189100646972657,
+        "q_chunks": 4,
+        "kv_tiles": 6,
+        "h2d_bytes": 0,
+        "d2h_bytes": 0,
+        "estimated_workspace_bytes": 435306496,
+        "q_chunk_tokens": 3840,
+        "kv_chunk_tokens": 4096,
+        "max_resident_q_tokens": 3840
+      }
+    },
+    "sol_attention": {
+      "backend": "",
+      "wall_seconds": 0.0,
+      "compute_pipeline_seconds": 0.0,
+      "q_chunks": 0,
+      "kv_tiles": 0,
+      "h2d_bytes": 0,
+      "d2h_bytes": 0,
+      "estimated_workspace_bytes": 0,
+      "q_chunk_tokens": 0,
+      "kv_chunk_tokens": 0,
+      "max_resident_q_tokens": 0,
+      "kv_storage_dtype": "",
+      "summary_kv_tiles": 0,
+      "summary_kv_tokens": 0,
+      "precomputed_summary_blocks": 0,
+      "summary_seconds": 0.0,
+      "threshold_seconds": 0.0,
+      "sparse_update_seconds": 0.0,
+      "exact_route_blocks": 0,
+      "approximate_route_blocks": 0,
+      "effective_density": 0.0
+    }
+  },
+  "finite": true,
+  "output_aliases_host": false,
+  "environment": {
+    "utc": "2026-09-09T04:56:15.174680+00:00",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "gpu_uuid": "35d69b8c-779a-bb45-263c-27587354c413",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "triton": "3.6.0",
+    "comfyui": "0.30.0",
+    "comfy_kitchen": "0.2.26",
+    "comfy_aimdo": "0.4.11",
+    "cpu_affinity": [
+      160,
+      161,
+      162,
+      163,
+      164,
+      165,
+      166,
+      167,
+      168,
+      169,
+      170,
+      171,
+      172,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      416,
+      417,
+      418,
+      419,
+      420,
+      421,
+      422,
+      423,
+      424,
+      425,
+      426,
+      427,
+      428,
+      429,
+      430,
+      431,
+      432,
+      433,
+      434,
+      435,
+      436,
+      437,
+      438,
+      439,
+      440,
+      441,
+      442,
+      443,
+      444,
+      445,
+      446,
+      447
+    ],
+    "memory_policy": [
+      "Cpus_allowed_list:\t160-191,416-447",
+      "Mems_allowed_list:\t5,7"
+    ],
+    "numa_policy": "numactl --interleave=5,7, CPU affinity 160-191,416-447",
+    "driver_sha256": "6704f08e2b55a851f3adf4c26e6118c5a3fde7b10a2f691e036e4914f5d92188"
+  }
+}

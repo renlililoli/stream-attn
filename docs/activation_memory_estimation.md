@@ -388,27 +388,49 @@ The output folder is `dist/seqattn-estimator/`. Packaging copies the unchanged
 it deliberately omits the main core initializer and GPU runtime modules. The
 normal installed core package and its public exports are unchanged.
 
-### Projection overlap and scheduling policy
+### Projection overlap and real submission constraints
 
-H3 traces use `earliest_ready` arbitration: an operation with available inputs
-and resources runs before an operation waiting for a future transfer. Declaration
-order only breaks ties. Previously, the generic `input_order` scheduler could
-reserve future K/V packing kernels before scheduling the next tile's already
-runnable QKV GEMM, leaving artificial compute gaps. Generic `ExecutionSpec`
-retains `input_order` as its default for compatibility; the chosen policy is
-included in exported trace metadata.
+H3 traces use `earliest_ready` arbitration. Stream order, slot reuse, and the
+materialized global QKV barrier remain hard dependencies. The production
+modulated callback also blocks the CPU at `position_ids.float().to(device)`:
+its position H2D completion gates **all later host submissions**, including the
+next tile's hidden H2D. This differs from merely ordering the compute stream.
+Block25 callbacks do not have this RoPE host gate.
 
-The H3 model still preserves the actual producer's slot reuse gate, per-stream
-ordering, and global QKV writeback barrier. With the default strided layout,
-Q, K, and V each require a pack followed by D2H on the projection output stream.
-The default profile makes packing and GEMM mutually exclusive on `compute`.
-Earliest-ready dispatch can overlap GEMM with DMA but cannot overlap these two
-compute operations. It is not a prediction of concurrent CUDA kernel occupancy,
-and better overlap at one point does not guarantee lower total latency.
+Packing is a compute kernel on the projection D2H stream, followed by the
+corresponding Q/K/V DMA. An RTX 5090 capture of the real checkpoint shows these
+packing kernels can overlap projection kernels. Profiles can explicitly declare
+`projection_pack_resources=("projection.pack",)` for this behavior. `None`
+preserves the legacy D2D resource mapping; independent resources are not a claim
+of unlimited bandwidth or zero contention. Calibrate effective costs under the
+same workload. The web form exposes **QKV 打包与计算** with concurrent and shared
+choices; its concurrent default is based on the observed 5090 path, not validation
+of other accelerators. Imported profiles remain authoritative.
 
-For example, with the web defaults and 16,384 tokens, tile 1's GEMM moves from
-13.163 ms to 10.422 ms, while the whole projection stage changes from 50.115 ms
-to 51.145 ms because K/V packing now waits for that GEMM. These are synthetic
-predictions, not a GPU speedup measurement. Existing archived benchmark results,
-including the 524K validation, retain their original source revision and scheduler;
-their error percentages are not a validation of the revised scheduler.
+See [the actual projection trace and validation report](benchmark_projection_overlap_2026-09-09.md).
+The scalar operator costs were kept frozen: the 32K projection prediction has
++2.12% error; independent 64K validation has -11.20% error. These are phase-only
+results. Existing archived full-block error figures retain their original model
+revision and do not validate the revised scheduler. General CPU launch gaps,
+allocator enqueue lifetimes, dynamic kernel occupancy, and contention-induced
+slowdowns are not fully simulated; predictions are labeled as such.
+
+Generic `ExecutionSpec` retains `input_order` as its default for compatibility.
+The selected scheduling policy and resource mapping are included in exported
+trace metadata. The measured SVG reports actual kernel and DMA timestamps and
+does not infer memory allocation curves from NVTX CPU ranges.
+
+
+### Whole-block behavioral contract
+
+The production modulated path now defaults to the real `linear_input_act` MLP
+entry point (`swiglu_fc2` profile key), including its selected implementation's
+private workspace. An imported INT8 profile missing this operation fails rather
+than silently substituting a separately materialized activation. The web FC2
+rate applies to this combined entry point. Old profiles for a different callback
+must be regenerated or used with that explicitly selected callback.
+
+The graph also skips packing for singleton QKV views, models the host-side
+position cast, and preserves the recompute Q/RoPE rebinding lifetimes. See the
+[whole-block behavioral audit](benchmark_h3_behavior_audit_2026-09-09.md) for real
+materialized/recompute recordings and duration-independent event dependency tests.

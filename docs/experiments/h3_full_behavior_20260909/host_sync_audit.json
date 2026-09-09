@@ -1,0 +1,12 @@
+{
+  "materialized": {
+    "projection_callbacks": 3,
+    "blocking_stream_syncs_inside_callbacks": 3,
+    "expected_from_graph": 3
+  },
+  "recompute": {
+    "projection_callbacks": 10,
+    "blocking_stream_syncs_inside_callbacks": 10,
+    "expected_from_graph": 10
+  }
+}

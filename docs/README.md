@@ -42,3 +42,6 @@ under [`releases/`](releases/).
 - Keep raw JSON as the source of truth for benchmark tables and figures.
 - Update this index whenever a current document is added, replaced, or
   removed.
+
+- [Real RTX 5090 QKV projection overlap and model validation](benchmark_projection_overlap_2026-09-09.md)
+- [Whole H3 block behavior audit](benchmark_h3_behavior_audit_2026-09-09.md)

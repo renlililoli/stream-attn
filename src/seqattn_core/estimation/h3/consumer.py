@@ -11,6 +11,7 @@ class H3Consumer:
         self.output_index = 0
         self.output_free = [None] * graph.config.num_output_buffers
         self.ffn_ranges = []
+        self.ffn_sources = []
         self.cross_q_boundaries = 0
 
     def emit(self, source, start, stop):
@@ -42,6 +43,7 @@ class H3Consumer:
             component="output transfer",
         )
         self.ffn_ranges.append((start, stop))
+        self.ffn_sources.append({"source": source, "slot": slot, "start": start, "stop": stop})
         self.output_index += 1
         return packed
 

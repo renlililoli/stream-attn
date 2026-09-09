@@ -60,3 +60,27 @@ def eager_int8_workspace(
     # The old INT32 result is not released until the cat RHS has produced output.
     peak = max(peak, base + accumulator + kept_parts + last_chunk + last_scales + output)
     return max(0, peak - output)
+
+
+def eager_int8_swiglu_workspace(
+    tokens, inputs, outputs, element_bytes, *, convrot_group=256, per_channel_scale=False
+):
+    """Eager input_act path: activate first, then rebind x to its rotation.
+
+    Unlike a separately held activation argument, this local activation dies
+    after rotation. Account for the initial SiLU/multiply and rotation peaks;
+    the subsequent INT8 workspace follows the same eager implementation.
+    """
+    activation = tokens * inputs * element_bytes
+    output = tokens * outputs * element_bytes
+    return max(
+        eager_int8_workspace(
+            tokens,
+            inputs,
+            outputs,
+            element_bytes,
+            convrot_group=convrot_group,
+            per_channel_scale=per_channel_scale,
+        ),
+        2 * activation + convrot_group**2 * element_bytes - output,
+    )

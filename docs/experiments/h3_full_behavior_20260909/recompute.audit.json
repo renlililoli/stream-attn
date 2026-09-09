@@ -1,0 +1,31 @@
+{
+  "mode": "recompute",
+  "status": "pass",
+  "checks": [
+    "complete_operator_order_and_token_shapes",
+    "epilogue_ranges",
+    "ffn_ranges_including_final_flush",
+    "ffn_carry_vs_direct_and_output_slot",
+    "ffn_returns_input_alias",
+    "finalize_aliases_resident_q",
+    "epilogue_residual_is_new_device_storage",
+    "attention_boundaries_offsets_and_initialize",
+    "hidden_output_alias_policy",
+    "output_finite",
+    "core_workspace_budget",
+    "ffn_cross_q_boundaries",
+    "final_hidden_d2h_bytes",
+    "recompute_q_ranges",
+    "recompute_kv_ranges",
+    "recompute_hidden_h2d_bytes",
+    "recompute_no_host_qkv"
+  ],
+  "check_count": 17,
+  "compared_operator_events": 44,
+  "scope": "recorded production callback/operator order, ranges, aliases, transfer sizes and core workspace; not an exhaustive kernel/allocator trace",
+  "host_sync": {
+    "expected": 10,
+    "observed": 10,
+    "status": "pass"
+  }
+}

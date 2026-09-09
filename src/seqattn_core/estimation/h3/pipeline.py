@@ -142,6 +142,7 @@ def _materialize(g, callbacks, projection_ready):
         # _run_tiles synchronizes the reused slot on the host before submitting
         # new H2D. Independent slots can overlap; the producer is not fully serial.
         gate = g.milestone(f"{prefix}.slot_released", (gate, slot_done[slot]))
+        g.host_gate = gate
         if slot_results[slot]:
             g.retain(slot_results[slot], gate)
         staging = f"projection.hidden.{slot}"
@@ -166,7 +167,7 @@ def _materialize(g, callbacks, projection_ready):
         done = projected
         for tensor in ("Q", "K", "V"):
             source = result
-            if g.callbacks.qkv_result_layout == "strided":
+            if g.callbacks.qkv_result_layout == "strided" and tokens > 1:
                 source = g.allocate(
                     f"{prefix}.{tensor}.packed",
                     tokens * s.attention_features * s.element_bytes,
@@ -182,6 +183,7 @@ def _materialize(g, callbacks, projection_ready):
                     source,
                     dependencies=(projected,),
                     stream="projection.d2h",
+                    resources_override=g.profile.projection_pack_resources,
                 )
             done = g.copy(
                 f"{prefix}.{tensor}.d2h",
@@ -196,6 +198,7 @@ def _materialize(g, callbacks, projection_ready):
             )
         slot_done[slot], slot_results[slot] = done, result
     barrier = g.milestone("projection.global_kv_barrier", slot_done)
+    g.host_gate = barrier
     for result in slot_results:
         g.retain(result, barrier)
     return barrier
@@ -362,6 +365,7 @@ def build_h3_block_execution(shape, config, profile, *, callbacks, weights=None,
         query_ranges=q_ranges,
         kv_ranges=kv_ranges,
         ffn_ranges=consumer.ffn_ranges,
+        ffn_sources=consumer.ffn_sources,
         ffn_cross_q_boundaries=consumer.cross_q_boundaries,
     )
     return spec

@@ -1,0 +1,58 @@
+{
+  "base_commit": "6ffc7dfcbc7fa0c6d4ffd25616fbc997ead387ae",
+  "source_sha256": {
+    "src/seqattn_core/projection/materialized.py": "0f0aac66381811b373e6824f399002bf30d2cd6e6ff4add3849ee7cd317c73c3",
+    "src/seqattn_core/streaming/executor.py": "d0feaf2b589eb4eb247c99269f578d349761e3c70a53188b427952d4c818d44f",
+    "src/seqattn_core/streaming/tile_source.py": "2a82a4a8e24fc4f8080f73c191160df77b3326d24790a251570238e70b7af199",
+    "src/seqattn_core/dit/minimax_h3/consumer.py": "28c11ec27287bad5b136597acd222fbf50f403a211a2247ae7f0d1dcc27d836b",
+    "../../comfyui_seqattn/minimax_h3.py": "0a9f265939ba5db7b026643391a957e74bbe69810ba00f65546c5ce14ce8f1ae",
+    "/tmp/seqattn-h3-behavior-20260909/materialized.nsys-rep": "9bd419bef3cd289df068839edbc97c1ef42146bea00303b8a0bc6f94f0843404",
+    "/tmp/seqattn-h3-behavior-20260909/recompute.nsys-rep": "a11cc7c77794a2346ea0ddeb60643d49593596e9e021e95ac7143b248c067394",
+    "/tmp/seqattn-h3-behavior-20260909/materialized.sqlite": "258d1ff874455dc833dbefb7d2728a852b75de1a32a9e515508a1fae7c50f6c9",
+    "/tmp/seqattn-h3-behavior-20260909/recompute.sqlite": "1172f592461c909e73e3a3514ff9fd1ddc43437986e6bde11e7e5f5529e2946a"
+  },
+  "protocol": {
+    "warmup_full_blocks": 2,
+    "capture_full_blocks": 1,
+    "modes": [
+      "materialized",
+      "recompute"
+    ],
+    "tokens": 8193,
+    "segments": [
+      4097,
+      4096
+    ],
+    "q": 3840,
+    "kv": 4096,
+    "projection": 4096,
+    "ffn": 4096,
+    "physical_gpu": 3,
+    "block": 25,
+    "no_lora": true,
+    "profiling_used_for_latency_claims": false
+  },
+  "scope": "Full block callback/operator sequence, stream-event dependencies, aliases, ranges, core storage, explicit backend workspace. Atomic operator internals remain opaque or use an explicitly selected eager implementation.",
+  "final_estimator_source_sha256": {
+    "src/seqattn_core/estimation/specs.py": "4dfeb1dd8c59940cbf547ffc0ed3023b31f84604f9c2e46c93d87388e48a1b3e",
+    "src/seqattn_core/estimation/schedule.py": "2513c9f91a1c5771de86cd492950638cf5e0a081001fae786d9794bcf4b7df9c",
+    "src/seqattn_core/estimation/memory.py": "80feef0867cfce696868a99ffe16bcac79c228bc4a29d30f3a9505b7a3752b75",
+    "src/seqattn_core/estimation/search.py": "0a92be6260a2bf3aec3dbbcb896b08368e5dfae04300dffa25350c62d360d10d",
+    "src/seqattn_core/estimation/report.py": "8b65a427333c78e376255a4ab26688645e77dace41565dc3bba6ca94f2c894ed",
+    "src/seqattn_core/estimation/_report_template.py": "aabc4fd5df31e24bc9a624626ae754f15fb342696e921f95e6e45d698314730d",
+    "src/seqattn_core/estimation/__init__.py": "66724eeb7142d20669ed56ae3656243864b2b6a61d0541aa8d02544e0b1ece9a",
+    "src/seqattn_core/estimation/h3/profiles.py": "15cba1b4d291e7e47988be2f0d47aa95102da2fd9a1a555415a0775fc0e6e23e",
+    "src/seqattn_core/estimation/h3/graph.py": "de72a20dfee41453f5c6e9807f458f02fabfb47aa858cbaaa3d7ec03c1bc1dc8",
+    "src/seqattn_core/estimation/h3/callbacks.py": "19de7a0597cf3353d192932bdce54387ec8cb2bfb0b6a615cbd62a7b36e242cc",
+    "src/seqattn_core/estimation/h3/linear_memory.py": "4ccc011db1439c588bce0d5ce2fee69472bd8e1110d3dd527acf28be28eeed2d",
+    "src/seqattn_core/estimation/h3/consumer.py": "4d785daf3ed29c6c2add73c1e0332045da6f22369bc099775133cf1fcf60ece1",
+    "src/seqattn_core/estimation/h3/pipeline.py": "d47b119731a5667842501f1c911a600e45197abe6ffd01ebe7c93ce3a890cdc2",
+    "src/seqattn_core/estimation/h3/__init__.py": "68270c2e3563d84ada7d10474c2dfcc7193c4b342b00b9f14fa4de10a78eb477",
+    "src/seqattn_core/estimation/h3/calibration.py": "5de3f712661cb9bb67764a752ea5ba0aad976aa219deaf678cff790108a84a45",
+    "src/seqattn_core/estimation/web/inputs.py": "7bb9111fd9074f0dd15fa0a991a3d3b64a4dc3558005f33973a9c22c3307b084",
+    "src/seqattn_core/estimation/web/__init__.py": "5ee0803145157c6881745ba1643e0f5c4c97e0b343ad13c3663a6f38f2f6c82a",
+    "src/seqattn_core/estimation/web/__main__.py": "ddd60a1df996b2b744c45953165711e5afe2711f5f0249f4e98875e1342411df",
+    "src/seqattn_core/estimation/web/server.py": "4ca000e6fb0d764edba12cae8213728d6c0e11b7c7d12e344b76fc054028a8e2",
+    "src/seqattn_core/estimation/web/page.py": "a6781a14a7c6bd51ddb5abcd073a5599f293f4707cc3fe30dde4659d72725a19"
+  }
+}

@@ -179,3 +179,26 @@ def test_int8_workspace_model_matches_selected_eager_implementation(tokens, chan
         predicted,
         measured.sample.extra_workspace_bytes,
     )
+
+
+@pytest.mark.parametrize("tokens", [1, 4096])
+@torch.inference_mode()
+def test_eager_swiglu_fc2_workspace_matches_real_input_act_path(tokens):
+    eager = pytest.importorskip("comfy_kitchen.backends.eager.quantization")
+    from seqattn_core.estimation import measure_cuda_h3_operator
+    from seqattn_core.estimation.h3.linear_memory import eager_int8_swiglu_workspace
+
+    inputs, outputs = 14336, 5376
+    x = torch.randn(tokens, 2 * inputs, device="cuda", dtype=torch.bfloat16)
+    weight = torch.randint(-8, 8, (outputs, inputs), device="cuda", dtype=torch.int8)
+    scales = torch.full((outputs,), 0.01, device="cuda", dtype=torch.float32)
+    measurement = measure_cuda_h3_operator(
+        lambda: eager.int8_linear(x, weight, scales, convrot=True, input_act="swiglu"),
+        tokens=tokens,
+        output_allocation_bytes=tokens * outputs * 2,
+        warmup=1,
+        repeats=2,
+        provenance="actual eager input_act SwiGLU/FC2 path at H3 shape",
+    )
+    predicted = eager_int8_swiglu_workspace(tokens, inputs, outputs, 2, per_channel_scale=True)
+    assert abs(predicted - measurement.sample.extra_workspace_bytes) <= 2 * 2**20

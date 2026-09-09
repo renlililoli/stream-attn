@@ -234,8 +234,7 @@ def test_complete_modulated_callbacks_and_no_same_stream_overlap():
         "norm2",
         "modulate2",
         "fc1",
-        "swiglu",
-        "fc2",
+        "swiglu_fc2",
         "ffn_residual",
     ):
         assert counts[key] > 0
@@ -407,7 +406,7 @@ def test_projection_overlap_preserves_slot_reuse_and_global_barrier(slots):
     from seqattn_core.estimation.web.inputs import prepare_request
 
     _, shape, configs, device, callbacks, weights, _ = prepare_request(
-        {"tokens": 16384, "num_projection_buffers": slots}
+        {"tokens": 16384, "num_projection_buffers": slots, "projection_pack_mode": "shared"}
     )
     spec = build_h3_block_execution(shape, configs[0], device, callbacks=callbacks, weights=weights)
     trace = schedule_execution(spec)
@@ -438,3 +437,81 @@ def test_projection_overlap_preserves_slot_reuse_and_global_barrier(slots):
         {o.name: (o.start_seconds, o.end_seconds) for o in trace.operations},
         provenance="synthetic H3 overlap regression",
     )
+
+
+def test_production_pageable_rope_copy_blocks_future_host_submission():
+    spec = build(
+        shape=H3BlockShape((16,), 32, 64, 4, 8, rope_dim=8),
+        callbacks=H3CallbackConfig(variant="modulated", linear_memory="dense"),
+    )
+    events = {o.name: o for o in schedule_execution(spec).operations}
+    for index in range(1, 4):
+        host_unblocked = events[f"projection{index - 1}.qk_rope.position_h2d"].end_seconds
+        assert events[f"projection{index}.hidden_h2d"].start_seconds >= host_unblocked
+    # This is an enqueue gate, not a full callback/device synchronization.
+    assert (
+        events["projection1.hidden_h2d"].start_seconds < events["projection0.qk_rope"].end_seconds
+    )
+
+
+def test_observed_pack_concurrency_is_explicit_and_roundtrips_in_profile():
+    import json
+
+    from seqattn_core.estimation.web.inputs import prepare_request
+
+    _, shape, configs, device, callbacks, weights, _ = prepare_request({"tokens": 16384})
+    assert device.projection_pack_resources == ("projection.pack",)
+    device = H3DeviceProfile.from_dict(json.loads(json.dumps(device.to_dict())))
+    assert device.projection_pack_resources == ("projection.pack",)
+    spec = build_h3_block_execution(shape, configs[0], device, callbacks=callbacks, weights=weights)
+    trace = schedule_execution(spec)
+    events = {o.name: o for o in trace.operations}
+    gemm = events["projection1.qkv"]
+    pack = events["projection0.V.pack"]
+    assert pack.resources == ("projection.pack",)
+    assert min(pack.end_seconds, gemm.end_seconds) > max(pack.start_seconds, gemm.start_seconds)
+    # The copy stream still serializes Q/K/V pack and D2H despite kernel concurrency.
+    assert pack.start_seconds >= events["projection0.K.d2h"].end_seconds
+    # Legacy profiles do not silently acquire independent packing resources.
+    legacy = device.to_dict()
+    legacy.pop("projection_pack_resources")
+    assert H3DeviceProfile.from_dict(legacy).projection_pack_resources is None
+
+
+def test_one_token_projection_tail_uses_contiguous_views_without_packing():
+    spec = build(shape=H3BlockShape((9,), 32, 64, 4, 8, rope_dim=8))
+    names = {op.name for op in spec.operations}
+    assert "projection1.Q.pack" in names
+    assert "projection2.Q.pack" not in names
+    assert all(f"projection2.{t}.d2h" in names for t in "QKV")
+    assert not any(
+        b.name.startswith("projection2.") and b.name.endswith(".packed") for b in spec.buffers
+    )
+
+
+def test_recompute_q_and_rope_temporaries_release_at_actual_rebinding_boundaries():
+    spec = build(
+        config=H3ExecutionConfig(4, 3, 4, 8, execution_mode="recompute"),
+        callbacks=H3CallbackConfig(variant="modulated", linear_memory="dense"),
+    )
+    buffers = {b.name: b for b in spec.buffers}
+    assert buffers["query0.q.result"].release_after == "query0.q_rope.concat"
+    assert buffers["query0.q_rope.table"].release_after == "query0.q_rope.concat"
+    assert buffers["query0.kv0.kv.result"].release_after == "query0.kv0.write_v"
+    schedule_execution(spec)
+
+
+def test_production_int8_callback_cannot_silently_select_a_different_implementation():
+    assert H3CallbackConfig(variant="modulated").fused_swiglu_fc2
+    assert not H3CallbackConfig(variant="block25").fused_swiglu_fc2
+    with pytest.raises(ValueError, match="linear_input_act"):
+        H3CallbackConfig(variant="modulated", fused_swiglu_fc2=False)
+    with pytest.raises(ValueError, match="strided"):
+        H3CallbackConfig(variant="modulated", qkv_result_layout="contiguous")
+
+
+def test_resource_mapping_cannot_silently_turn_a_string_into_parallel_resources():
+    data = profile().to_dict()
+    data["projection_pack_resources"] = "compute"
+    with pytest.raises(TypeError, match="sequence"):
+        H3DeviceProfile.from_dict(data)

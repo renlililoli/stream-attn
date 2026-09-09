@@ -86,6 +86,18 @@ FIELDS = (
     Field("h2d_gbps", "Host → Device · GB/s", "吞吐与带宽", "number", 50, 0.000001, 10000000),
     Field("d2h_gbps", "Device → Host · GB/s", "吞吐与带宽", "number", 40, 0.000001, 10000000),
     Field("d2d_gbps", "Device → Device · GB/s", "吞吐与带宽", "number", 500, 0.000001, 10000000),
+    Field(
+        "projection_pack_mode",
+        "QKV 打包与计算",
+        "吞吐与带宽",
+        "choice",
+        "concurrent",
+        choices=(
+            ("concurrent", "允许并发（5090 实测路径）"),
+            ("shared", "共用计算资源（保守假设）"),
+        ),
+        hint="并发已在本次 5090 路径观测；其他设备需验证。速率应包含竞争影响。",
+    ),
     Field("launch_us", "每次调用固定延迟 · μs", "吞吐与带宽", "number", 5, 0, 1000000),
     Field(
         "linear_memory",
@@ -380,7 +392,16 @@ def prepare_request(parameters, imported_profile=None):
             operators[key] = H3OperatorProfile(
                 rate=rate(key + " FLOP/s", p[field] * 1e12, "compute")
             )
-    profile = replace(profile, operators=operators)
+            if key == "fc2":
+                # Production H3 passes activation into FC2's INT8 entry point.
+                operators["swiglu_fc2"] = operators[key]
+    profile = replace(
+        profile,
+        operators=operators,
+        projection_pack_resources=("projection.pack",)
+        if p["projection_pack_mode"] == "concurrent"
+        else None,
+    )
     if imported_profile is not None:
         if not isinstance(imported_profile, dict):
             raise ValueError("导入的 profile 必须是对象")

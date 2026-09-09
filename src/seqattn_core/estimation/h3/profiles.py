@@ -143,13 +143,27 @@ class H3CallbackConfig:
     compute_modulation: bool = True
     # FC2 may fuse input activation; its workspace must include any hidden
     # activation intermediates when this is True.
-    fused_swiglu_fc2: bool = False
+    fused_swiglu_fc2: bool | None = None
     name: str = "explicit H3 SwiGLU callbacks"
     linear_memory: Literal["dense", "int8_eager", "profile"] = "profile"
     convrot_group: int = 256
     per_channel_weight_scale: bool = True
 
     def __post_init__(self):
+        if self.fused_swiglu_fc2 is None:
+            object.__setattr__(self, "fused_swiglu_fc2", self.variant == "modulated")
+        if (
+            self.variant == "modulated"
+            and self.linear_memory != "dense"
+            and not self.fused_swiglu_fc2
+        ):
+            raise ValueError(
+                "production INT8 H3 uses linear_input_act; separate SwiGLU/FC2 is a different callback"
+            )
+        if self.variant == "modulated" and self.qkv_result_layout != "strided":
+            raise ValueError(
+                "production H3 returns strided QKV views; contiguous outputs require a different callback"
+            )
         if self.linear_memory not in {"dense", "int8_eager", "profile"}:
             raise ValueError("unknown linear memory implementation")
         positive_int("convrot_group", self.convrot_group)
@@ -262,6 +276,9 @@ class H3DeviceProfile:
     kv_alignment: int = 1
     local_pools: tuple[MemoryPool, ...] = ()
     shape_signature: dict[str, object] | None = None
+    # None preserves legacy D2D resource contention. An observed concurrent pack
+    # path can use a distinct resource; effective rates must include contention.
+    projection_pack_resources: tuple[str, ...] | None = None
 
     def __post_init__(self):
         pool_names = [
@@ -280,9 +297,17 @@ class H3DeviceProfile:
                 raise ValueError("operator workspace refers to an unknown physical pool")
         for value in (self.q_alignment, self.kv_alignment):
             positive_int("alignment", value)
-        for resources in (self.compute_resources, self.h2d_resources, self.d2h_resources):
-            if not resources or len(set(resources)) != len(resources):
-                raise ValueError("resource groups must be non-empty and unique")
+        resource_groups = (self.compute_resources, self.h2d_resources, self.d2h_resources)
+        if self.projection_pack_resources is not None:
+            resource_groups += (self.projection_pack_resources,)
+        for resources in resource_groups:
+            if (
+                not isinstance(resources, (tuple, list))
+                or not resources
+                or any(not isinstance(r, str) or not r.strip() for r in resources)
+                or len(set(resources)) != len(resources)
+            ):
+                raise ValueError("resource groups must be sequences of non-empty unique names")
 
     def for_shape(self, shape):
         signature = asdict(shape)
@@ -308,9 +333,17 @@ class H3DeviceProfile:
         values["device_pool"] = MemoryPool(**values["device_pool"])
         values["host_pool"] = MemoryPool(**values["host_pool"])
         values["local_pools"] = tuple(MemoryPool(**p) for p in values.get("local_pools", ()))
-        for name in ("compute_resources", "h2d_resources", "d2h_resources"):
-            if name in values:
-                values[name] = tuple(values[name])
+        for name in (
+            "compute_resources",
+            "h2d_resources",
+            "d2h_resources",
+            "projection_pack_resources",
+        ):
+            if name not in values or (name == "projection_pack_resources" and values[name] is None):
+                continue
+            if not isinstance(values[name], (list, tuple)):
+                raise TypeError(f"{name} must be a sequence of resource names")
+            values[name] = tuple(values[name])
         operators = {}
         for key, entry in values["operators"].items():
             entry = dict(entry)
@@ -334,7 +367,9 @@ class H3DeviceProfile:
         Override individual operators with measured samples/extra workspaces for
         quantized, fused or compiler-specific kernels. No hardware peaks are used.
         """
-        rates = {key: gemm for key in ("qkv", "q", "kv", "out", "fc1", "fc2", "adaln")}
+        rates = {
+            key: gemm for key in ("qkv", "q", "kv", "out", "fc1", "fc2", "swiglu_fc2", "adaln")
+        }
         rates.update(
             {
                 key: vector

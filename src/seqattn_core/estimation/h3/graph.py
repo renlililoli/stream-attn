@@ -13,6 +13,7 @@ class H3Graph:
         self.callbacks, self.weights = callbacks, weights
         self.operations, self.buffers, self.uses = [], {}, {}
         self.streams = {}
+        self.host_gate = None
         self.counts, self.transfers, self.resolutions = {}, {}, {}
         self.core_persistent_bytes = 0
 
@@ -49,7 +50,7 @@ class H3Graph:
             self.buffers[buffer]["release_after"] = through
 
     def milestone(self, name, dependencies=(), *, stream=None):
-        deps = list(dependencies)
+        deps = [*dependencies, self.host_gate]
         if stream and self.streams.get(stream):
             deps.append(self.streams[stream])
         self.operations.append(
@@ -80,6 +81,7 @@ class H3Graph:
         component=None,
         details="",
         modeled_workspace_bytes=0,
+        resources_override=None,
     ):
         if key not in self.profile.operators:
             raise ValueError(f"missing H3 operator profile: {key}")
@@ -94,7 +96,9 @@ class H3Graph:
         else:
             kind = "compute"
             resources = model.rate.resources if model.rate else self.profile.compute_resources
-        deps = [*dependencies, self.streams.get(stream)]
+        if resources_override is not None:
+            resources = resources_override
+        deps = [*dependencies, self.streams.get(stream), self.host_gate]
         self.operations.append(
             OperationSpec(
                 name,
@@ -154,7 +158,8 @@ class H3Graph:
             },
             scheduling_policy="earliest_ready",
             assumptions=(
-                "Earliest-ready exclusive-resource scheduling; input order only breaks ties. Concurrent kernels and CPU submission gaps are not modeled.",
+                "Earliest-ready resource scheduling; declared independent resources may overlap. General CPU launch gaps and occupancy contention require calibration.",
+                "The modulated callback blocks the host on its pageable position H2D, delaying all subsequently submitted operations.",
                 "H3 single-flight dense materialized/recompute runner order with cross-Q FFN carry.",
                 "Packed attention tiles never cross sequence segments. Pointwise projection/FFN follow the runner's global ranges.",
                 "Physical allocations include callback outputs, declared operator workspaces and declared weights. Aliased views count once.",
