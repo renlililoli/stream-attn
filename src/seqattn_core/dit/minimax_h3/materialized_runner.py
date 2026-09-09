@@ -44,8 +44,10 @@ class H3MaterializedRunner:
             raise ValueError("ffn_tile_tokens must be positive")
         if num_final_output_buffers not in {1, 2}:
             raise ValueError("num_final_output_buffers must be 1 or 2")
-        if projected_attention.attention.backend != "triton":
-            raise ValueError("the H3 fused block runner requires the Triton backend")
+        if projected_attention.attention.backend not in {"triton", "sage3"}:
+            raise ValueError(
+                "the H3 fused block runner requires a streaming Triton or Sage3 backend"
+            )
         if projected_attention.plan.output_mode != "device_consumer":
             raise ValueError("the H3 fused block runner requires device_consumer output mode")
         config = H3Config(execution_mode="materialized") if config is None else config

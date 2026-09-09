@@ -9,6 +9,13 @@ The package also provides a fixed-host-budget paged runtime for DRAM and aligned
 NVMe stores. The distribution contains only `seqattn_core`; the former
 compatibility facade is not shipped.
 
+The CUDA 13 extreme-throughput experiment adds the approximate `sage3` NVFP4
+backend. With `SEQATTN_AUTO_NVFP4=1`, compatible SM120 dense workloads select it
+automatically; an explicit `triton` request preserves BF16/FP16 execution. It
+uses patched SageAttention3, FP32 LSE partition merging and bounded query-local
+quantization storage. See [`docs/sage3_nvfp4.md`](docs/sage3_nvfp4.md) for precision,
+workspace and validation details.
+
 MiniMax-H3 can optionally select the approximate `sol_streaming` algorithm. It
 uses Sol-style 64-token routing while preserving SeqAttn's bounded-HBM streamed
 execution. This mode is explicit, single-GPU, and separate from the dense

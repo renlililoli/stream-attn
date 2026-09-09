@@ -12,6 +12,7 @@ the working tree and remain available through Git history.
 | Runtime design | [`architecture.md`](architecture.md) | Package boundaries, execution families, memory ownership, and correctness invariants |
 | Backend policy | [`backend_selection.md`](backend_selection.md) | Backend precedence, automatic selection, capability checks, and runtime restrictions |
 | Q/KV calibration | [`q_chunk_calibration.md`](q_chunk_calibration.md) | Deployment-specific `q_chunk_tokens` and `kv_chunk_tokens` calibration |
+| Sage3 NVFP4 | [`sage3_nvfp4.md`](sage3_nvfp4.md) | Experimental SM120 default, exact partition mechanics and approximate arithmetic |
 | Activation estimation | [`activation_memory_estimation.md`](activation_memory_estimation.md) | Device-neutral memory/latency candidates and interactive allocation timelines |
 | Paged and NVMe | [`paged_nvme_runtime.md`](paged_nvme_runtime.md) | Page contracts, host-memory budgets, storage modes, and direct-I/O behavior |
 | H3 DiT runtime | [`design_dit_runtime.md`](design_dit_runtime.md) | Materialized and recomputed QKV policies, callbacks, and buffer ownership |

@@ -1,0 +1,30 @@
+{
+  "base_core_commit": "308ad9e080636316f9ca29e0d35d827c0d4cd1e8",
+  "source_sha256": {
+    "src/seqattn_core/streaming/flash_backends.py": "81127ce5a3a5030efa1f6c5a00e2a9f95ea3622a9940d78096286b894a7faa05",
+    "src/seqattn_core/streaming/flash_split_executor.py": "885d00be1bf480edfe354a3ec5f9983d6cc08d58056dfd9c260d748ebed00a7b",
+    "src/seqattn_core/streaming/protocols.py": "f50aa70c54d05868f2d0c5c7e89a8932f10767a87da2d2071f15674df8316292",
+    "src/seqattn_core/streaming/__init__.py": "f66a4cc1499b583a814838ecc12abbf373432186b9c63988c836cc534199e29a",
+    "src/seqattn_core/streaming/measurement.py": "4d0259c6bf1336f6888069e428918b5bd8c128554054bf26d25a91c7d1295f9e",
+    "src/seqattn_core/streaming/backend.py": "896d5f63dc214375376a70feca0318cb85fd6dc0b40d4c36d4dd2da100731d82",
+    "src/seqattn_core/streaming/executor.py": "70655c4239ff8137388d3062ccde6b9d0793a9c540ed5ab5a009deab3ba05c9e",
+    "src/seqattn_core/streaming/runner.py": "1b919ef4028794caf6a5994e785434a4aaea519dd1772eba5b8cd64f0270a257",
+    "src/seqattn_core/streaming/tasks.py": "e1a47b4e72edff436bc920fddc2bac52476059766a0cbc4700523d6a65b98c32",
+    "src/seqattn_core/streaming/tile_source.py": "2a82a4a8e24fc4f8080f73c191160df77b3326d24790a251570238e70b7af199",
+    "src/seqattn_core/streaming/workspace.py": "3808ede8ff91b94160f9e47e71789c8644ff7cb677823a801f5a3cb24115c6fc",
+    "src/seqattn_core/streaming/sage3_backend.py": "57a912bac5ce3c452a34bf6569aa3b6f80541f273103ef5baed732e04d065f9d",
+    "src/seqattn_core/plan.py": "b3fa4c2acd73408d12b01eb305245b8e512b9b653f9b2de9d7161ee0466d3cd6",
+    "/home/grzhu/project/video/seq_offload/docker/sage3/patch.py": "2b143395edd277d7f1dd95a25e7bc0752c5e36133a5df77eec2b4bd34c4c4501"
+  },
+  "sage_commit": "d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5",
+  "cutlass_commit": "f3fde58372d33e9a5650ba7b80fc48b3b49d40c8",
+  "scope": "SageAttention3 NVFP4 only; new CUDA13 container; no CUDA12.8 comparison",
+  "gpu": 3,
+  "full_block_tokens": 65536,
+  "warmup_full_blocks": 2,
+  "measured_full_blocks": 3,
+  "update_warmups": 5,
+  "update_repeats": 20,
+  "portable_diagnostic_excluded": true,
+  "core_gpu_tests": "300 passed, 1 skipped (requires two devices)"
+}

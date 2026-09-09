@@ -1,0 +1,10 @@
+# Minimal named BuildKit context for the experimental CUDA 13 image.
+**
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!src/seqattn_core/
+!src/seqattn_core/**
+**/__pycache__/**
+**/*.pyc

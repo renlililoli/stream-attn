@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import torch
 
@@ -38,9 +38,9 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         self.plan = plan
         self._backend_request = plan.backend
         allowed = (
-            {"triton", "reference"}
+            {"triton", "sage3", "reference"}
             if plan.output_mode == "device_consumer"
-            else {"triton", "fa2", "fa3", "fa4", "reference"}
+            else {"triton", "sage3", "fa2", "fa3", "fa4", "reference"}
         )
         self.backend = resolve_backend(
             self._backend_request,
@@ -48,9 +48,31 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
             plan.device,
             head_dim=plan.head_dim,
             allowed=allowed,
+            q_heads=plan.q_heads,
+            kv_heads=plan.kv_heads,
         )
+        if self.backend == "sage3" and not plan.backend_workspace_bytes:
+            from .sage3_backend import workspace_bound_bytes
+
+            extra = workspace_bound_bytes(
+                plan.q_chunk_tokens,
+                plan.kv_chunk_tokens,
+                plan.q_heads,
+                plan.head_dim,
+                torch.empty((), dtype=plan.dtype).element_size(),
+            )
+            total = plan.estimated_workspace_bytes + extra
+            if plan.workspace_budget_bytes is not None and total > plan.workspace_budget_bytes:
+                raise ValueError(
+                    "workspace budget does not cover Sage3 quantization and partial outputs"
+                )
+            plan = self.plan = replace(
+                plan, estimated_workspace_bytes=total, backend_workspace_bytes=extra
+            )
         self._workspace = (
-            CudaWorkspace(plan) if self.backend in {"triton", "fa2", "fa3", "fa4"} else None
+            CudaWorkspace(plan)
+            if self.backend in {"triton", "sage3", "fa2", "fa3", "fa4"}
+            else None
         )
 
     def _borrow_cuda_runtime(self) -> _StreamingCudaRuntime:
@@ -146,7 +168,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
 
     def _execution_backend(self, causal: bool) -> str:
         execution_backend = self.backend
-        if causal and execution_backend in {"fa2", "fa3", "fa4"}:
+        if causal and execution_backend in {"fa2", "fa3", "fa4", "sage3"}:
             if self._backend_request != "auto":
                 raise ValueError(
                     f"{execution_backend} does not support external causal offsets; "
@@ -173,7 +195,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         stats: StreamingAttentionStats,
         task_measurement: QueryTaskMeasurement | None = None,
     ) -> torch.Tensor:
-        if execution_backend == "triton":
+        if execution_backend in {"triton", "sage3"}:
             return self._run_triton(
                 q_cpu,
                 k_cpu,
@@ -260,8 +282,10 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
     ) -> None:
         """Pass a preplanned query subset to one device-local output consumer."""
 
-        if self.plan.output_mode != "device_consumer" or self.backend != "triton":
-            raise ValueError("scheduled device consumers require device_consumer Triton plans")
+        if self.plan.output_mode != "device_consumer" or self.backend not in {"triton", "sage3"}:
+            raise ValueError(
+                "scheduled device consumers require device_consumer Triton/Sage3 plans"
+            )
         validate_query_task_inputs(self.plan, q_cpu, k_cpu, v_cpu, query_tasks)
         self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
 
@@ -297,8 +321,10 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
     ) -> None:
         """Execute one dynamic task through its explicit task consumer contract."""
 
-        if self.plan.output_mode != "device_consumer" or self.backend != "triton":
-            raise ValueError("scheduled device consumers require device_consumer Triton plans")
+        if self.plan.output_mode != "device_consumer" or self.backend not in {"triton", "sage3"}:
+            raise ValueError(
+                "scheduled device consumers require device_consumer Triton/Sage3 plans"
+            )
         validate_query_task_inputs(self.plan, q_cpu, k_cpu, v_cpu, (query_task,))
         self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
 
@@ -364,7 +390,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
                 causal=causal,
                 out=out,
             )
-        elif execution_backend == "triton":
+        elif execution_backend in {"triton", "sage3"}:
             self._prepare_triton_io(q_cpu, k_cpu, v_cpu, out)
             result = self._execute_host_query_tasks(
                 execution_backend,
@@ -419,7 +445,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
     ) -> torch.Tensor:
         """Consume each GPU output tile before D2H."""
 
-        if self.backend != "triton":
+        if self.backend not in {"triton", "sage3"}:
             raise ValueError("device output transforms require the Triton backend")
         q_bounds, k_bounds = self._validate_inputs(q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k)
         if out.device.type != "cpu" or out.shape[0] != q_cpu.shape[0]:
@@ -464,7 +490,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
     ) -> None:
         """Pass finalized GPU query ranges to a consumer that owns final D2H."""
 
-        if self.backend != "triton":
+        if self.backend not in {"triton", "sage3"}:
             raise ValueError("device output consumers require the Triton backend")
         q_bounds, k_bounds = self._validate_inputs(q_cpu, k_cpu, v_cpu, cu_seqlens_q, cu_seqlens_k)
         self._prepare_triton_inputs(q_cpu, k_cpu, v_cpu)
@@ -503,7 +529,7 @@ class StreamingAttentionRunner(TritonExecutorMixin, FlashSplitExecutorMixin):
         causal: bool = False,
         stats: StreamingAttentionStats | None = None,
     ) -> None:
-        if self.backend != "triton":
+        if self.backend not in {"triton", "sage3"}:
             raise ValueError("device Q/K/V tile sources require the Triton backend")
         if self.plan.output_mode != "device_consumer":
             raise ValueError("device Q/K/V tile sources require device_consumer output mode")

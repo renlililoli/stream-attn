@@ -86,6 +86,10 @@ class H3ExecutionConfig:
         num_projection_buffers=2,
         num_output_buffers=2,
     ):
+        if getattr(plan, "backend_workspace_bytes", 0) or getattr(plan, "backend", None) == "sage3":
+            raise ValueError(
+                "the offline H3 estimator models online-softmax execution, not Sage3 query preparation/LSE merging"
+            )
         if plan.output_mode != "device_consumer":
             raise ValueError("H3 requires a device-consumer attention plan")
         if plan.q_heads != plan.kv_heads:

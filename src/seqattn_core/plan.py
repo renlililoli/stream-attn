@@ -72,6 +72,7 @@ class AttentionPlan:
     enable_nvtx: bool
     estimated_workspace_bytes: int
     workspace_budget_bytes: int | None
+    backend_workspace_bytes: int = 0
 
     @property
     def group_size(self) -> int:
@@ -89,6 +90,7 @@ def estimate_workspace_bytes(
     num_kv_buffers: int,
     num_output_buffers: int,
     output_mode: str = "host",
+    backend: str | None = None,
 ) -> int:
     element_size = torch.empty((), dtype=dtype).element_size()
     q_bytes = q_tokens * q_heads * head_dim * element_size
@@ -99,7 +101,12 @@ def estimate_workspace_bytes(
         else 0
     )
     kv_bytes = num_kv_buffers * 2 * kv_tokens * kv_heads * head_dim * element_size
-    return q_bytes + state_bytes + output_bytes + kv_bytes + 32 * 2**20
+    extra = 0
+    if backend == "sage3":
+        from .streaming.sage3_backend import workspace_bound_bytes
+
+        extra = workspace_bound_bytes(q_tokens, kv_tokens, q_heads, head_dim, element_size)
+    return q_bytes + state_bytes + output_bytes + kv_bytes + 32 * 2**20 + extra
 
 
 def _normalize_chunk(requested: int, maximum: int, alignment: int) -> int:
@@ -120,6 +127,7 @@ def _largest_q_chunk_that_fits(
     num_kv_buffers: int,
     num_output_buffers: int,
     output_mode: str,
+    backend: str | None = None,
 ) -> int | None:
     minimum_q = min(block_m, max_q_tokens)
     budget = workspace_budget_bytes
@@ -137,6 +145,7 @@ def _largest_q_chunk_that_fits(
             num_kv_buffers=num_kv_buffers,
             num_output_buffers=num_output_buffers,
             output_mode=output_mode,
+            backend=backend,
         )
 
     if required(minimum_q) > budget:
@@ -180,6 +189,20 @@ def build_attention_plan(
         raise ValueError("max_q_tokens and max_kv_tokens must be positive")
 
     kernel = _resolve_kernel_launch(config, device=device, head_dim=head_dim, dtype=dtype)
+    requested_backend = configured_backend_name(config.backend)
+    memory_backend = "sage3" if requested_backend == "sage3" else None
+    if (
+        requested_backend == "auto"
+        and dtype in {torch.float16, torch.bfloat16}
+        and head_dim in {64, 128}
+        and q_heads == kv_heads
+        and device.type == "cuda"
+        and torch.cuda.is_available()
+    ):
+        from .streaming.backend import automatic_backend_order, backend_is_available
+
+        if automatic_backend_order(device)[0] == "sage3" and backend_is_available("sage3"):
+            memory_backend = "sage3"
     requested_kv = (
         _DEFAULT_KV_CHUNK_TOKENS if config.kv_chunk_tokens is None else config.kv_chunk_tokens
     )
@@ -197,6 +220,7 @@ def build_attention_plan(
             num_kv_buffers=config.num_kv_buffers,
             num_output_buffers=config.num_output_buffers,
             output_mode=config.output_mode,
+            backend=memory_backend,
         )
         if q_chunk is None:
             minimum = estimate_workspace_bytes(
@@ -209,6 +233,7 @@ def build_attention_plan(
                 num_kv_buffers=config.num_kv_buffers,
                 num_output_buffers=config.num_output_buffers,
                 output_mode=config.output_mode,
+                backend=memory_backend,
             )
             raise ValueError(
                 "workspace budget is too small for one query block and the requested KV "
@@ -227,6 +252,7 @@ def build_attention_plan(
         num_kv_buffers=config.num_kv_buffers,
         num_output_buffers=config.num_output_buffers,
         output_mode=config.output_mode,
+        backend=memory_backend,
     )
     budget = config.workspace_budget_bytes
     if budget is not None and estimated > budget:
@@ -252,12 +278,28 @@ def build_attention_plan(
         block_n=kernel.block_n,
         num_warps=kernel.num_warps,
         num_stages=kernel.num_stages,
-        backend=configured_backend_name(config.backend),
+        backend=requested_backend,
         require_pinned=config.require_pinned,
         pin_output=config.pin_output,
         enable_nvtx=config.enable_nvtx,
         estimated_workspace_bytes=estimated,
         workspace_budget_bytes=budget,
+        backend_workspace_bytes=(
+            estimated
+            - estimate_workspace_bytes(
+                q_tokens=q_chunk,
+                kv_tokens=kv_chunk,
+                q_heads=q_heads,
+                kv_heads=kv_heads,
+                head_dim=head_dim,
+                dtype=dtype,
+                num_kv_buffers=config.num_kv_buffers,
+                num_output_buffers=config.num_output_buffers,
+                output_mode=config.output_mode,
+            )
+        )
+        if memory_backend == "sage3"
+        else 0,
     )
 
 

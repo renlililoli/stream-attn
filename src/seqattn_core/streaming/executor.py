@@ -168,6 +168,16 @@ class TritonExecutorMixin:
         assert workspace is not None
         plan = self.plan
         compute_stream = workspace.compute_stream
+        sage = None
+        if getattr(self, "backend", "triton") == "sage3":
+            if causal:
+                if self._backend_request != "auto":
+                    raise ValueError("Sage3 NVFP4 does not support external causal offsets")
+                stats.backend = "triton"
+            else:
+                from .sage3_backend import Sage3State
+
+                sage = Sage3State()
         q_chunk_index = 0
         task_done_event = None
         h2d_bytes_before = stats.h2d_bytes
@@ -204,6 +214,8 @@ class TritonExecutorMixin:
                     if timing is not None:
                         timing.attention_start.record(compute_stream)
 
+                    if sage is not None:
+                        sage.prepare_query(workspace.q[:q_tokens])
                     initialize = True
                     for kv_tile_index, kv_tile_start in enumerate(
                         range(task.k_start, task.k_stop, plan.kv_chunk_tokens)
@@ -222,26 +234,36 @@ class TritonExecutorMixin:
                         )
                         stats.kv_tiles += 1
                         with self._range("seqattn:fused_update"):
-                            update_attention_state(
-                                workspace.q,
-                                workspace.k[buffer_index],
-                                workspace.v[buffer_index],
-                                workspace.running_max,
-                                workspace.running_sum,
-                                workspace.accumulator,
-                                q_tokens=q_tokens,
-                                kv_tokens=kv_tokens,
-                                q_local_offset=task.q_local_offset,
-                                kv_local_offset=kv_tile_start - task.k_start,
-                                causal_shift=task.causal_shift,
-                                softmax_scale=scale,
-                                causal=causal,
-                                initialize=initialize,
-                                block_m=plan.block_m,
-                                block_n=plan.block_n,
-                                num_warps=plan.num_warps,
-                                num_stages=plan.num_stages,
-                            )
+                            if sage is not None:
+                                sage.update(
+                                    workspace.k[buffer_index][:kv_tokens],
+                                    workspace.v[buffer_index][:kv_tokens],
+                                    workspace.accumulator[:q_tokens],
+                                    workspace.running_max[:q_tokens],
+                                    softmax_scale=scale,
+                                    initialize=initialize,
+                                )
+                            else:
+                                update_attention_state(
+                                    workspace.q,
+                                    workspace.k[buffer_index],
+                                    workspace.v[buffer_index],
+                                    workspace.running_max,
+                                    workspace.running_sum,
+                                    workspace.accumulator,
+                                    q_tokens=q_tokens,
+                                    kv_tokens=kv_tokens,
+                                    q_local_offset=task.q_local_offset,
+                                    kv_local_offset=kv_tile_start - task.k_start,
+                                    causal_shift=task.causal_shift,
+                                    softmax_scale=scale,
+                                    causal=causal,
+                                    initialize=initialize,
+                                    block_m=plan.block_m,
+                                    block_n=plan.block_n,
+                                    num_warps=plan.num_warps,
+                                    num_stages=plan.num_stages,
+                                )
                         initialize = False
                         source.release_kv(buffer_index, compute_stream)
 
@@ -261,12 +283,16 @@ class TritonExecutorMixin:
                         workspace.q if reuse_q_for_output else workspace.output[output_index]
                     )
                     with self._range("seqattn:fused_finalize"):
-                        finalize_attention(
-                            workspace.accumulator,
-                            workspace.running_sum,
-                            finalize_output,
-                            q_tokens=q_tokens,
-                        )
+                        if sage is not None:
+                            finalize_output[:q_tokens].copy_(workspace.accumulator[:q_tokens])
+                            sage.reset()
+                        else:
+                            finalize_attention(
+                                workspace.accumulator,
+                                workspace.running_sum,
+                                finalize_output,
+                                q_tokens=q_tokens,
+                            )
                     if timing is not None:
                         timing.attention_end.record(compute_stream)
                     output_gpu = finalize_output[:q_tokens]

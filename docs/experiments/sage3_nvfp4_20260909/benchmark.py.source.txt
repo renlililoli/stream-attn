@@ -1,0 +1,25 @@
+import argparse,json,statistics
+from pathlib import Path
+import torch
+from seqattn_core.kernels import update_attention_state
+from seqattn_core.kernels.profiles import resolve_builtin_kernel_profile
+from seqattn_core.streaming.sage3_backend import Sage3State,workspace_bound_bytes
+p=argparse.ArgumentParser();p.add_argument('--backend',choices=['triton','sage3'],required=True);p.add_argument('--output',required=True);a=p.parse_args()
+torch.manual_seed(15);torch.set_grad_enabled(False)
+q=torch.randn(3840,56,128,device='cuda',dtype=torch.bfloat16)
+k=torch.randn(4096,56,128,device='cuda',dtype=q.dtype);v=torch.randn_like(k)
+acc=torch.empty_like(q,dtype=torch.float32);m=torch.empty(3840,56,device='cuda');l=torch.empty_like(m)
+launch=resolve_builtin_kernel_profile(device=q.device,head_dim=128,dtype=q.dtype)
+sage=None
+if a.backend=='sage3':sage=Sage3State();sage.prepare_query(q)
+def run(initialize=False):
+ if sage:sage.update(k,v,acc,m,softmax_scale=128**-.5,initialize=initialize)
+ else:update_attention_state(q,k,v,m,l,acc,q_tokens=3840,kv_tokens=4096,q_local_offset=0,kv_local_offset=0,causal_shift=0,softmax_scale=128**-.5,causal=False,initialize=initialize,block_m=launch.block_m,block_n=launch.block_n,num_warps=launch.num_warps,num_stages=launch.num_stages)
+run(True)
+for _ in range(5):run()
+torch.cuda.synchronize();times=[]
+for _ in range(20):
+ s,e=torch.cuda.Event(enable_timing=True),torch.cuda.Event(enable_timing=True);s.record();run();e.record();e.synchronize();times.append(s.elapsed_time(e))
+base=torch.cuda.memory_allocated();torch.cuda.reset_peak_memory_stats();run();torch.cuda.synchronize();peak=torch.cuda.max_memory_allocated()-base
+r={'backend':a.backend,'triton_launch':list(launch),'shape':[3840,4096,56,128],'warmup':5,'ms':times,'median_ms':statistics.median(times),'effective_Tops':4*3840*4096*56*128/(statistics.median(times)/1000)/1e12,'extra_peak_bytes':peak,'reserved_bound_bytes':workspace_bound_bytes(3840,4096,56,128,2),'torch':torch.__version__,'gpu':torch.cuda.get_device_name(),'note':'Sage query quantization cached once per Q chunk; timed path includes KV preprocessing, NVFP4 attention, LSE correction and FP32 merge'}
+Path(a.output).write_text(json.dumps(r,indent=2)+'\n');print(json.dumps(r,indent=2))

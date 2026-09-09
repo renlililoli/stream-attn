@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Collection
 
 import torch
@@ -8,7 +9,7 @@ from ..config import canonical_backend_name, configured_backend_name
 from ..kernels import triton_is_available
 from .flash_backends import flash_backend_is_available
 
-_CUDA_BACKENDS = {"triton", "fa2", "fa3", "fa4"}
+_CUDA_BACKENDS = {"triton", "fa2", "fa3", "fa4", "sage3"}
 _FLASH_BACKENDS = {"fa2", "fa3", "fa4"}
 
 
@@ -18,13 +19,19 @@ def backend_is_available(name: str) -> bool:
         return True
     if name == "triton":
         return triton_is_available()
+    if name == "sage3":
+        from .sage3_backend import sage3_is_available
+
+        return sage3_is_available()
     return flash_backend_is_available(name) if name in _FLASH_BACKENDS else False
 
 
 def automatic_backend_order(device: torch.device) -> tuple[str, ...]:
     if device.type != "cuda" or not torch.cuda.is_available():
         return ("reference",)
-    major, _ = torch.cuda.get_device_capability(device)
+    major, minor = torch.cuda.get_device_capability(device)
+    if (major, minor) == (12, 0) and os.environ.get("SEQATTN_AUTO_NVFP4", "0") == "1":
+        return ("sage3", "triton", "fa4", "reference")
     if major >= 12:
         return ("triton", "fa4", "reference")
     if major == 10:
@@ -41,6 +48,8 @@ def _validate_backend_capability(
     dtype: torch.dtype,
     device: torch.device,
     head_dim: int | None,
+    q_heads: int | None = None,
+    kv_heads: int | None = None,
 ) -> None:
     if backend not in _CUDA_BACKENDS:
         return
@@ -48,6 +57,11 @@ def _validate_backend_capability(
         raise ValueError(f"the {backend} backend requires a CUDA device")
     if dtype not in {torch.float16, torch.bfloat16}:
         raise ValueError(f"the {backend} backend requires float16 or bfloat16 inputs")
+    if backend == "sage3":
+        if torch.cuda.get_device_capability(device) != (12, 0):
+            raise ValueError("Sage3 NVFP4 is validated on SM120 RTX 50-series GPUs")
+        if head_dim not in {64, 128} or (q_heads is not None and q_heads != kv_heads):
+            raise ValueError("Sage3 NVFP4 requires head_dim 64/128 and equal Q/KV heads")
     if head_dim is not None:
         if backend == "triton" and head_dim < 16:
             raise ValueError(
@@ -70,6 +84,8 @@ def resolve_backend(
     *,
     head_dim: int | None = None,
     allowed: Collection[str] | None = None,
+    q_heads: int | None = None,
+    kv_heads: int | None = None,
 ) -> str:
     requested = configured_backend_name(name)
     allowed_canonical = (
@@ -84,7 +100,14 @@ def resolve_backend(
             if allowed_canonical is not None and backend not in allowed_canonical:
                 continue
             if backend_is_available(backend):
-                _validate_backend_capability(backend, dtype, device, head_dim)
+                try:
+                    _validate_backend_capability(
+                        backend, dtype, device, head_dim, q_heads, kv_heads
+                    )
+                except ValueError:
+                    if backend == "sage3":
+                        continue
+                    raise
                 return backend
         raise RuntimeError("no compatible seqattn backend is available")
 
@@ -92,9 +115,14 @@ def resolve_backend(
     if allowed_canonical is not None and backend not in allowed_canonical:
         choices = ", ".join(sorted(allowed_canonical))
         raise ValueError(f"backend {backend!r} is not supported by this runtime; choose {choices}")
-    _validate_backend_capability(backend, dtype, device, head_dim)
+    _validate_backend_capability(backend, dtype, device, head_dim, q_heads, kv_heads)
     if not backend_is_available(backend):
-        package = {"fa2": "flash-attn", "fa3": "FlashAttention-3", "fa4": "flash-attn-4"}
+        package = {
+            "fa2": "flash-attn",
+            "fa3": "FlashAttention-3",
+            "fa4": "flash-attn-4",
+            "sage3": "patched SageAttention3 from Dockerfile.cu13",
+        }
         requirement = package.get(backend, backend)
         raise RuntimeError(f"the {backend} backend requires {requirement}")
     return backend

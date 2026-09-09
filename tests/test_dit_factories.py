@@ -273,7 +273,7 @@ def test_materialized_qkv_arena_rejects_incompatible_layouts(incompatible):
 def test_h3_factory_wraps_the_shared_dense_runtime_for_sol(monkeypatch):
     from seqattn_core.dit.minimax_h3 import factory
 
-    source_plan = object()
+    source_plan = SimpleNamespace(backend="triton")
     runtime_plan = object()
     sol_plan = SimpleNamespace(attention=runtime_plan)
     projected_attention = object()

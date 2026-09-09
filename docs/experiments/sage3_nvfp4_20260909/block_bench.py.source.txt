@@ -1,0 +1,54 @@
+"""Real checkpoint H3 block benchmark using the packages installed in the image."""
+import argparse,json,os,statistics,sys,time
+from pathlib import Path
+parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--tensor-output',required=True);parser.add_argument('--tokens',type=int,default=65536);parser.add_argument('--backend',default='auto');args=parser.parse_args()
+sys.argv=[sys.argv[0]]
+import comfy_aimdo.control
+assert comfy_aimdo.control.init(nvml_pressure=False)
+sys.path.insert(0,'/opt/ComfyUI');os.chdir('/opt/ComfyUI')
+import torch
+import comfy.sd,comfy.ops
+from comfy import memory_management,model_management,model_patcher
+from comfyui_seqattn import minimax_h3 as adapter
+from seqattn_core import StreamingAttentionConfig,build_attention_plan
+from seqattn_core.dit.minimax_h3 import H3Config,H3SequenceMeta,H3DiTStats,build_h3_runner
+import comfy_kitchen as ck
+from types import SimpleNamespace
+from importlib.metadata import version
+
+torch.set_num_threads(1);torch.set_grad_enabled(False)
+assert comfy_aimdo.control.init_devices((d.index,0) for d in model_management.get_all_torch_devices())
+model_patcher.CoreModelPatcher=model_patcher.ModelPatcherDynamic;memory_management.aimdo_enabled=True
+checkpoint='/models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors'
+print('Loading real block 25 weights',flush=True)
+patcher=comfy.sd.load_diffusion_model(checkpoint);model_management.load_models_gpu([patcher])
+model=patcher.model.diffusion_model;block=model.blocks[25];device=torch.device(patcher.load_device)
+modules=[];seen=set()
+for module in block.modules():
+ if hasattr(module,'_v') and id(module) not in seen:modules.append(module);seen.add(id(module))
+stream=comfy.ops.cast_modules_with_vbar(modules,None,device,None,True)
+if not model_management.args.fast_disk:
+ model_management.ensure_pin_registerable(sum(memory_management.vram_aligned_size([m.weight,m.bias]) for m in modules))
+if stream is not None:stream.synchronize()
+torch.cuda.synchronize()
+dtype=torch.bfloat16;tokens=args.tokens;hidden=int(model.hidden_size);heads=int(block.attn.heads);dim=int(block.attn.head_dim)
+table=model.adaln_t_table;temb=table[table.shape[0]//2:table.shape[0]//2+1].to(device=device,dtype=torch.float32).contiguous()
+plan=build_attention_plan(q_heads=heads,kv_heads=heads,head_dim=dim,dtype=dtype,device=device,max_q_tokens=tokens,max_kv_tokens=tokens,config=StreamingAttentionConfig(backend=args.backend,q_chunk_tokens=3840,kv_chunk_tokens=4096,output_mode='device_consumer'))
+runner=build_h3_runner(plan,hidden_features=hidden,config=H3Config(execution_mode='materialized',projection_tile_tokens=4096,ffn_tile_tokens=4096))
+layout=SimpleNamespace(position_ids=torch.zeros(tokens,3,dtype=torch.float64));layout.position_ids[:,0]=torch.arange(tokens,dtype=torch.float64)
+meta=H3SequenceMeta(torch.tensor([0,tokens],dtype=torch.int32));segments=[(0,tokens,0)]
+baseline=torch.empty(tokens,hidden,dtype=dtype,pin_memory=True).normal_(mean=0,std=.02,generator=torch.Generator().manual_seed(1234));working=torch.empty_like(baseline,pin_memory=True)
+report={'torch':torch.__version__,'cuda':torch.version.cuda,'comfy_kitchen':version('comfy-kitchen'),'seqattn_core':version('seqattn-core'),'gpu':torch.cuda.get_device_name(),'uuid':str(torch.cuda.get_device_properties(0).uuid),'tokens':tokens,'requested_backend':args.backend,'selected_backend':runner.projected_attention.attention.backend,'block':25,'cpus':sorted(os.sched_getaffinity(0)),'backends':ck.list_backends(),'warmup':[],'records':[]}
+def run():
+ stats=H3DiTStats();projection,ops=adapter._materialized_block_parts(model,block,25,layout,segments,temb,{})
+ runner.run_block_(working,meta,projection,ops,softmax_scale=dim**-.5,stats=stats)
+ return stats
+with torch.inference_mode():
+ for index in range(2):
+  working.copy_(baseline);torch.cuda.synchronize();start=time.perf_counter();run();torch.cuda.synchronize();duration=time.perf_counter()-start;report['warmup'].append(duration);print(f'Warmup {index+1}/2 {duration:.6f}s',flush=True)
+ torch.cuda.reset_peak_memory_stats()
+ for index in range(3):
+  working.copy_(baseline);torch.cuda.synchronize();start=time.perf_counter();stats=run();torch.cuda.synchronize();duration=time.perf_counter()-start;report['records'].append({'seconds':duration,'stats':stats.as_dict()});print(f'Measured {index+1}/3 {duration:.6f}s',flush=True)
+ report['median_seconds']=statistics.median(r['seconds'] for r in report['records']);report['torch_peak_allocated_bytes']=torch.cuda.max_memory_allocated();report['finite']=all(bool(torch.isfinite(working[s:s+4096]).all()) for s in range(0,tokens,4096))
+ torch.save(working,args.tensor_output);Path(args.output).write_text(json.dumps(report,indent=2)+'\n');print('RESULT',report['median_seconds'],report['finite'],flush=True)
+ assert report['finite']

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ...config import ProjectionPipelineConfig
 from ...plan import AttentionPlan
 from ...projection import ProjectedAttentionRunner, RecomputedAttentionRunner
@@ -21,6 +23,13 @@ def build_h3_runner(
     """Construct the configured single-GPU H3 runner from one resolved plan."""
 
     config = load_h3_config() if config is None else config
+    if config.attention_mode == "sol_streaming" and plan.backend == "auto":
+        plan = replace(
+            plan,
+            backend="triton",
+            estimated_workspace_bytes=plan.estimated_workspace_bytes - plan.backend_workspace_bytes,
+            backend_workspace_bytes=0,
+        )
     sol_plan = build_sol_streaming_plan(plan) if config.attention_mode == "sol_streaming" else None
     runtime_plan = plan if sol_plan is None else sol_plan.attention
     if config.execution_mode == "materialized":

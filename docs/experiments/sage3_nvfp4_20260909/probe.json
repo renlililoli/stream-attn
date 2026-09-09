@@ -1,0 +1,54 @@
+[
+  {
+    "shape": [
+      128,
+      128,
+      2,
+      64
+    ],
+    "constant_k": true,
+    "finite": true,
+    "lse_max_error": 9.5367431640625e-07,
+    "output_nrmse": 0.10077914595603943,
+    "unchanged_inputs": true
+  },
+  {
+    "shape": [
+      129,
+      131,
+      2,
+      128
+    ],
+    "constant_k": true,
+    "finite": true,
+    "lse_max_error": 1.9073486328125e-06,
+    "output_nrmse": 0.1208500787615776,
+    "unchanged_inputs": true
+  },
+  {
+    "shape": [
+      1,
+      1,
+      2,
+      64
+    ],
+    "constant_k": true,
+    "finite": true,
+    "lse_max_error": 0.0,
+    "output_nrmse": 0.02288614772260189,
+    "unchanged_inputs": true
+  },
+  {
+    "shape": [
+      257,
+      193,
+      2,
+      128
+    ],
+    "constant_k": false,
+    "finite": true,
+    "lse_max_error": 0.052224159240722656,
+    "output_nrmse": 0.18081626296043396,
+    "unchanged_inputs": true
+  }
+]

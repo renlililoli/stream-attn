@@ -7,10 +7,11 @@ from ._config_file import load_config_table, reject_unknown_keys
 
 _BACKEND_ALIASES = {
     "builtin": "triton",
+    "nvfp4": "sage3",
     "flash2": "fa2",
     "flash2_split": "fa2",
 }
-_KNOWN_BACKENDS = {"auto", "reference", "triton", "fa2", "fa3", "fa4", *_BACKEND_ALIASES}
+_KNOWN_BACKENDS = {"auto", "reference", "triton", "fa2", "fa3", "fa4", "sage3", *_BACKEND_ALIASES}
 
 
 def canonical_backend_name(name: str) -> str:
@@ -95,6 +96,8 @@ class StreamingAttentionConfig:
             "auto",
             "builtin",
             "triton",
+            "sage3",
+            "nvfp4",
             "fa2",
             "fa3",
             "fa4",

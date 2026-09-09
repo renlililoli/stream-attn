@@ -40,8 +40,8 @@ class H3RecomputeRunner:
             raise ValueError("ffn_tile_tokens must be positive")
         if num_final_output_buffers not in {1, 2}:
             raise ValueError("num_final_output_buffers must be 1 or 2")
-        if recomputed_attention.attention.backend != "triton":
-            raise ValueError("the H3 recompute runner requires the Triton backend")
+        if recomputed_attention.attention.backend not in {"triton", "sage3"}:
+            raise ValueError("the H3 recompute runner requires a streaming Triton or Sage3 backend")
         config = H3Config(execution_mode="recompute") if config is None else config
         if config.execution_mode != "recompute":
             raise ValueError("H3 recompute runner requires execution_mode='recompute'")

@@ -32,8 +32,9 @@ class _RecomputedAttentionBase:
             raise ValueError("recomputed attention requires a CUDA device")
         self.plan = plan
         self.attention = StreamingAttentionRunner(plan)
-        if self.attention.backend != "triton":
-            raise RuntimeError("Triton is not available for recomputed attention")
+        self.plan = self.attention.plan
+        if self.attention.backend not in {"triton", "sage3"}:
+            raise RuntimeError("A Triton/Sage3 backend is not available for recomputed attention")
         self.require_pinned_hidden = require_pinned_hidden
 
     def _range(self, name: str):

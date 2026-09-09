@@ -1,0 +1,21 @@
+import json,math
+from pathlib import Path
+import torch
+from seqattn_core.streaming.sage3_backend import Sage3State
+records=[]
+for tokens,keys,heads,dim,constant in [(128,128,2,64,True),(129,131,2,128,True),(1,1,2,64,True),(257,193,2,128,False)]:
+ torch.manual_seed(31)
+ q=torch.randn(tokens,heads,dim,device='cuda',dtype=torch.bfloat16)
+ k=torch.full((keys,heads,dim),3.,device='cuda',dtype=torch.bfloat16) if constant else torch.randn(keys,heads,dim,device='cuda',dtype=torch.bfloat16)
+ v=torch.randn_like(k)
+ copies=[x.clone() for x in (q,k,v)]
+ backend=Sage3State();backend.prepare_query(q);out,lse=backend.partial(k,v,dim**-.5);torch.cuda.synchronize()
+ scores=torch.einsum('qhd,khd->hqk',q.float(),k.float())*dim**-.5
+ ref_lse=torch.logsumexp(scores,-1).unsqueeze(0)
+ ref=torch.einsum('hqk,khd->qhd',scores.softmax(-1),v.float())
+ diff=out[0].float()-ref
+ row={'shape':[tokens,keys,heads,dim],'constant_k':constant,'finite':bool(torch.isfinite(out).all() and torch.isfinite(lse).all()),'lse_max_error':float((lse-ref_lse).abs().max()),'output_nrmse':float((diff.square().mean()/ref.square().mean()).sqrt()),'unchanged_inputs':all(torch.equal(a,b) for a,b in zip(copies,(q,k,v)))}
+ records.append(row);print(row,flush=True)
+ assert row['finite'] and row['unchanged_inputs']
+ if constant:assert row['lse_max_error']<0.002,row
+Path('/artifacts/probe.json').write_text(json.dumps(records,indent=2)+'\n')
