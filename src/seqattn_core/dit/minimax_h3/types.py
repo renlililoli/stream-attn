@@ -6,6 +6,7 @@ from itertools import pairwise
 
 import torch
 
+from ...plan import AttentionPlan
 from ...projection.contracts import KVTileProjector, QKVProjector, QTileProjector
 from ...validation import validate_cu_seqlens
 from ..common import AttentionEpilogue, DeviceTileOp, LeaseFactory
@@ -109,6 +110,31 @@ class H3DenoisingStep:
             raise ValueError("total_steps must be positive")
         if not 0 <= self.step_index < self.total_steps:
             raise ValueError("step_index must lie within [0, total_steps)")
+
+
+def validate_sol_dense_plan_pair(dense: AttentionPlan, sparse: AttentionPlan) -> None:
+    """Require identical execution geometry while allowing separate backends/workspaces."""
+
+    fields = (
+        "q_heads",
+        "kv_heads",
+        "head_dim",
+        "dtype",
+        "device",
+        "max_q_tokens",
+        "max_kv_tokens",
+        "q_chunk_tokens",
+        "kv_chunk_tokens",
+        "num_kv_buffers",
+        "num_output_buffers",
+        "output_mode",
+        "require_pinned",
+    )
+    mismatched = [name for name in fields if getattr(dense, name) != getattr(sparse, name)]
+    if mismatched:
+        raise ValueError("H3 dense and Sol attention plans differ in " + ", ".join(mismatched))
+    if sparse.backend != "triton":
+        raise ValueError("the Sol sparse runtime requires its own Triton attention plan")
 
 
 def _validate_aux_workspace_args(

@@ -15,12 +15,20 @@ output and LSE in FP32. It does not reduce the accumulated state to BF16.
 - Unsupported auto geometry and causal execution fall back to the existing
   backend. An explicit unsupported Sage3 request fails before execution.
 - Explicit backend arguments/environment/TOML preserve their existing precedence.
-- Sol, paged/NVMe and plugin-specific execution retain their own contracts;
-  this is not a claim that their kernels now use NVFP4.
+- In an H3 `sol_streaming` configuration, the existing policy's fully dense
+  denoising steps/layers use Sage3 NVFP4. Once the policy enters sparse Sol
+  routing, a separate Triton runtime preserves the existing route/centroid
+  algorithm. Paged/NVMe and plugin-specific execution retain their own contracts.
 
 The backend requires the Sage3 binary patched by the consumer's
 `docker/sage3/patch.py` and checks `fp4attn_cuda.seqattn_lse_abi() == 1`.
 An unpatched upstream binary cannot be used for partition merging.
+
+The Sol configuration deliberately owns two attention runtimes with identical
+geometry: Sage3 for full dense blocks and Triton for sparse Sol blocks. Their
+CUDA workspaces coexist and are both included in the H3 workspace budget. This
+does not relabel centroid approximation as NVFP4 or replace Sol's 64-token route
+decisions with dense attention.
 
 ## Partition correctness
 

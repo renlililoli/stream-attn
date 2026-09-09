@@ -20,6 +20,7 @@ from .types import (
     H3MaterializedProjection,
     H3SequenceMeta,
     estimate_h3_materialized_aux_workspace_bytes,
+    validate_sol_dense_plan_pair,
 )
 from .workspace import H3BlockWorkspace
 
@@ -55,8 +56,11 @@ class H3MaterializedRunner:
             raise ValueError("H3 materialized runner requires execution_mode='materialized'")
         if config.attention_mode == "sol_streaming" and sol_attention is None:
             raise ValueError("H3 sol_streaming mode requires a Sol attention runner")
-        if sol_attention is not None and sol_attention.plan.attention != projected_attention.plan:
-            raise ValueError("H3 projected and Sol attention plans must match")
+        if sol_attention is not None:
+            validate_sol_dense_plan_pair(
+                projected_attention.plan,
+                sol_attention.plan.attention,
+            )
 
         self.projected_attention = projected_attention
         self.config = config
@@ -87,7 +91,11 @@ class H3MaterializedRunner:
             q_chunk_tokens=attention_plan.q_chunk_tokens,
             kv_chunk_tokens=attention_plan.kv_chunk_tokens,
             ffn_tile_tokens=ffn_tile_tokens,
-            estimated_workspace_bytes=attention_plan.estimated_workspace_bytes + aux_workspace,
+            estimated_workspace_bytes=(
+                attention_plan.estimated_workspace_bytes
+                + (0 if sol_attention is None else sol_attention.plan.estimated_workspace_bytes)
+                + aux_workspace
+            ),
         )
         self.plan.validate()
         self.workspace = H3BlockWorkspace(

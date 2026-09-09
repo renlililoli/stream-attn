@@ -16,6 +16,10 @@ uses patched SageAttention3, FP32 LSE partition merging and bounded query-local
 quantization storage. See [`docs/sage3_nvfp4.md`](docs/sage3_nvfp4.md) for precision,
 workspace and validation details.
 
+For H3 configured with `sol_streaming`, policy-selected full dense steps/layers
+use Sage3 while the sparse routed blocks retain the existing Triton Sol kernel.
+Both workspaces are budgeted because both runners remain live.
+
 MiniMax-H3 can optionally select the approximate `sol_streaming` algorithm. It
 uses Sol-style 64-token routing while preserving SeqAttn's bounded-HBM streamed
 execution. This mode is explicit, single-GPU, and separate from the dense

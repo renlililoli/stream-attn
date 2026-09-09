@@ -19,6 +19,7 @@ from .types import (
     H3RecomputeProjection,
     H3SequenceMeta,
     estimate_h3_recompute_aux_workspace_bytes,
+    validate_sol_dense_plan_pair,
 )
 from .workspace import H3BlockWorkspace
 
@@ -47,8 +48,11 @@ class H3RecomputeRunner:
             raise ValueError("H3 recompute runner requires execution_mode='recompute'")
         if config.attention_mode == "sol_streaming" and sol_attention is None:
             raise ValueError("H3 sol_streaming mode requires a Sol attention runner")
-        if sol_attention is not None and sol_attention.plan.attention != recomputed_attention.plan:
-            raise ValueError("H3 recompute and Sol attention plans must match")
+        if sol_attention is not None:
+            validate_sol_dense_plan_pair(
+                recomputed_attention.plan,
+                sol_attention.plan.attention,
+            )
 
         self.recomputed_attention = recomputed_attention
         self.config = config
@@ -69,7 +73,11 @@ class H3RecomputeRunner:
             kv_chunk_tokens=attention_plan.kv_chunk_tokens,
             ffn_tile_tokens=ffn_tile_tokens,
             hidden_staging_tokens=hidden_staging_tokens,
-            estimated_workspace_bytes=attention_plan.estimated_workspace_bytes + aux_workspace,
+            estimated_workspace_bytes=(
+                attention_plan.estimated_workspace_bytes
+                + (0 if sol_attention is None else sol_attention.plan.estimated_workspace_bytes)
+                + aux_workspace
+            ),
         )
         self.plan.validate()
         self.workspace = H3BlockWorkspace(

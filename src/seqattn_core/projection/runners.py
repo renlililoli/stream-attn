@@ -33,8 +33,8 @@ class _MaterializedAttentionRunner:
             raise ValueError("the projected pipeline requires a CUDA device")
         self.attention = StreamingAttentionRunner(plan)
         self.plan = self.attention.plan
-        if plan.backend not in {"auto", "triton"}:
-            raise ValueError("the projected pipeline requires the Triton attention backend")
+        if plan.backend not in {"auto", "triton", "sage3"}:
+            raise ValueError("the projected pipeline requires a Triton/Sage3 attention backend")
         if plan.require_pinned and not self.pipeline_config.pin_qkv:
             raise ValueError("Triton attention requires pinned Q/K/V backing buffers")
         if self.attention.backend not in {"triton", "sage3"}:

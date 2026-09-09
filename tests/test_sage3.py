@@ -255,3 +255,91 @@ def test_sage3_complete_h3_consumer_and_reuse(mode, monkeypatch):
         result = run()
         assert torch.isfinite(result).all()
         assert ranges == [(0, 80), (80, 160), (160, 240), (240, 258)]
+
+
+@torch.inference_mode()
+def test_sol_configuration_uses_sage3_for_dense_policy_and_triton_for_sparse(monkeypatch):
+    from seqattn_core.dit.minimax_h3 import (
+        H3BlockOps,
+        H3Config,
+        H3DenoisingStep,
+        H3MaterializedProjection,
+        H3SequenceMeta,
+        build_h3_runner,
+    )
+
+    monkeypatch.setenv("SEQATTN_AUTO_NVFP4", "1")
+    tokens = 258
+    plan = build_attention_plan(
+        q_heads=2,
+        kv_heads=2,
+        head_dim=128,
+        dtype=torch.bfloat16,
+        device="cuda",
+        max_q_tokens=tokens,
+        max_kv_tokens=tokens,
+        config=StreamingAttentionConfig(
+            q_chunk_tokens=128,
+            kv_chunk_tokens=128,
+            output_mode="device_consumer",
+        ),
+    )
+    runner = build_h3_runner(
+        plan,
+        hidden_features=256,
+        config=H3Config(
+            attention_mode="sol_streaming",
+            projection_tile_tokens=128,
+            ffn_tile_tokens=128,
+            sol_first_dense_step_fraction=0.5,
+            sol_first_dense_layers=1,
+        ),
+    )
+    assert runner.projected_attention.attention.backend == "sage3"
+    assert runner.sol_attention.dense_runner.backend == "triton"
+    assert runner.plan.estimated_workspace_bytes > (
+        runner.projected_attention.plan.estimated_workspace_bytes
+        + runner.sol_attention.plan.estimated_workspace_bytes
+    )
+
+    source = torch.randn(tokens, 256, dtype=torch.bfloat16).pin_memory()
+    baseline = source.clone()
+    meta = H3SequenceMeta(
+        torch.tensor([0, 129, tokens], dtype=torch.int32),
+        exact_prefix_tokens=(64, 64),
+    )
+
+    def project(tile, start, stop):
+        q = tile.view(stop - start, 2, 128)
+        return q, q, q
+
+    ops = H3BlockOps(
+        lambda output, residual, start, stop: (
+            residual[start:stop].to("cuda", non_blocking=True).add_(output)
+        ),
+        lambda post, start, stop: post,
+    )
+    projection = H3MaterializedProjection(project)
+
+    # Early step follows the unchanged dense policy, now through Sage3.
+    runner.run_block_(
+        source,
+        meta,
+        projection,
+        ops,
+        block_index=2,
+        denoising_step=H3DenoisingStep(0, 4),
+    )
+    assert torch.isfinite(source).all()
+
+    # Late step follows the existing Sol route/summary implementation on Triton.
+    source.copy_(baseline)
+    stats = runner.run_block_(
+        source,
+        meta,
+        projection,
+        ops,
+        block_index=2,
+        denoising_step=H3DenoisingStep(3, 4),
+    )
+    assert torch.isfinite(stats).all()

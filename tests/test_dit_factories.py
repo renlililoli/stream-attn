@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -273,11 +274,17 @@ def test_materialized_qkv_arena_rejects_incompatible_layouts(incompatible):
 def test_h3_factory_wraps_the_shared_dense_runtime_for_sol(monkeypatch):
     from seqattn_core.dit.minimax_h3 import factory
 
-    source_plan = SimpleNamespace(backend="triton")
+    source_plan = replace(
+        _plan(q_tokens=128, kv_tokens=128, q_heads=2, kv_heads=2, dtype=torch.bfloat16),
+        backend="auto",
+        estimated_workspace_bytes=1000,
+        backend_workspace_bytes=100,
+    )
     runtime_plan = object()
     sol_plan = SimpleNamespace(attention=runtime_plan)
     projected_attention = object()
     projected = SimpleNamespace(attention=projected_attention)
+    sparse_dense_runner = object()
     sol_runner = object()
     constructed = {}
 
@@ -293,6 +300,10 @@ def test_h3_factory_wraps_the_shared_dense_runtime_for_sol(monkeypatch):
         constructed["sol_runner"] = (plan, dense_runner)
         return sol_runner
 
+    def build_streaming(plan):
+        constructed["streaming"] = plan
+        return sparse_dense_runner
+
     def build_materialized(*args, **kwargs):
         constructed["h3"] = (args, kwargs)
         return SimpleNamespace(kind="H3MaterializedRunner")
@@ -300,6 +311,7 @@ def test_h3_factory_wraps_the_shared_dense_runtime_for_sol(monkeypatch):
     monkeypatch.setattr(factory, "build_sol_streaming_plan", build_sol)
     monkeypatch.setattr(factory, "ProjectedAttentionRunner", build_projected)
     monkeypatch.setattr(factory, "SolStreamingAttentionRunner", build_sol_runner)
+    monkeypatch.setattr(factory, "StreamingAttentionRunner", build_streaming)
     monkeypatch.setattr(factory, "H3MaterializedRunner", build_materialized)
 
     config = H3Config(
@@ -314,9 +326,12 @@ def test_h3_factory_wraps_the_shared_dense_runtime_for_sol(monkeypatch):
     )
 
     assert result.kind == "H3MaterializedRunner"
-    assert constructed["sol_plan_input"] is source_plan
-    assert constructed["projected"][0] is runtime_plan
+    assert constructed["sol_plan_input"].backend == "triton"
+    assert constructed["sol_plan_input"].backend_workspace_bytes == 0
+    assert constructed["sol_plan_input"].estimated_workspace_bytes == 900
+    assert constructed["projected"][0] is source_plan
     assert constructed["projected"][1].projection_tile_tokens == 1536
-    assert constructed["sol_runner"] == (sol_plan, projected_attention)
+    assert constructed["streaming"] is runtime_plan
+    assert constructed["sol_runner"] == (sol_plan, sparse_dense_runner)
     assert constructed["h3"][1]["config"] is config
     assert constructed["h3"][1]["sol_attention"] is sol_runner
