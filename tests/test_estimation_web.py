@@ -216,3 +216,38 @@ def test_busy_server_rejects_extra_work_and_recovers():
 def test_imported_profile_interactive_limits_are_validated(bad_profile):
     with pytest.raises(ValueError, match="Profile"):
         prepare_request(SMALL, bad_profile)
+
+
+def test_desktop_launcher_opens_actual_bound_port(monkeypatch, capsys):
+    from seqattn_core.estimation.web import server as module
+
+    opened = []
+    ready = threading.Event()
+
+    def browser(url):
+        opened.append(url)
+        ready.set()
+        return True
+
+    def serve(instance):
+        assert ready.wait(5)
+        assert opened == [f"http://127.0.0.1:{instance.server_port}"]
+        assert instance.server_port > 0
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(module.webbrowser, "open", browser)
+    monkeypatch.setattr(module.SimulationServer, "serve_forever", serve)
+    module.main([], default_port=0, default_open_browser=True)
+    assert opened[0] in capsys.readouterr().out
+
+
+def test_desktop_launcher_can_disable_browser(monkeypatch):
+    from seqattn_core.estimation.web import server as module
+
+    monkeypatch.setattr(module.webbrowser, "open", lambda url: pytest.fail("browser disabled"))
+
+    def serve(instance):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(module.SimulationServer, "serve_forever", serve)
+    module.main(["--no-browser"], default_port=0, default_open_browser=True)

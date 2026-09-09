@@ -350,3 +350,40 @@ callback variants. Sol/sparse and multi-GPU task-consumer execution require
 separate models and are not silently treated as dense carry execution. Checkpoint
 loading, whole-model weight eviction and framework integration remain consumer
 responsibilities. The deterministic `build_attention_plan()` API is unchanged.
+
+## Windows standalone application
+
+The Windows x64 bundle runs the same estimator and web page without installing
+Python, PyTorch, CUDA, or the core package. Extract the build artifact ZIP and
+double-click `seqattn-estimator.exe`. It selects an available loopback port and
+opens the default browser. Keep its console window open; close that window or
+press Ctrl+C there to stop the service. Closing a browser tab does not stop it.
+If automatic browser opening fails, use the address printed in the console.
+
+For a fixed port (also preserving the browser's local storage origin), run:
+
+```powershell
+.\seqattn-estimator.exe --no-browser --port 8765
+```
+
+The `Windows estimator` GitHub Actions workflow builds on Windows Server 2022
+with Python 3.12 x64, then tests the executable from a temporary directory using
+real HTTP requests for both H3 modes and the HTML report. Its downloadable
+artifact is named `seqattn-estimator-windows-x64`. This is an unsigned portable
+build, not an installer. Interactive browser launch still needs a desktop smoke
+check on the target machine. CUDA calibration is outside this standalone bundle;
+import device profiles collected separately.
+
+To build locally on Windows from this checkout:
+
+```powershell
+py -3.12 -m venv .venv-estimator
+.\.venv-estimator\Scripts\python.exe -m pip install pyinstaller==6.19.0
+.\.venv-estimator\Scripts\python.exe packaging/estimator/build.py
+.\.venv-estimator\Scripts\python.exe packaging/estimator/smoke.py dist/seqattn-estimator/seqattn-estimator.exe
+```
+
+The output folder is `dist/seqattn-estimator/`. Packaging copies the unchanged
+`estimation/` sources under a minimal package root in `build/estimator/source/`;
+it deliberately omits the main core initializer and GPU runtime modules. The
+normal installed core package and its public exports are unchanged.

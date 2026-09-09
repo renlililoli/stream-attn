@@ -8,6 +8,7 @@ import json
 import logging
 import threading
 import time
+import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -164,16 +165,31 @@ class Handler(BaseHTTPRequestHandler):
             self.server.simulation_lock.release()
 
 
-def main(argv=None):
+def main(argv=None, *, default_port=8765, default_open_browser=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=default_port)
+    parser.add_argument(
+        "--browser", action=argparse.BooleanOptionalAction, default=default_open_browser
+    )
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535:
         parser.error("port must be between 0 and 65535")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     with SimulationServer((args.host, args.port)) as server:
-        print(f"H3 simulator: http://{args.host}:{server.server_port}", flush=True)
+        url = f"http://{args.host}:{server.server_port}"
+        print(f"H3 simulator: {url}", flush=True)
+        print("Keep this window open. Press Ctrl+C to stop.", flush=True)
+        if args.browser:
+            # The listening socket is already bound; do not block serving on a browser process.
+            def open_browser():
+                try:
+                    if not webbrowser.open(url):
+                        LOG.warning("Open the address above in your browser.")
+                except Exception:
+                    LOG.exception("Could not open browser; use the address above.")
+
+            threading.Thread(target=open_browser, daemon=True).start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:
