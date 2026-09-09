@@ -285,3 +285,31 @@ def test_activation_objective_excludes_weights_but_capacity_still_counts_them():
     assert result.candidates[0].peak_bytes == 50
     assert not result.candidates[0].stats.fits_capacity
     assert result.selected.trace.name == "fits"
+
+
+def test_earliest_ready_does_not_reserve_compute_for_future_pack():
+    spec = execution(
+        [
+            operation("qkv0", 2),
+            operation("q-pack", 1, dependencies=("qkv0",)),
+            operation("q-d2h", 4, resources=("dma",), dependencies=("q-pack",), kind="io"),
+            operation("k-pack", 1, dependencies=("q-d2h",)),
+            operation("k-d2h", 4, resources=("dma",), dependencies=("k-pack",), kind="io"),
+            operation("qkv1", 6, dependencies=("qkv0",)),
+        ]
+    )
+    legacy = {o.name: o for o in schedule_execution(spec).operations}
+    assert legacy["qkv1"].start_seconds == 8
+    trace = schedule_execution(replace(spec, scheduling_policy="earliest_ready"))
+    events = {o.name: o for o in trace.operations}
+    assert events["qkv1"].start_seconds == 3
+    assert events["qkv1"].end_seconds == 9
+    assert events["k-pack"].start_seconds == 9
+    assert events["q-d2h"].start_seconds == 3
+    assert trace.metadata["scheduling_policy"] == "earliest_ready"
+    # The exported trace must satisfy the same dependencies and resource exclusion.
+    trace_from_measurements(
+        replace(spec, scheduling_policy="earliest_ready"),
+        {o.name: (o.start_seconds, o.end_seconds) for o in trace.operations},
+        provenance="synthetic regression",
+    )

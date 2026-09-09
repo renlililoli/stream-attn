@@ -400,3 +400,41 @@ def test_runtime_plan_binding_preserves_distinct_host_arena_capacities():
     spec = build(H3BlockShape((161,), 32, 64, 4, 64, rope_dim=32), config)
     assert next(b.size_bytes for b in spec.buffers if b.name == "host.Q") == 512 * 4 * 64 * 2
     assert next(b.size_bytes for b in spec.buffers if b.name == "host.K") == 1024 * 4 * 64 * 2
+
+
+@pytest.mark.parametrize("slots", [1, 2, 3])
+def test_projection_overlap_preserves_slot_reuse_and_global_barrier(slots):
+    from seqattn_core.estimation.web.inputs import prepare_request
+
+    _, shape, configs, device, callbacks, weights, _ = prepare_request(
+        {"tokens": 16384, "num_projection_buffers": slots}
+    )
+    spec = build_h3_block_execution(shape, configs[0], device, callbacks=callbacks, weights=weights)
+    trace = schedule_execution(spec)
+    events = {o.name: o for o in trace.operations}
+    assert spec.scheduling_policy == "earliest_ready"
+    for index in range(slots, 4):
+        assert (
+            events[f"projection{index}.hidden_h2d"].start_seconds
+            >= events[f"projection{index - slots}.V.d2h"].end_seconds
+        )
+    if slots > 1:
+        gemm = events["projection1.qkv"]
+        copy = events["projection0.Q.d2h"]
+        assert gemm.start_seconds == events["projection1.modulate1"].end_seconds
+        assert min(gemm.end_seconds, copy.end_seconds) > max(gemm.start_seconds, copy.start_seconds)
+        # Packing still competes with GEMM; no fake concurrent compute.
+        assert events["projection0.K.pack"].start_seconds >= gemm.end_seconds
+    else:
+        assert events["projection1.qkv"].start_seconds >= events["projection0.V.d2h"].end_seconds
+    barrier = events["projection.global_kv_barrier"].end_seconds
+    assert barrier >= max(events[f"projection{i}.V.d2h"].end_seconds for i in range(4))
+    assert events["query0.q_h2d"].start_seconds >= barrier
+    # Validate every stream/resource and the modeled buffer lifetime invariants.
+    from seqattn_core.estimation import trace_from_measurements
+
+    trace_from_measurements(
+        spec,
+        {o.name: (o.start_seconds, o.end_seconds) for o in trace.operations},
+        provenance="synthetic H3 overlap regression",
+    )

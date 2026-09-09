@@ -152,7 +152,9 @@ class H3Graph:
                 "core_workspace_budget_bytes": self.core_persistent_bytes
                 + self.config.workspace_margin_bytes,
             },
+            scheduling_policy="earliest_ready",
             assumptions=(
+                "Earliest-ready exclusive-resource scheduling; input order only breaks ties. Concurrent kernels and CPU submission gaps are not modeled.",
                 "H3 single-flight dense materialized/recompute runner order with cross-Q FFN carry.",
                 "Packed attention tiles never cross sequence segments. Pointwise projection/FFN follow the runner's global ranges.",
                 "Physical allocations include callback outputs, declared operator workspaces and declared weights. Aliased views count once.",

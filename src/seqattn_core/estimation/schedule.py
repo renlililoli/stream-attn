@@ -88,10 +88,13 @@ def _lifetimes(spec: ExecutionSpec, events: tuple[OperationEvent, ...]):
 
 
 def schedule_execution(spec: ExecutionSpec) -> ExecutionTrace:
-    """Schedule ready operations in input order, filling free resource gaps.
+    """Schedule operations under the explicitly declared arbitration policy.
 
-    The order is a policy, not a globally optimal scheduling claim. Dependencies
-    must encode data hazards and ring-slot reuse; resources encode contention.
+    Legacy input_order reserves resource gaps in declaration order. earliest_ready
+    dispatches the earliest feasible operation, using input order only for ties;
+    future copies cannot reserve compute ahead of a runnable GEMM. Neither policy
+    claims global optimality or models concurrent kernels on an exclusive resource.
+    Dependencies encode data hazards, stream order, and ring-slot reuse.
     """
     by_name = {op.name: op for op in spec.operations}
     index = {op.name: i for i, op in enumerate(spec.operations)}
@@ -100,14 +103,25 @@ def schedule_execution(spec: ExecutionSpec) -> ExecutionTrace:
     for op in spec.operations:
         for dependency in op.dependencies:
             children[dependency].append(op.name)
-    ready = [index[name] for name, count in pending.items() if count == 0]
+    chronological = spec.scheduling_policy == "earliest_ready"
+    ready = [
+        (0.0 if chronological else index[name], index[name])
+        for name, count in pending.items()
+        if count == 0
+    ]
     heapq.heapify(ready)
     calendars: dict[str, list[tuple[float, float]]] = {}
     events: dict[str, OperationEvent] = {}
     while ready:
-        op = spec.operations[heapq.heappop(ready)]
+        _, op_index = heapq.heappop(ready)
+        op = spec.operations[op_index]
         earliest = max((events[name].end_seconds for name in op.dependencies), default=0.0)
         start = _first_gap(calendars, op.resources, earliest, op.duration_seconds)
+        if chronological and ready and (start, op_index) > ready[0]:
+            # Reservations only increase feasible start times. Refresh this lazy
+            # lower bound and let an earlier runnable operation go first.
+            heapq.heappush(ready, (start, op_index))
+            continue
         end = start + op.duration_seconds
         event = OperationEvent(
             name=op.name,
@@ -126,7 +140,11 @@ def schedule_execution(spec: ExecutionSpec) -> ExecutionTrace:
         for child in children[op.name]:
             pending[child] -= 1
             if pending[child] == 0:
-                heapq.heappush(ready, index[child])
+                child_index = index[child]
+                earliest_child = max(events[d].end_seconds for d in by_name[child].dependencies)
+                heapq.heappush(
+                    ready, (earliest_child if chronological else child_index, child_index)
+                )
     if len(events) != len(by_name):
         raise ValueError("operation dependencies contain a cycle")
     ordered = tuple(events[op.name] for op in spec.operations)
@@ -136,7 +154,7 @@ def schedule_execution(spec: ExecutionSpec) -> ExecutionTrace:
         operations=ordered,
         buffers=_lifetimes(spec, ordered),
         duration_seconds=max(event.end_seconds for event in ordered),
-        metadata=dict(spec.metadata),
+        metadata={**spec.metadata, "scheduling_policy": spec.scheduling_policy},
         assumptions=spec.assumptions,
     )
 

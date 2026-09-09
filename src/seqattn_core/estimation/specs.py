@@ -153,9 +153,12 @@ class ExecutionSpec:
     buffers: tuple[BufferSpec, ...]
     metadata: dict[str, object] = field(default_factory=dict)
     assumptions: tuple[str, ...] = ()
+    scheduling_policy: Literal["input_order", "earliest_ready"] = "input_order"
 
     def __post_init__(self) -> None:
         names("execution name", (self.name,))
+        if self.scheduling_policy not in {"input_order", "earliest_ready"}:
+            raise ValueError("unknown scheduling policy")
         if not self.pools or not self.operations:
             raise ValueError("an execution requires memory pools and operations")
         for label, entries in (

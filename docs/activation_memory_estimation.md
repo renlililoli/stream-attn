@@ -387,3 +387,28 @@ The output folder is `dist/seqattn-estimator/`. Packaging copies the unchanged
 `estimation/` sources under a minimal package root in `build/estimator/source/`;
 it deliberately omits the main core initializer and GPU runtime modules. The
 normal installed core package and its public exports are unchanged.
+
+### Projection overlap and scheduling policy
+
+H3 traces use `earliest_ready` arbitration: an operation with available inputs
+and resources runs before an operation waiting for a future transfer. Declaration
+order only breaks ties. Previously, the generic `input_order` scheduler could
+reserve future K/V packing kernels before scheduling the next tile's already
+runnable QKV GEMM, leaving artificial compute gaps. Generic `ExecutionSpec`
+retains `input_order` as its default for compatibility; the chosen policy is
+included in exported trace metadata.
+
+The H3 model still preserves the actual producer's slot reuse gate, per-stream
+ordering, and global QKV writeback barrier. With the default strided layout,
+Q, K, and V each require a pack followed by D2H on the projection output stream.
+The default profile makes packing and GEMM mutually exclusive on `compute`.
+Earliest-ready dispatch can overlap GEMM with DMA but cannot overlap these two
+compute operations. It is not a prediction of concurrent CUDA kernel occupancy,
+and better overlap at one point does not guarantee lower total latency.
+
+For example, with the web defaults and 16,384 tokens, tile 1's GEMM moves from
+13.163 ms to 10.422 ms, while the whole projection stage changes from 50.115 ms
+to 51.145 ms because K/V packing now waits for that GEMM. These are synthetic
+predictions, not a GPU speedup measurement. Existing archived benchmark results,
+including the 524K validation, retain their original source revision and scheduler;
+their error percentages are not a validation of the revised scheduler.
